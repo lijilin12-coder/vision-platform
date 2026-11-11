@@ -66,3 +66,36 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+
+# ===== Project specific =====
+# Build
+build/
+out/
+cmake-build-*/
+*.o
+*.a
+*.so
+*.dylib
+
+# Third-party binaries (built by scripts, not committed)
+third_party/*/install/
+third_party/*/build/
+
+# Web
+web/node_modules/
+web/dist/
+
+# HarmonyOS
+harmony/**/build/
+harmony/**/oh_modules/
+harmony/.hvigor/
+harmony/local.properties
+
+# Models (large files)
+models/**/*.onnx
+models/**/*.ms
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
