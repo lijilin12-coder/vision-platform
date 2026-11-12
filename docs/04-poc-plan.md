@@ -60,7 +60,7 @@ POC-1 ──► POC-3a ──► POC-4（模拟器部分）──►（鸿蒙电
 - BC-1 算子目录：注册表、`OperatorMeta`
 - BC-2 方案编排：`Recipe` 聚合（不变量 R1～R6）、`RecipeVersion` 聚合、发布规则 P1、P5
 - BC-3 检测执行：`ExecutionPlanner`、`Executor`、`Judge`、`Inspection` 聚合
-- 算子：`load_image`、`to_gray`、`threshold`、`blob`、`judge`
+- 算子：`image_input`（图像入口，由执行引擎送入图像）、`to_gray`、`threshold`、`blob`、`judge_count`
 - 适配器：JSON 文件仓储、OpenCV 图像编解码、进程内事件总线
 - 命令行：创建方案、发布、对图像运行检测，输出判定、判定依据和各节点耗时
 - 每个上下文拆成 `domain` / `application` 两个 CMake 目标，按 ADR-17 设置链接规则

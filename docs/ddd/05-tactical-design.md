@@ -29,6 +29,8 @@ BC-1、BC-2、BC-3 共用。**全部是值对象，不可变。**
 | `Unit` | 像素、毫米、度…… |
 | `Tolerance` | 标称值 + 上下偏差 |
 | `PortType` | 端口类型枚举，以及 `isCompatible(from, to)` 规则 |
+| `ParamValue` / `ParamDef` / `PortDef` / `OperatorSignature` | **算子签名**：算子 ID、主版本号、端口、参数定义。三个上下文都用它描述“算子长什么样”，必须完全一致（POC-1 中加入，见 poc-1-report §5） |
+| `Judgement` | 判定依据的原始形式：合格与否 + 原因；节点通过 `Judgement` 类型的输出端口提供判定依据 |
 
 ---
 

@@ -99,3 +99,8 @@ models/**/*.ms
 .idea/
 .vscode/
 .DS_Store
+
+# ===== Local build outputs and data =====
+build-*/
+vision-data/
+samples/images/

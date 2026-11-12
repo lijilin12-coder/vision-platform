@@ -1,0 +1,5 @@
+add_subdirectory(common)
+add_subdirectory(kernel)
+add_subdirectory(contexts/catalog)
+add_subdirectory(contexts/authoring)
+add_subdirectory(contexts/execution)
