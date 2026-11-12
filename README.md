@@ -1,33 +1,48 @@
 # Vision Platform
 
-可编排的工业外观缺陷检测与测量平台。用户通过拖拽算子组合检测流程，完成外观缺陷检测和尺寸测量。
+可编排的工业外观缺陷检测与测量平台。用户通过拖拽算子组合检测方案，完成缺陷检测、尺寸测量和定位；方案与平台无关，支持数据闭环、模型工具链，以及产线不停机的热更新。
 
-- **运行平台**：macOS（Apple Silicon）、HarmonyOS 电脑（2in1）
-- **核心**：C++17 检测引擎（vision-core），两端共用
-- **界面**：Web 编辑器（Vue 3），鸿蒙端为原生 ArkUI 外壳加 ArkWeb 嵌入编辑器
+- **运行平台**：鸿蒙电脑（优先）、Linux、Windows；Mac 仅作为开发机
+- **核心**：C++17，领域驱动设计 + 六边形架构，各平台共用
+- **界面**：Web（Vue 3），鸿蒙端为原生 ArkUI 外壳加 ArkWeb
+- **模型工具链**：独立的 Linux 服务（Python + Docker）
 
-> 当前阶段：**需求与设计**。先完成文档评审，再进入 POC 开发。
+> 当前阶段：**领域设计与架构设计**。设计完成后进入 POC 开发。
 
 ## 文档
 
+### 领域设计（DDD）
+
 | 文档 | 内容 |
 |---|---|
-| [docs/01-requirements.md](docs/01-requirements.md) | 需求规格：角色、功能、非功能、范围 |
-| [docs/02-architecture.md](docs/02-architecture.md) | 架构设计与选型决策（ADR） |
-| [docs/03-tech-research.md](docs/03-tech-research.md) | 技术调研：鸿蒙电脑、OpenCV 移植、ArkWeb 桥接、推理等 |
-| [docs/04-poc-plan.md](docs/04-poc-plan.md) | POC 计划与通过标准 |
-| [docs/05-roadmap.md](docs/05-roadmap.md) | 里程碑、分工与比赛时间线 |
-| [docs/06-open-questions.md](docs/06-open-questions.md) | 待决问题清单 |
+| [docs/ddd/00-vision.md](docs/ddd/00-vision.md) | 领域愿景 |
+| [docs/ddd/01-event-storming.md](docs/ddd/01-event-storming.md) | 事件风暴、热点问题与决定 |
+| [docs/ddd/02-glossary.md](docs/ddd/02-glossary.md) | 统一语言（术语表） |
+| [docs/ddd/03-subdomains.md](docs/ddd/03-subdomains.md) | 子域划分 |
+| [docs/ddd/04-context-map.md](docs/ddd/04-context-map.md) | 限界上下文与上下文映射 |
+| [docs/ddd/05-tactical-design.md](docs/ddd/05-tactical-design.md) | 核心上下文的战术设计 |
 
-## 计划中的目录结构
+### 工程文档
+
+| 文档 | 内容 |
+|---|---|
+| [docs/02-architecture.md](docs/02-architecture.md) | 技术架构（v0.2，按 DDD 重写） |
+| [docs/03-tech-research.md](docs/03-tech-research.md) | 技术调研 |
+| [docs/01-requirements.md](docs/01-requirements.md) | 需求规格（待按 DDD 设计更新） |
+| [docs/04-poc-plan.md](docs/04-poc-plan.md) | POC 计划（待按 DDD 设计更新） |
+| [docs/05-roadmap.md](docs/05-roadmap.md) | 里程碑与分工 |
+| [docs/06-open-questions.md](docs/06-open-questions.md) | 待决问题 |
+
+## 目录结构（计划）
 
 ```
 vision-platform/
-├── core/        # vision-core：数据类型、算子、DAG、方案 JSON（C++17）
-├── server/      # Mac 端本地 HTTP/WebSocket 服务（C++）
-├── web/         # Web 编辑器（Vue 3 + TypeScript）
-├── harmony/     # 鸿蒙电脑应用（ArkTS + NAPI）
-├── models/      # ONNX 模型与转换脚本
-├── samples/     # 示例图像与示例方案
-└── docs/        # 设计文档
+├── core/          # kernel（共享内核）、common、contexts/（每个限界上下文一个目录）
+├── operators/     # 算子实现
+├── adapters/      # 被驱动适配器：持久化、推理、图像、方案包、事件总线……
+├── apps/          # runtime（Linux/Windows/Mac）、harmony、cli
+├── web/           # Web 界面
+├── toolchain/     # 模型工具链服务
+├── samples/       # 示例图像、方案、基准图集
+└── docs/
 ```

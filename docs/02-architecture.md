@@ -2,249 +2,242 @@
 
 | 项 | 内容 |
 |---|---|
-| 版本 | v0.1（评审稿） |
-| 状态 | 待评审；标注“待 POC”的决策由 POC 结果确定 |
-| 日期 | 2026-11-11 |
+| 版本 | v0.2（按 DDD 设计重写，待评审） |
+| 日期 | 2026-11-12 |
+| 依据 | [ddd/](ddd/) 下的愿景、事件风暴、统一语言、子域、上下文映射、战术设计 |
+| 取代 | v0.1（以 macOS 为运行平台、未采用 DDD 的版本） |
 
 ## 1. 设计原则
 
-1. **引擎与界面分离**：vision-core 是一个纯 C++ 库，不依赖任何 UI 和平台头文件，可以在命令行下独立运行和测试。
-2. **一套核心，两端复用**：C++ 引擎、Web 编辑器、方案 JSON 在 Mac 和鸿蒙电脑上共用，平台相关代码限定在薄薄的适配层里。
-3. **算子即插件**：新增算子不需要改框架和前端代码；前端根据算子的元数据自动生成节点外观和参数面板。
-4. **先验证风险**：鸿蒙相关的不确定项都通过 POC 验证后再定稿。
+1. **领域驱动**：代码结构和限界上下文一一对应；业务规则只写在领域层。
+2. **六边形架构**：领域层和应用层在中心，平台差异全部放在外围的适配器里。跨平台 = 换适配器。
+3. **依赖只能由外向内**：适配器 → 应用层 → 领域层 → 共享内核。领域层不依赖 OpenCV、文件、数据库、任何平台。
+4. **上下文之间只通过公开接口或领域事件协作**，不能直接使用另一个上下文的领域类。**用构建系统强制保证**（§4.3）。
+5. **一套核心，多个平台**：鸿蒙电脑、Linux、Windows 共用同一份 C++ 核心和同一套 Web 界面。
 
-## 2. 总体架构
+## 2. 部署视图
 
 ```
-┌────────────── macOS ───────────────┐   ┌──────────── 鸿蒙电脑（2in1）────────────────┐
-│                                    │   │  ArkUI 原生外壳（ArkTS）                    │
-│  浏览器                             │   │  ├─ 运行页面（操作员，原生）                  │
-│  ┌──────────────────────────────┐  │   │  ├─ 算子测试页面（算子开发者，原生）           │
-│  │ Web 编辑器 (Vue3 + TS)        │  │   │  └─ ArkWeb ┌──────────────────────────┐   │
-│  │  └─ EngineClient: HttpWs     │  │   │            │ Web 编辑器（同一套代码）     │   │
-│  └──────────────┬───────────────┘  │   │            │  └─ EngineClient: Bridge  │   │
-│                 │ HTTP + WebSocket  │   │            └────────────┬─────────────┘   │
-│  ┌──────────────▼───────────────┐  │   │                         │ JSBridge         │
-│  │ vision-server (C++)           │  │   │  ┌──────────────────────▼─────────────┐   │
-│  │  REST / WS → EngineService    │  │   │  │ NAPI / JSBridge 适配层 (C++)          │   │
-│  └──────────────┬───────────────┘  │   │  │  → EngineService                     │   │
-│                 │                  │   │  └──────────────────────┬─────────────┘   │
-└─────────────────┼──────────────────┘   └─────────────────────────┼─────────────────┘
-                  └──────────────────┬─────────────────────────────┘
-                     ┌───────────────▼────────────────┐
-                     │ EngineService（会话、方案、运行） │  ← 两端共用
-                     ├────────────────────────────────┤
-                     │ vision-core                     │
-                     │  数据类型 · 算子注册表 · DAG 执行器 │
-                     │  方案序列化 · 算子库               │
-                     ├───────────────┬────────────────┤
-                     │ IInferBackend │ IImageSource    │
-                     │ ORT / MSLite  │ 文件 / 摄像头     │
-                     └───────────────┴────────────────┘
+┌───────────────── 鸿蒙电脑 ─────────────────┐   ┌──────────── Linux / Windows ───────────────┐
+│ 鸿蒙应用（一个进程）                          │   │ vision-runtime（系统服务，开机自启）            │
+│ ┌────────────────────────────────────────┐ │   │ ┌────────────────────────────────────────┐ │
+│ │ ArkUI 原生页面：工位监控、复判、算子测试    │ │   │ │ HTTP + WebSocket 接口（驱动适配器）        │ │
+│ │ ArkWeb：Web 界面（编辑器等）              │ │   │ ├────────────────────────────────────────┤ │
+│ ├────────────────────────────────────────┤ │   │ │ 核心：BC-1～7、BC-9、BC-10                 │ │
+│ │ NAPI / JSBridge（驱动适配器）             │ │   │ │ 平台适配器                                │ │
+│ ├────────────────────────────────────────┤ │   │ └────────────────────────────────────────┘ │
+│ │ 核心：BC-1～7、BC-9、BC-10（同一份 C++）   │ │   │ 浏览器：Web 界面（同一套代码）                 │
+│ │ 平台适配器                                │ │   └────────────────────────────────────────────┘
+│ └────────────────────────────────────────┘ │
+└────────────────────────────────────────────┘
+                    │  HTTP（异步任务）                         │
+                    └──────────────┬───────────────────────────┘
+                     ┌─────────────▼──────────────┐
+                     │ model-toolchain（BC-8）       │
+                     │ Linux Docker 服务（Python）    │
+                     │ 量化 · 转换 · 验证             │
+                     └────────────────────────────┘
+
+开发机（Mac）：编译运行 vision-runtime + 浏览器，用于日常开发调试；Docker 运行 model-toolchain
 ```
 
-**EngineService** 是两端共用的“应用服务层”：管理会话、已加载的方案、调试缓存、图像缓存。Mac 的 HTTP 服务和鸿蒙的桥接层都只是把请求翻译后转发给它，所以两端的业务逻辑只写一次。
-
-## 3. 模块说明
-
-| 模块 | 目录 | 语言 | 职责 | 依赖 |
-|---|---|---|---|---|
-| vision-core | `core/` | C++17 | 数据类型、算子接口与注册、DAG 执行、方案序列化、算子库 | OpenCV、nlohmann/json |
-| EngineService | `core/service/` | C++17 | 会话、方案管理、运行控制、调试缓存、图像编码 | vision-core |
-| 推理后端 | `core/infer/` | C++17 | `IInferBackend` 及 ORT / MindSpore Lite 实现 | ONNX Runtime / MindSpore Lite |
-| vision-server | `server/` | C++17 | Mac 端 HTTP + WebSocket 服务 | EngineService、cpp-httplib、WS 库 |
-| Web 编辑器 | `web/` | TS / Vue 3 | 节点画布、参数面板、图像查看、ROI、运行页面 | Vue Flow、Konva、Naive UI |
-| 鸿蒙应用 | `harmony/` | ArkTS + C++ | 原生外壳、运行页面、算子测试页面、ArkWeb 容器、NAPI 绑定 | EngineService（交叉编译） |
-
-## 4. 核心数据模型
-
-### 4.1 端口数据类型
-
-所有算子之间传递的数据都属于以下类型之一，用 `std::variant` 统一表示：
-
-| 类型 | 说明 |
-|---|---|
-| `Image` | 封装 `cv::Mat`，引用计数共享，不做深拷贝；记录位深、通道数 |
-| `Region` | 二值区域（掩码 + 外接框） |
-| `BlobList` | Blob 列表：面积、质心、外接框、轮廓、圆度等特征 |
-| `Roi` | 矩形、旋转矩形、圆、多边形 |
-| `Pose` | 平移 + 旋转（+ 缩放），用于定位跟随 |
-| `Point2d` / `Line2d` / `Circle2d` | 亚像素几何元素 |
-| `Number` / `Bool` / `String` | 标量 |
-
-```cpp
-using Value = std::variant<Image, Region, BlobList, Roi, Pose,
-                           Point2d, Line2d, Circle2d, double, bool, std::string>;
-```
-
-### 4.2 算子接口
-
-```cpp
-struct PortDef  { std::string name; PortType type; bool optional = false; };
-struct ParamDef { std::string name; ParamType type; Json defaultValue; Json constraints; std::string label; };
-
-struct OpMeta {
-    std::string id;           // 例如 "vision.threshold"，全局唯一
-    std::string displayName;  // "阈值"
-    std::string category;     // "分割"
-    std::vector<PortDef>  inputs, outputs;
-    std::vector<ParamDef> params;
-};
-
-class Operator {
-public:
-    virtual ~Operator() = default;
-    virtual const OpMeta& meta() const = 0;
-    virtual Status execute(OpContext& ctx) = 0;   // ctx 提供输入、参数，接收输出
-};
-
-// 一行注册（编译期静态注册，见 ADR-05）
-REGISTER_OPERATOR(ThresholdOp);
-```
-
-前端通过 `listOperators()` 拿到所有 `OpMeta`，据此自动渲染节点和参数面板。
-
-### 4.3 DAG 执行
-
-1. 加载方案时构图，校验端口类型和必填输入，并检测是否有环。
-2. 用拓扑排序得到执行顺序（Kahn 算法）。
-3. 按顺序执行每个节点：从上游节点的输出中取数据，调用 `execute`，记录耗时和状态。
-4. 某个节点失败时，其下游节点标记为“跳过”，总判定为 NG（或者 ERROR，可配置）。
-5. 调试模式缓存每个节点的输出；运行模式只保留终端节点的输出。
-6. 并行执行（同一层中互不依赖的节点并发执行）放在 P1，POC 阶段单线程执行。
-
-### 4.4 方案 JSON 示例
-
-```json
-{
-  "schemaVersion": "0.1",
-  "name": "螺丝缺陷检测-示例",
-  "nodes": [
-    { "id": "n1", "op": "vision.load_image", "params": {} },
-    { "id": "n2", "op": "vision.to_gray",    "params": {} },
-    { "id": "n3", "op": "vision.threshold",  "params": { "method": "otsu", "invert": false } },
-    { "id": "n4", "op": "vision.blob",       "params": { "minArea": 50 } },
-    { "id": "n5", "op": "vision.judge",      "params": { "expr": "count == 0" } }
-  ],
-  "edges": [
-    { "from": "n1.image",  "to": "n2.image" },
-    { "from": "n2.image",  "to": "n3.image" },
-    { "from": "n3.region", "to": "n4.region" },
-    { "from": "n4.blobs",  "to": "n5.blobs" }
-  ],
-  "ui": { "n1": { "x": 0, "y": 0 } }
-}
-```
-
-`ui` 字段只供编辑器保存节点位置，引擎会忽略它。
-
-## 5. 前端与引擎的通信
-
-### 5.1 EngineClient 接口（TypeScript）
-
-编辑器只依赖这个接口，不感知自己运行在哪个平台：
-
-```ts
-interface EngineClient {
-  listOperators(): Promise<OpMeta[]>;
-  loadRecipe(recipe: Recipe): Promise<ValidationResult>;
-  run(input: ImageInput, opts: { debug: boolean }): Promise<RunResult>;
-  getNodeOutput(nodeId: string, port: string, view?: ImageView): Promise<NodeOutput>;
-  onEvent(cb: (e: EngineEvent) => void): Unsubscribe;   // 运行进度、日志
-}
-```
-
-| 实现 | 平台 | 通道 |
-|---|---|---|
-| `HttpWsClient` | Mac（浏览器） | REST + WebSocket → vision-server |
-| `BridgeClient` | 鸿蒙电脑（ArkWeb） | JSBridge → C++ 适配层（**待 POC-3b 确定**，候选方案见 03 调研 §3） |
-
-### 5.2 图像传输策略
-
-- 运行结果和调试预览使用**缩小并压缩后的 JPEG/PNG**（长边默认 ≤ 1600 px）。
-- 放大查看时，按视口请求原图的局部区域（`ImageView = { x, y, w, h, scale }`）。
-- 掩码和区域类数据以叠加层的形式传输（轮廓点或低分辨率掩码），由前端绘制。
-- 鸿蒙桥接层如果不支持直接传二进制，就降级为 Base64 编码（待 POC 验证性能）。
-
-### 5.3 Mac 端 REST 草案
-
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| GET | `/api/operators` | 算子列表及元数据 |
-| POST | `/api/recipes/validate` | 校验方案 |
-| POST | `/api/run` | 运行（multipart：图像 + 方案 ID，或者使用当前方案） |
-| GET | `/api/runs/{runId}/nodes/{nodeId}/{port}` | 获取节点输出（带视口参数） |
-| WS | `/ws` | 事件推送 |
-
-## 6. 推理后端
-
-```cpp
-class IInferBackend {
-public:
-    virtual Status load(const ModelSpec& spec) = 0;           // 模型路径、输入输出名、预处理配置
-    virtual Status infer(const std::vector<Tensor>& in, std::vector<Tensor>& out) = 0;
-    virtual std::string name() const = 0;
-};
-```
-
-| 平台 | 实现 | 模型格式 | 加速 |
+| 部署单元 | 包含的上下文 | 平台 | 说明 |
 |---|---|---|---|
-| macOS | ONNX Runtime | `.onnx` | CPU（CoreML 执行器作为可选项） |
-| 鸿蒙 | MindSpore Lite | `.ms`（从 ONNX 转换） | CPU → NNRt / NPU（待 POC-4） |
+| 鸿蒙应用 | BC-1～7、BC-9、BC-10 | 鸿蒙电脑 | 核心编译成 `.so`，由 ArkTS 外壳加载 |
+| vision-runtime | BC-1～7、BC-9、BC-10 | Linux、Windows（开发时 Mac） | 作为系统服务运行，开机自启即热启动；界面通过浏览器访问 |
+| model-toolchain | BC-8 | Linux（Docker） | 可部署在开发机、产线 Linux 主机或服务器上 |
 
-模型统一维护 ONNX 一份，`models/` 目录下提供转换脚本。预处理（缩放、归一化）放在 C++ 算子里实现，保证两端一致。
+## 3. 分层（每个上下文内部）
 
-## 7. 构建与交叉编译
+```
+┌──────────────────────────────────────────────────────┐
+│ 驱动适配器：HTTP 路由 / NAPI 绑定 / 命令行 / 测试           │  把外部请求翻译成应用服务调用
+├──────────────────────────────────────────────────────┤
+│ 应用层：应用服务（用例）、事件处理器、DTO                   │  取聚合 → 调用领域对象 → 保存 → 发事件
+├──────────────────────────────────────────────────────┤
+│ 领域层：聚合、实体、值对象、领域服务、领域事件、             │  全部业务规则
+│        仓储接口、端口接口                                 │
+├──────────────────────────────────────────────────────┤
+│ 共享内核：视觉基础类型                                    │
+└──────────────────────────────────────────────────────┘
+        ▲ 实现接口
+┌──────────────────────────────────────────────────────┐
+│ 被驱动适配器：仓储实现、推理后端、图像编解码、图像源、         │  技术细节
+│              方案包文件、模型工具链客户端、事件总线           │
+└──────────────────────────────────────────────────────┘
+```
 
-| 目标 | 工具链 | 说明 |
-|---|---|---|
-| Mac | CMake + AppleClang；依赖通过 Homebrew 安装 | `cmake --preset mac` |
-| 鸿蒙 | 鸿蒙 NDK 自带的 CMake 和 Clang，目标 `arm64-v8a` | 第三方库（OpenCV 等）用 lycium 框架或自行交叉编译，详见 03 调研 §2 |
-| Web | Vite | Mac 端由 vision-server 托管静态文件；鸿蒙端打包进 App 的 rawfile |
+## 4. 代码结构
 
-**算子在两端共用同一份源码**，鸿蒙工程的 `CMakeLists.txt` 直接引用 `core/`。
-
-## 8. 架构决策记录（ADR）
-
-| 编号 | 决策点 | 选择 | 备选方案 | 理由 | 状态 |
-|---|---|---|---|---|---|
-| ADR-01 | 核心语言 | C++17 | C++20、Rust | 两端编译器都支持得好；团队熟悉 | 已定 |
-| ADR-02 | 构建 | CMake | Bazel、xmake | 鸿蒙 NDK 原生支持 | 已定 |
-| ADR-03 | 图像库 | OpenCV 4（裁剪模块） | 全部自研 | 生态成熟，lycium 有现成配方；核心算法另外手写一份用于学习和对照 | 待 POC-3a |
-| ADR-04 | 流程模型 | DAG + 拓扑排序 | 状态机、脚本 | 直观，适合可视化 | 已定 |
-| ADR-05 | 算子扩展 | 编译期静态注册 | 动态加载 .so | 鸿蒙沙箱限制动态加载；两端用同一套机制 | 已定 |
-| ADR-06 | 方案格式 | JSON + `schemaVersion` | YAML、protobuf | 前端、C++、ArkTS 都能直接读写 | 已定 |
-| ADR-07 | 编辑器 | Web：Vue 3 + TS + Vite + Vue Flow + Konva + Naive UI | Qt、React、ArkUI 原生 | 一套代码两端复用；美观；与 ArkTS 语法相近 | 已定 |
-| ADR-08 | 鸿蒙端 UI | ArkUI 原生外壳 + ArkWeb 嵌入编辑器 | 纯 WebView 套壳、纯原生 | 兼顾复用与原生开发能力（比赛看重原生） | 已定 |
-| ADR-09 | Mac 端通信 | 本地 HTTP + WebSocket | Electron + Node 插件、Tauri | 不用打包，浏览器刷新即可，迭代最快 | 已定 |
-| ADR-10 | 鸿蒙端通信 | ArkWeb JSBridge（C++ 侧直接注册，或经过 ArkTS） | App 进程内起本地 HTTP 服务 | 官方支持的机制 | **待 POC-3b** |
-| ADR-11 | 推理 | `IInferBackend`：ORT / MindSpore Lite | 两端都用 ORT | 鸿蒙上 MindSpore Lite 是系统能力，可以用 NPU | 待 POC-4 |
-| ADR-12 | 测试 | GoogleTest + 图像回归测试 | Catch2 | 主流 | 已定 |
-| ADR-13 | 仓库 | 单仓库 | 多仓库 | 小团队管理简单 | 已定 |
-| ADR-14 | 鸿蒙设备类型 | `2in1` 为主，兼容 `tablet` | 只做 `2in1` | 平板可以用于拍照演示 | 已定 |
-| ADR-15 | 编辑器交互 | 键鼠优先，触屏适配为 P2 | 触屏优先 | 主目标是电脑 | 已定 |
-
-## 9. 目录结构
+### 4.1 目录
 
 ```
 vision-platform/
-├── core/
-│   ├── include/vision/     # 公共头文件：types.h, operator.h, graph.h, recipe.h
-│   ├── src/                # 执行器、注册表、序列化
-│   ├── ops/                # 算子库（每个算子一个 .cpp）
-│   ├── service/            # EngineService
-│   ├── infer/              # 推理后端
-│   └── tests/
-├── server/                 # vision-server（Mac）
-├── cli/                    # 命令行运行器：vision-run recipe.json image.png
-├── web/                    # Vue 3 编辑器
-├── harmony/                # DevEco 工程
-│   └── entry/src/main/
-│       ├── ets/            # ArkTS 页面
-│       ├── cpp/            # NAPI / JSBridge 适配层，CMake 引用 ../../core
-│       └── resources/rawfile/web/   # 打包好的 Web 编辑器
-├── models/                 # ONNX 模型、转换脚本
-├── samples/                # 示例图像、示例方案
-├── third_party/            # 交叉编译脚本和产物说明（不提交二进制）
+├── core/                         # C++17，平台无关
+│   ├── kernel/                   # 共享内核：Image、Region、Roi、Pose、Measurement、PortType……
+│   ├── common/                   # 技术通用：Result、ID 生成、事件总线接口、时钟接口（不含业务）
+│   └── contexts/
+│       ├── catalog/              # BC-1 算子目录
+│       │   ├── domain/
+│       │   └── application/
+│       ├── authoring/            # BC-2 方案编排     （同样分 domain/ application/）
+│       ├── execution/            # BC-3 检测执行
+│       ├── release/              # BC-4 上线管理
+│       ├── station/              # BC-5 工位运行
+│       ├── calibration/          # BC-6 标定
+│       ├── models/               # BC-7 模型仓库
+│       ├── data/                 # BC-9 数据（含标注）
+│       └── quality/              # BC-10 质量分析
+├── operators/                    # 算子实现（策略模式，依赖 OpenCV），按类别分子目录
+├── adapters/                     # 被驱动适配器
+│   ├── persistence/              # JSON 文件仓储、SQLite 仓储、内容寻址文件存储
+│   ├── inference/                # ort/、mslite/
+│   ├── imaging/                  # OpenCV 编解码；图像源：file/、uvc/、harmony_camera/
+│   ├── exchange/                 # 方案包文件适配器
+│   ├── toolchain_client/         # 调用 model-toolchain 的 HTTP 客户端
+│   └── eventbus/                 # 进程内事件总线
+├── apps/                         # 驱动适配器 + 组装根（composition root）
+│   ├── runtime/                  # vision-runtime：HTTP/WS 服务，Linux / Windows / Mac
+│   ├── harmony/                  # DevEco 工程：ArkTS 页面 + NAPI/JSBridge
+│   └── cli/                      # 命令行：运行方案、导入导出方案包、调试
+├── web/                          # Vue 3 界面；PlatformClient 接口（Http 实现 / Bridge 实现）
+├── toolchain/                    # BC-8：Python 服务 + Dockerfile
+├── samples/                      # 示例图像、示例方案、基准图集
 └── docs/
 ```
+
+### 4.2 每个上下文对外暴露什么
+
+每个上下文的 `application/` 目录下有一个**公开接口**头文件（`api.h`），只包含：
+- 应用服务（命令和查询）
+- DTO（数据传输对象）
+- 该上下文发布的领域事件
+
+其他上下文和适配器**只能包含 `api.h`**，不能包含对方 `domain/` 下的任何头文件。
+
+### 4.3 用构建系统强制边界
+
+每个上下文是两个 CMake 目标：`<ctx>_domain` 和 `<ctx>_application`。依赖关系由 `CMakeLists.txt` 显式声明：
+
+| 目标 | 可以链接 | 不可以链接 |
+|---|---|---|
+| `<ctx>_domain` | `kernel`、`common` | 任何其他上下文、OpenCV、任何适配器 |
+| `<ctx>_application` | 本上下文的 `domain`；其他上下文的 `application`（只用 `api.h`） | 其他上下文的 `domain` |
+| `operators` | `kernel`、`catalog_application`、OpenCV | 其他上下文 |
+| `adapters/*` | 需要实现的接口所在的 `domain` 或 `application` | — |
+
+违反边界会**编译失败**，不靠代码审查发现。（这也是第 2 步“统一语言写进类型系统”思路的延伸。）
+
+## 5. 平台差异：只在适配器里
+
+| 端口（领域层定义） | 鸿蒙电脑 | Linux | Windows | 开发机 Mac |
+|---|---|---|---|---|
+| 驱动入口 | NAPI / ArkWeb JSBridge | HTTP + WS | HTTP + WS | HTTP + WS |
+| `InferBackend` | MindSpore Lite | ONNX Runtime | ONNX Runtime | ONNX Runtime |
+| `ImageSource` | 文件、鸿蒙相机、USB 摄像头（待 POC） | 文件、V4L2 摄像头 | 文件、DirectShow/MSMF 摄像头 | 文件、AVFoundation 摄像头 |
+| 仓储、文件存储 | 应用沙箱目录 | 数据目录 | 数据目录 | 数据目录 |
+| 热启动方式 | 应用启动时恢复（开机自启能力待 POC） | systemd 服务 | Windows 服务 | 手动启动 |
+| `ModelToolchain` 客户端 | HTTP | HTTP | HTTP | HTTP |
+
+**核心代码在所有平台上完全相同。** 新增一个平台 = 实现上表中的一列适配器 + 一个组装根。
+
+## 6. 关键机制
+
+### 6.1 持久化
+
+| 数据 | 存储方式 | 理由 |
+|---|---|---|
+| 方案、方案版本、上线包、基准图集、工位、标定档案、模型版本元数据 | **JSON 文件**（每个聚合一个文件） | 数量少；人能直接读；方便调试和跨平台拷贝 |
+| 检测记录、样本、复判记录 | **SQLite** | 数量大，需要查询和统计 |
+| 图像、模板、模型制品 | **内容寻址文件存储**（文件名 = 内容哈希） | 自动去重；校验完整性；方案包和上线包按哈希引用 |
+
+### 6.2 领域事件
+
+- 进程内事件总线（`adapters/eventbus`），**在聚合保存成功后**发布。
+- 事件处理器在应用层，一个处理器只修改一个聚合。
+- MVP 阶段：同步分发；如果在“保存”和“发布”之间程序崩溃，事件会丢失，可以接受。以后需要可靠性时引入发件箱（outbox）模式。
+- 部分事件同时转发到 WebSocket / JSBridge，供界面实时刷新（节点执行进度、检测结果、热切换）。
+
+### 6.3 工位运行与热切换
+
+```
+每个工位一个工作线程（D5-4：顺序执行检测）
+
+  图像到达 ──► Station.beginInspection() ──► 如有已就绪的待切换上线包则切换（HotSwapped）
+                                         └► 返回本次检测的上线包 + 标定档案
+           ──► 用该上线包的 ExecutionPlan 执行检测 ──► InspectionCompleted
+           ──► Station.recordOutcome()（连续 ERROR 达到 N 次则自动回滚）
+
+部署新上线包（后台线程）：
+  Station.deploy() ──► ReleaseLoader 加载 ExecutionPlan、模型、预热 ──► markPendingReady()
+  （加载期间旧上线包照常检测；内存中短暂同时存在新旧两套资源）
+```
+
+### 6.4 检测引擎
+
+- `ExecutionPlanner` 把方案版本编译成 `ExecutionPlan`：拓扑排序（Kahn 算法）、绑定输入输出、实例化算子、解析模型和标定。
+- 编译结果按“上线包 + 标定档案”缓存，热切换时直接复用已加载好的计划。
+- 同一套引擎服务于三种用途：调试运行（缓存全部中间结果）、一致性验证、产线检测（只保留需要的输出）。
+
+### 6.5 算子
+
+```cpp
+class Operator {
+public:
+    virtual ~Operator() = default;
+    virtual const OperatorMeta& meta() const = 0;     // ID、主版本号、端口、参数定义
+    virtual Status execute(OpContext& ctx) = 0;
+};
+REGISTER_OPERATOR(ThresholdOp);   // 编译期静态注册（鸿蒙不能动态加载 .so）
+```
+
+算子属于通用域的封装，**不使用 DDD 战术模式**，只依赖共享内核的类型。
+
+### 6.6 界面与平台通信
+
+- Web 界面只依赖 `PlatformClient` 接口（TypeScript），有两个实现：`HttpClient`（Linux / Windows / Mac）和 `BridgeClient`（鸿蒙 ArkWeb，具体桥接方式待 POC）。
+- 接口按上下文分组，和各上下文 `api.h` 中的应用服务一一对应。
+- 图像传输：预览用缩小的 JPEG；放大时按视口请求原图的局部区域。
+
+### 6.7 模型工具链（BC-8）
+
+- Python 服务（FastAPI），打包成 Docker 镜像，基于 Ubuntu 22.04（MindSpore Lite 转换工具的要求）。
+- 接口是异步任务：提交任务 → 查询进度 → 下载模型制品和验证报告。
+- 内部通过防腐层调用 ONNX Runtime 量化工具和 MindSpore Lite 转换工具。
+
+## 7. 架构决策记录（ADR）
+
+v0.1 中仍然有效的决策保留编号；作废的标注说明。
+
+| 编号 | 决策 | 状态 |
+|---|---|---|
+| ADR-01 | 核心语言 C++17 | 有效 |
+| ADR-02 | 构建系统 CMake | 有效 |
+| ADR-03 | 图像库 OpenCV 4（裁剪模块） | 有效，待 POC 验证鸿蒙移植 |
+| ADR-04 | 流程模型 DAG + 拓扑排序 | 有效 |
+| ADR-05 | 算子编译期静态注册 | 有效 |
+| ADR-06 | 方案格式 JSON + `schemaVersion` | 有效 |
+| ADR-07 | 界面使用 Web（Vue 3 + TS + Vue Flow + Konva + Naive UI） | 有效 |
+| ADR-08 | 鸿蒙端：ArkUI 原生外壳 + ArkWeb 嵌入 Web 界面 | 有效 |
+| ADR-09 | ~~Mac 端本地 HTTP + WS~~ → 改为：Linux / Windows 上的 vision-runtime 提供 HTTP + WS；Mac 仅用于开发 | **修订** |
+| ADR-10 | 鸿蒙端桥接方式 | 待 POC |
+| ADR-11 | 推理后端接口：ONNX Runtime / MindSpore Lite | 有效，待 POC |
+| ADR-12 | 测试：GoogleTest + 图像回归测试（基准图集） | 有效 |
+| ADR-13 | 单仓库 | 有效 |
+| ADR-14 | 鸿蒙设备类型以 `2in1` 为主 | 有效 |
+| ADR-15 | 编辑器以键鼠操作优先 | 有效 |
+| **ADR-16** | **采用 DDD + 六边形架构**；上下文划分见 ddd/04 | 新增 |
+| **ADR-17** | **每个上下文拆成 domain / application 两个 CMake 目标，边界由链接规则强制** | 新增 |
+| **ADR-18** | **Linux / Windows 上的运行时作为系统服务运行**，开机自启即热启动 | 新增 |
+| **ADR-19** | **模型工具链是独立的 Python + Docker 服务** | 新增 |
+| **ADR-20** | **持久化：聚合用 JSON 文件；检测记录等用 SQLite；二进制用内容寻址文件存储** | 新增，待确认 |
+| **ADR-21** | **进程内事件总线，保存后同步发布**；可靠性需求出现后再引入发件箱 | 新增 |
+
+## 8. 🟥 待确认
+
+| # | 问题 | 建议 |
+|---|---|---|
+| D6-1 | 持久化方案（ADR-20） | 如上：JSON + SQLite + 内容寻址存储 |
+| D6-2 | Linux / Windows 上的界面：浏览器访问，还是打包成桌面应用（Electron / Tauri）？ | MVP 用浏览器（产线电脑可以用全屏的“信息亭模式”）；需要时再打包 |
+| D6-3 | 用构建系统强制上下文边界（ADR-17） | 采用。前期多写一点 CMake，换来边界永远不会被悄悄破坏 |
+| D6-4 | 鸿蒙电脑上长时间运行产线检测：应用能否保持后台运行、能否开机自启？ | 列为新的 POC 项（POC-8） |
