@@ -15,6 +15,8 @@ trap 'rm -rf "$OUT"' EXIT
 WARN="-std=c++17 -Wall -Wextra -Wpedantic -Werror -g"
 ASAN="$WARN -fsanitize=address,undefined"
 TSAN="$WARN -pthread -fsanitize=thread"
+# 屏蔽标准库里一处已知的误报，原因见 tsan_suppressions.txt
+export TSAN_OPTIONS="suppressions=$PWD/tsan_suppressions.txt"
 
 # run <目录> <编译选项> <源文件...>      编译并运行
 run() {

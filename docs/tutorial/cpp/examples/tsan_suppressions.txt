@@ -1,0 +1,8 @@
+# ThreadSanitizer 的已知误报，由 run_all.sh 通过 TSAN_OPTIONS 加载。
+#
+# 任务里抛出的异常经 future 传给另一个线程时，异常对象由两个线程共同持有，
+# 靠标准库内部的引用计数决定谁最后释放它。系统自带的标准库没有用线程检查工具编译，
+# 工具看不到这个引用计数，于是把“一个线程读过异常信息、另一个线程后来释放它”误报成数据竞争。
+# 只屏蔽标准库里这两处，不影响对我们自己代码的检查。
+race:std::__exception_ptr::exception_ptr
+race:std::runtime_error::~runtime_error
