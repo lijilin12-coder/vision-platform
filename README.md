@@ -49,6 +49,7 @@ VID=$(./build/apps/vision-cli recipe publish $RID)
 | [docs/poc/poc-1-report.md](docs/poc/poc-1-report.md) | POC-1 结论报告 |
 | [docs/dev/build.md](docs/dev/build.md) | 构建与运行 |
 | [docs/dev/how-to-add-operator.md](docs/dev/how-to-add-operator.md) | 如何新增一个算子 |
+| [docs/tutorial/cpp/](docs/tutorial/cpp/README.md) | 现代工程 C++ 教程（从竞赛写法到工程写法） |
 
 ## 目录结构（计划）
 
