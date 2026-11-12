@@ -99,6 +99,26 @@ TEST(Logger, FiltersByLevel) {
     EXPECT_EQ(sink->records.size(), 2u);
 }
 
+TEST(Logger, CopiesTextSoTemporariesAreSafe) {
+    // 写日志时传入的只是“视图”，不复制字符；确实要输出时，Logger 才把内容复制进记录。
+    // 所以调用返回之后，原来的字符串即使被销毁或修改，记录里的内容也不受影响。
+    Logger logger;
+    auto sink = std::make_shared<MemorySink>();
+    logger.addSink(sink);
+    {
+        std::string component = "station";
+        std::string value = "R-1";
+        logger.write(LogLevel::Info, component, std::string("热切换") + "完成", {{"from", value}, {"n", std::to_string(42)}});
+        component = "xxxxxxx";
+        value = "yyy";
+    }
+    ASSERT_EQ(sink->records.size(), 1u);
+    EXPECT_EQ(sink->records[0].component, "station");
+    EXPECT_EQ(sink->records[0].message, "热切换完成");
+    EXPECT_EQ(sink->records[0].fields.at(0).second, "R-1");
+    EXPECT_EQ(sink->records[0].fields.at(1).second, "42");
+}
+
 TEST(RotatingFileSink, AppendsAcrossRestarts) {
     const fs::path dir = tempDir("append");
     {
