@@ -21,6 +21,7 @@
 | [docs/ddd/03-subdomains.md](docs/ddd/03-subdomains.md) | 子域划分 |
 | [docs/ddd/04-context-map.md](docs/ddd/04-context-map.md) | 限界上下文与上下文映射 |
 | [docs/ddd/05-tactical-design.md](docs/ddd/05-tactical-design.md) | 核心上下文的战术设计 |
+| [docs/ddd/06-scenario-walkthrough.md](docs/ddd/06-scenario-walkthrough.md) | 关键场景走查与发现的问题 |
 
 ### 工程文档
 
