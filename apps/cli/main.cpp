@@ -16,10 +16,19 @@
 
 #include "vision/authoring/api.h"
 #include "vision/catalog/api.h"
+#include "vision/common/path.h"
 #include "vision/eventbus/in_memory_event_bus.h"
 #include "vision/execution/api.h"
 #include "vision/imaging/cv_bridge.h"
 #include "vision/persistence/json_repositories.h"
+
+#ifdef _WIN32
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
+#include <shellapi.h>
+#endif
 
 namespace fs = std::filesystem;
 using namespace vision;
@@ -125,7 +134,7 @@ int cmdOperators() {
 
 // 草稿描述文件：{ "name": ..., "nodes": [{"key","operator","params","roi"}], "edges": [["a.out","b.in"]] }
 int cmdRecipeBuild(App& app, const std::string& path) {
-    std::ifstream in(path);
+    std::ifstream in(pathFromUtf8(path));
     if (!in) return fail({"cli.read", "无法读取 " + path});
     nlohmann::json j;
     try {
@@ -185,16 +194,17 @@ int cmdRecipeShow(App& app, const std::string& rid) {
 std::vector<fs::path> expandImages(const std::vector<std::string>& args) {
     std::vector<fs::path> out;
     for (const auto& a : args) {
-        if (fs::is_directory(a)) {
+        const fs::path p = pathFromUtf8(a);
+        if (fs::is_directory(p)) {
             std::vector<fs::path> files;
-            for (const auto& e : fs::directory_iterator(a)) {
-                const auto ext = e.path().extension().string();
+            for (const auto& e : fs::directory_iterator(p)) {
+                const auto ext = pathToUtf8(e.path().extension());
                 if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp") files.push_back(e.path());
             }
             std::sort(files.begin(), files.end());
             out.insert(out.end(), files.begin(), files.end());
         } else {
-            out.emplace_back(a);
+            out.push_back(p);
         }
     }
     return out;
@@ -205,11 +215,11 @@ int cmdInspect(App& app, const std::string& versionId, const std::vector<std::st
     if (!doc) return fail(doc.error());
     std::map<std::string, int> tally;
     for (const auto& path : expandImages(inputs)) {
-        auto img = imaging::loadImage(path.string());
+        auto img = imaging::loadImage(pathToUtf8(path));
         if (!img) return fail(img.error());
         auto report = app.execution.inspect(doc.value(), img.value());
         if (!report) return fail(report.error());
-        printReport(report.value(), path.filename().string());
+        printReport(report.value(), pathToUtf8(path.filename()));
         ++tally[report.value().verdict];
     }
     std::cout << "合计：OK " << tally["OK"] << "，NG " << tally["NG"] << "，ERROR " << tally["ERROR"] << "\n";
@@ -232,7 +242,8 @@ int cmdDebug(App& app, const std::string& rid, const std::string& image) {
 
 // 示例图像：灰色背景上的“零件”（暗矩形），缺陷品带有亮斑。
 int cmdSampleImages(const std::string& dir) {
-    fs::create_directories(dir);
+    const fs::path outDir = pathFromUtf8(dir);
+    fs::create_directories(outDir);
     std::mt19937 rng(42);
     std::normal_distribution<double> noise(0, 4);
     auto make = [&](int defects) {
@@ -255,21 +266,49 @@ int cmdSampleImages(const std::string& dir) {
                    Sample{"ng_02_three_spots.png", 3}}) {
         auto img = imaging::fromMat(make(s.defects));
         if (!img) return fail(img.error());
-        if (auto st = imaging::saveImage((fs::path(dir) / s.name).string(), img.value()); !st) return fail(st.error());
-        std::cout << (fs::path(dir) / s.name).string() << "\n";
+        const std::string file = pathToUtf8(outDir / s.name);
+        if (auto st = imaging::saveImage(file, img.value()); !st) return fail(st.error());
+        std::cout << file << "\n";
     }
     return 0;
+}
+
+
+// 取得 UTF-8 编码的命令行参数，并让控制台按 UTF-8 显示。
+// Windows 上 main 的 argv 是本地编码（中文系统为 GBK），控制台默认也不是 UTF-8，
+// 不处理的话，中文参数会变成乱码，中文输出也会显示成乱码。
+std::vector<std::string> utf8Args(int argc, char** argv) {
+#ifdef _WIN32
+    (void)argc;
+    (void)argv;
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
+    std::vector<std::string> args;
+    int count = 0;
+    wchar_t** wide = CommandLineToArgvW(GetCommandLineW(), &count);
+    if (wide == nullptr) return args;
+    for (int i = 1; i < count; ++i) {
+        const int size = WideCharToMultiByte(CP_UTF8, 0, wide[i], -1, nullptr, 0, nullptr, nullptr);
+        std::string arg(size > 0 ? static_cast<size_t>(size - 1) : 0, '\0');
+        if (size > 1) WideCharToMultiByte(CP_UTF8, 0, wide[i], -1, arg.data(), size, nullptr, nullptr);
+        args.push_back(std::move(arg));
+    }
+    LocalFree(wide);
+    return args;
+#else
+    return std::vector<std::string>(argv + 1, argv + argc);
+#endif
 }
 
 }  // namespace
 
 int main(int argc, char** argv) {
-    std::vector<std::string> args(argv + 1, argv + argc);
+    std::vector<std::string> args = utf8Args(argc, argv);
     fs::path data = "vision-data";
     bool verbose = false;
     for (size_t i = 0; i < args.size();) {
         if (args[i] == "--data" && i + 1 < args.size()) {
-            data = args[i + 1];
+            data = pathFromUtf8(args[i + 1]);
             args.erase(args.begin() + i, args.begin() + i + 2);
         } else if (args[i] == "--events") {
             verbose = true;

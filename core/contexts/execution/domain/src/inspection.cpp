@@ -25,9 +25,9 @@ const char* toString(NodeStatus s) {
 
 const char* toString(VerdictKind v) {
     switch (v) {
-        case VerdictKind::OK: return "OK";
-        case VerdictKind::NG: return "NG";
-        case VerdictKind::ERROR: return "ERROR";
+        case VerdictKind::Ok: return "OK";
+        case VerdictKind::Ng: return "NG";
+        case VerdictKind::Error: return "ERROR";
     }
     return "unknown";
 }
@@ -65,11 +65,11 @@ Status Inspection::complete(Verdict verdict) {
     // I2：有节点失败时，判定必须为 ERROR
     const bool anyFailed = std::any_of(executions_.begin(), executions_.end(),
                                        [](const NodeExecution& e) { return e.status != NodeStatus::Succeeded; });
-    if (anyFailed && verdict.kind != VerdictKind::ERROR) {
+    if (anyFailed && verdict.kind != VerdictKind::Error) {
         return Status::failure("execution.verdict_inconsistent", "有节点执行失败，判定必须为 ERROR");
     }
     // I4：判定为 NG 时，至少有一条不合格的判定依据
-    if (verdict.kind == VerdictKind::NG &&
+    if (verdict.kind == VerdictKind::Ng &&
         std::none_of(verdict.reasons.begin(), verdict.reasons.end(), [](const VerdictReason& r) { return !r.pass; })) {
         return Status::failure("execution.verdict_inconsistent", "判定为 NG，但没有不合格的判定依据");
     }

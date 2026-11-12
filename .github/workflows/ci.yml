@@ -1,0 +1,109 @@
+name: CI
+
+# 每次推送和每个 PR：在 Windows 和 Linux 上编译并运行全部测试。
+# macOS 不在这里构建：日常开发就在 Mac 上进行，而且 macOS 构建机在私有仓库中按 10 倍计费。
+
+on:
+  push:
+    branches: [main]   # 分支上的推送由 pull_request 触发，避免同一次推送构建两遍
+    paths-ignore: ["docs/**/*.md", "*.md"]
+  pull_request:
+    paths-ignore: ["docs/**/*.md", "*.md"]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Linux (GCC)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装依赖
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q ninja-build libopencv-dev nlohmann-json3-dev libgtest-dev
+      - name: 配置
+        run: cmake --preset default
+      - name: 编译
+        run: cmake --build --preset default
+      - name: 测试
+        run: ctest --preset default
+      - name: 编译并运行教程示例
+        run: |
+          set -e
+          F="-std=c++17 -Wall -Wextra -Wpedantic -Werror -g -fsanitize=address,undefined"
+          cd docs/tutorial/cpp/examples/lesson00
+          g++ $F main.cpp blob_count.cpp -o main && test "$(./main < input.txt)" = "2"
+          g++ $F test.cpp blob_count.cpp -o t && ./t
+          cd ../lesson01
+          g++ $F test.cpp my_string.cpp -o t && ./t
+          g++ $F complex_rule_of_zero.cpp -o c && ./c
+          g++ $F c_style.cpp -o s && ./s
+
+  windows:
+    name: Windows (MSVC)
+    runs-on: windows-2022
+    timeout-minutes: 90
+    env:
+      VCPKG_ROOT: C:\vcpkg
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\.vcpkg-cache
+    steps:
+      - uses: actions/checkout@v4
+      - name: 准备 vcpkg 二进制缓存目录
+        run: New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE
+      - name: 恢复 vcpkg 二进制缓存
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}\.vcpkg-cache
+          key: vcpkg-x64-windows-static-md-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-x64-windows-static-md-
+      - name: 安装 Ninja
+        run: choco install ninja -y --no-progress
+      - name: 设置 MSVC 环境
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: 指定使用 C:\vcpkg
+        # “设置 MSVC 环境”会把 VCPKG_ROOT 改成 Visual Studio 自带的 vcpkg，这里改回来
+        shell: pwsh
+        run: Add-Content -Path $env:GITHUB_ENV -Value "VCPKG_ROOT=C:\vcpkg"
+      - name: 配置（首次会编译 OpenCV，较慢）
+        run: cmake --preset windows
+      - name: 编译
+        run: cmake --build --preset windows
+      - name: 测试
+        run: ctest --preset windows
+      - name: 命令行冒烟测试（含中文目录）
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+          function Check { if ($LASTEXITCODE -ne 0) { throw "命令失败，退出码 $LASTEXITCODE" } }
+          $cli = ".\build\apps\vision-cli.exe"
+          $data = "$env:RUNNER_TEMP\数据目录"
+          $images = "$env:RUNNER_TEMP\示例图像"
+          & $cli --data $data sample-images $images; Check
+          $rid = (& $cli --data $data recipe build samples\recipes\bright-spot.draft.json | Select-Object -Last 1).Trim(); Check
+          $vid = (& $cli --data $data recipe publish $rid | Select-Object -Last 1).Trim(); Check
+          $out = & $cli --data $data inspect $vid $images; Check
+          $out
+          if (-not ($out -match "OK 2.+NG 2.+ERROR 0")) { throw "检测结果与预期不符" }
+      - name: 编译并运行教程示例
+        shell: cmd
+        run: |
+          set F=/nologo /std:c++17 /W4 /EHsc /utf-8
+          cd docs\tutorial\cpp\examples\lesson00
+          cl %F% main.cpp blob_count.cpp /Fe:main.exe || exit /b 1
+          cl %F% test.cpp blob_count.cpp /Fe:t.exe || exit /b 1
+          t.exe || exit /b 1
+          cd ..\lesson01
+          cl %F% test.cpp my_string.cpp /Fe:t.exe || exit /b 1
+          t.exe || exit /b 1
+          cl %F% complex_rule_of_zero.cpp /Fe:c.exe || exit /b 1
+          c.exe || exit /b 1
+          cl %F% c_style.cpp /Fe:s.exe || exit /b 1
+          s.exe || exit /b 1

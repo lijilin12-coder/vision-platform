@@ -2,7 +2,8 @@
 
 可编排的工业外观缺陷检测与测量平台。用户通过拖拽算子组合检测方案，完成缺陷检测、尺寸测量和定位；方案与平台无关，支持数据闭环、模型工具链，以及产线不停机的热更新。
 
-- **运行平台**：鸿蒙电脑（优先）、Linux、Windows；Mac 仅作为开发机
+- **部署平台**：鸿蒙电脑（主要）、Windows（第二平台）；Linux 保持可编译
+- **开发平台**：macOS 和 Windows 都是开发机，由自动构建保证互不影响
 - **核心**：C++17，领域驱动设计 + 六边形架构，各平台共用
 - **界面**：Web（Vue 3），鸿蒙端为原生 ArkUI 外壳加 ArkWeb
 - **模型工具链**：独立的 Linux 服务（Python + Docker）
@@ -12,7 +13,7 @@
 ## 快速开始
 
 ```bash
-cmake -S . -B build -G Ninja && cmake --build build && (cd build && ctest)
+cmake --preset default && cmake --build --preset default && ctest --preset default   # Windows 上把 default 换成 windows
 ./build/apps/vision-cli sample-images samples/images
 RID=$(./build/apps/vision-cli recipe build samples/recipes/bright-spot.draft.json)
 VID=$(./build/apps/vision-cli recipe publish $RID)
@@ -49,6 +50,7 @@ VID=$(./build/apps/vision-cli recipe publish $RID)
 | [docs/poc/poc-1-report.md](docs/poc/poc-1-report.md) | POC-1 结论报告 |
 | [docs/dev/build.md](docs/dev/build.md) | 构建与运行 |
 | [docs/dev/how-to-add-operator.md](docs/dev/how-to-add-operator.md) | 如何新增一个算子 |
+| [docs/tutorial/cpp/](docs/tutorial/cpp/README.md) | 现代工程 C++ 教程（从竞赛写法到工程写法） |
 
 ## 目录结构（计划）
 

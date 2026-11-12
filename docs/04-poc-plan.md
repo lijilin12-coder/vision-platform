@@ -26,16 +26,16 @@
 
 | 编号 | 内容 | 环境 | 预估 |
 |---|---|---|---|
-| **POC-1** | **核心骨架**：共享内核 + BC-1 / BC-2 / BC-3 的领域层和应用层 + 5 个算子 + JSON 仓储 + 命令行；CMake 强制上下文边界 | Mac（开发机）、Linux | 5–7 天 |
-| POC-3a | OpenCV 和核心交叉编译到鸿蒙 + NAPI 调用 + ArkUI 显示结果 | Mac + Ubuntu 容器 + 鸿蒙模拟器 | 4–6 天 |
+| **POC-1** | **核心骨架**：共享内核 + BC-1 / BC-2 / BC-3 的领域层和应用层 + 5 个算子 + JSON 仓储 + 命令行；CMake 强制上下文边界 | 开发机（Mac、Windows）、Linux | 5–7 天 |
+| POC-3a | OpenCV 和核心交叉编译到鸿蒙 + NAPI 调用 + ArkUI 显示结果 | 开发机 + Ubuntu 22.04（Docker 或 WSL2）+ 鸿蒙模拟器 | 4–6 天 |
 | POC-3b | ArkWeb 嵌入 Web 界面 + 桥接调用核心；对比三种桥接方式 | **鸿蒙电脑真机** | 4–5 天 |
-| POC-4 | ONNX Runtime 与 MindSpore Lite 的推理一致性 | Mac / Linux + 模拟器 → 真机 | 3–5 天 |
+| POC-4 | ONNX Runtime 与 MindSpore Lite 的推理一致性 | 开发机 + 模拟器 → 真机 | 3–5 天 |
 | POC-8 | 鸿蒙电脑长时间运行（≥ 8 小时连续检测）、后台运行、开机自启 | 鸿蒙电脑真机 | 1–2 天（含长时间运行） |
-| POC-9 | **热切换**：BC-5 `Station` 聚合的最小实现；连续检测过程中部署新上线包、切换、回滚 | Mac / Linux | 3–4 天 |
-| POC-10 | 模型工具链 Docker 镜像：ONNX → MindSpore Lite 转换、INT8 量化 | Docker（Mac 或 Linux） | 2–3 天 |
+| POC-9 | **热切换**：BC-5 `Station` 聚合的最小实现；连续检测过程中部署新上线包、切换、回滚 | 开发机（Mac 或 Windows） | 3–4 天 |
+| POC-10 | 模型工具链 Docker 镜像：ONNX → MindSpore Lite 转换、INT8 量化 | Docker（Mac）或 WSL2（Windows） | 2–3 天 |
 | POC-6 | 在鸿蒙电脑上用 DevEco Studio 新增一个算子并运行 | 鸿蒙电脑真机 | 1–2 天 |
 | POC-7 | 鸿蒙电脑采集 USB 摄像头图像 | 鸿蒙电脑真机 | 1–2 天 |
-| POC-2 | Web 编辑器原型 ↔ vision-runtime，端到端运行并查看中间结果 | Mac / Linux | 4–5 天 |
+| POC-2 | Web 编辑器原型 ↔ vision-runtime，端到端运行并查看中间结果 | 开发机（Mac 或 Windows） | 4–5 天 |
 
 Windows 平台不做 POC：核心代码与 Linux 相同，差异只在适配器，风险低，放到 MVP 之后。
 
@@ -74,7 +74,7 @@ POC-1 ──► POC-3a ──► POC-4（模拟器部分）──►（鸿蒙电
 
 ### POC-3a：鸿蒙交叉编译与 NAPI
 
-**范围**：在 Ubuntu 22.04 容器中用 lycium 编译 OpenCV（core、imgproc、imgcodecs）；同时尝试在 Mac 上直接用 NDK 的 CMake 编译；鸿蒙工程引用 `core/`，导出 `runInspection(recipeVersionJson, imagePath)`；ArkUI 页面显示判定和结果图。
+**范围**：在 Ubuntu 22.04 容器中用 lycium 编译 OpenCV（core、imgproc、imgcodecs）；同时尝试在开发机上直接用 NDK 的 CMake 编译；鸿蒙工程引用 `core/`，导出 `runInspection(recipeVersionJson, imagePath)`；ArkUI 页面显示判定和结果图。
 
 **通过标准**
 - [ ] 模拟器上运行 POC-1 的同一个方案版本，判定和判定依据与 Linux 一致
@@ -92,7 +92,7 @@ POC-1 ──► POC-3a ──► POC-4（模拟器部分）──►（鸿蒙电
 
 ### POC-4：推理一致性
 
-**范围**：ResNet18 分类模型（算子常见，降低转换风险）；通过后再尝试异常检测骨干网络。Mac / Linux 用 ONNX Runtime；鸿蒙用 MindSpore Lite Native API。
+**范围**：ResNet18 分类模型（算子常见，降低转换风险）；通过后再尝试异常检测骨干网络。开发机用 ONNX Runtime；鸿蒙用 MindSpore Lite Native API。
 
 **通过标准**
 - [ ] 同一张图两端输出的最大误差 < 1e-3
@@ -121,7 +121,7 @@ POC-1 ──► POC-3a ──► POC-4（模拟器部分）──►（鸿蒙电
 **通过标准**
 - [ ] ResNet18 ONNX 转换为 `.ms` 成功，结果可被 POC-4 使用
 - [ ] INT8 量化（用 100 张图作为量化校准集），记录精度变化
-- [ ] 镜像在 Mac（Apple Silicon）的 Docker 中可以运行
+- [ ] 镜像在 Mac（Apple Silicon）的 Docker 和 Windows 的 WSL2 中都可以运行
 
 ### POC-6、POC-7、POC-2
 

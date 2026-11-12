@@ -96,8 +96,8 @@ TEST(Inspection, I1_RecordsInPlannedOrder) {
 TEST(Inspection, I2_FailedNodeRequiresError) {
     auto i = Inspection::start("i-1", InspectionPurpose::Production, "r@v1", {"n1"});
     ASSERT_TRUE(i.recordNode({"n1", NodeStatus::Failed, 0, "坏了"}).ok());
-    EXPECT_FALSE(i.complete(Verdict{VerdictKind::OK, {}}).ok());
-    EXPECT_TRUE(i.complete(Verdict{VerdictKind::ERROR, {}}).ok());
+    EXPECT_FALSE(i.complete(Verdict{VerdictKind::Ok, {}}).ok());
+    EXPECT_TRUE(i.complete(Verdict{VerdictKind::Error, {}}).ok());
 }
 
 TEST(Inspection, I3_CompleteOnlyOnceAndThenImmutable) {
@@ -112,8 +112,8 @@ TEST(Inspection, I3_CompleteOnlyOnceAndThenImmutable) {
 TEST(Inspection, I4_NgNeedsFailingReason) {
     auto i = Inspection::start("i-1", InspectionPurpose::Production, "r@v1", {"n1"});
     ASSERT_TRUE(i.recordNode({"n1", NodeStatus::Succeeded, 0, ""}).ok());
-    EXPECT_FALSE(i.complete(Verdict{VerdictKind::NG, {{"n1", true, "都合格"}}}).ok());
-    EXPECT_TRUE(i.complete(Verdict{VerdictKind::NG, {{"n1", false, "缺陷 1 处"}}}).ok());
+    EXPECT_FALSE(i.complete(Verdict{VerdictKind::Ng, {{"n1", true, "都合格"}}}).ok());
+    EXPECT_TRUE(i.complete(Verdict{VerdictKind::Ng, {{"n1", false, "缺陷 1 处"}}}).ok());
 }
 
 TEST(Inspection, DebugRunDoesNotPublishCompletedEvent) {
@@ -131,7 +131,7 @@ TEST(Executor, OkWhenNoDefects) {
     auto plan = ExecutionPlanner(f).plan(pipelineSpec()).value();
     auto i = Inspection::start("i-1", InspectionPurpose::Production, "r@v1", plan.nodeOrder());
     ASSERT_TRUE(Executor().run(plan, frame(), i).ok());
-    EXPECT_EQ(i.verdict().kind, VerdictKind::OK);
+    EXPECT_EQ(i.verdict().kind, VerdictKind::Ok);
     EXPECT_EQ(i.nodeExecutions().size(), 5u);
 }
 
@@ -141,7 +141,7 @@ TEST(Executor, NgWithReasonWhenDefectsFound) {
     auto plan = ExecutionPlanner(f).plan(pipelineSpec()).value();
     auto i = Inspection::start("i-1", InspectionPurpose::Production, "r@v1", plan.nodeOrder());
     ASSERT_TRUE(Executor().run(plan, frame(), i).ok());
-    EXPECT_EQ(i.verdict().kind, VerdictKind::NG);
+    EXPECT_EQ(i.verdict().kind, VerdictKind::Ng);
     ASSERT_EQ(i.verdict().reasons.size(), 1u);
     EXPECT_EQ(i.verdict().reasons[0].text, "缺陷 3 处");
 }
@@ -156,7 +156,7 @@ TEST(Executor, FailureSkipsDownstreamAndGivesError) {
     EXPECT_EQ(ex[2].status, NodeStatus::Failed);
     EXPECT_EQ(ex[3].status, NodeStatus::Skipped);
     EXPECT_EQ(ex[4].status, NodeStatus::Skipped);
-    EXPECT_EQ(i.verdict().kind, VerdictKind::ERROR);
+    EXPECT_EQ(i.verdict().kind, VerdictKind::Error);
 }
 
 TEST(Executor, MissingFrameIsError) {
@@ -164,5 +164,5 @@ TEST(Executor, MissingFrameIsError) {
     auto plan = ExecutionPlanner(f).plan(pipelineSpec()).value();
     auto i = Inspection::start("i-1", InspectionPurpose::Production, "r@v1", plan.nodeOrder());
     ASSERT_TRUE(Executor().run(plan, Image{}, i).ok());
-    EXPECT_EQ(i.verdict().kind, VerdictKind::ERROR);
+    EXPECT_EQ(i.verdict().kind, VerdictKind::Error);
 }

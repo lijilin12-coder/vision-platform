@@ -3,11 +3,13 @@
 
 #include <gtest/gtest.h>
 
+#include <cstring>
 #include <filesystem>
 #include <opencv2/imgproc.hpp>
 
 #include "vision/authoring/api.h"
 #include "vision/catalog/api.h"
+#include "vision/common/path.h"
 #include "vision/eventbus/in_memory_event_bus.h"
 #include "vision/execution/api.h"
 #include "vision/imaging/cv_bridge.h"
@@ -166,4 +168,38 @@ TEST_F(Platform, RejectedCommandsDoNotChangeState) {
     auto after = authoring.getDraft(rid).value();
     EXPECT_EQ(before.edges.size(), after.edges.size());
     EXPECT_EQ(std::get<double>(after.nodes[2].params.at("value")), 200.0);
+}
+
+// 中文路径：在 Windows 上，路径默认按本地编码解释，cv::imread 也不支持中文路径。
+// 这个测试保证“数据目录带中文”和“图像文件名带中文”都能正常工作。
+TEST(Utf8Paths, ChineseDirectoryAndFileNames) {
+    const fs::path dir = fs::temp_directory_path() / pathFromUtf8("vision-中文路径-测试");
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+
+    // 图像：保存再读回，像素一致
+    const std::string imagePath = pathToUtf8(dir / pathFromUtf8("良品_01.png"));
+    const Image original = makeProduct(1);
+    ASSERT_TRUE(imaging::saveImage(imagePath, original).ok());
+    auto loaded = imaging::loadImage(imagePath);
+    ASSERT_TRUE(loaded.ok()) << loaded.error().message;
+    ASSERT_EQ(loaded.value().width(), original.width());
+    ASSERT_EQ(loaded.value().height(), original.height());
+    EXPECT_EQ(0, std::memcmp(loaded.value().data(), original.data(),
+                             original.rowBytes() * static_cast<std::size_t>(original.height())));
+
+    // 仓储：数据目录带中文
+    eventbus::InMemoryEventBus bus;
+    persistence::JsonRecipeRepository recipes{dir / pathFromUtf8("数据")};
+    persistence::JsonRecipeVersionRepository versions{dir / pathFromUtf8("数据")};
+    authoring::AuthoringService authoring{recipes, versions, catalog::OperatorCatalog::global(), bus};
+    auto rid = authoring.createRecipe("中文方案");
+    ASSERT_TRUE(rid.ok()) << rid.error().message;
+    EXPECT_EQ(authoring.getDraft(rid.value()).value().name, "中文方案");
+    EXPECT_EQ(authoring.listRecipes().size(), 1u);
+
+    // 读取不存在的文件：返回错误，而不是崩溃
+    EXPECT_FALSE(imaging::loadImage(pathToUtf8(dir / pathFromUtf8("不存在.png"))).ok());
+
+    fs::remove_all(dir);
 }

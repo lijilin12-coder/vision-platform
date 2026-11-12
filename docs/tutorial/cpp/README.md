@@ -1,0 +1,60 @@
+# 现代工程 C++ 教程
+
+写给学过 C++、做过算法题，但没有接触过工程项目的同学。
+
+## 这套教程是什么
+
+竞赛 C++ 和工程 C++ 用的是同一门语言，但写法差别很大。竞赛代码只跑一次、只有自己看；工程代码要被别人读、被反复修改、连续运行很多年。
+
+这套教程**不从头讲语法**，只讲“从竞赛写法到工程写法”需要补上的部分，并且**每一课都用本项目里的真实代码做例子**。学完之后，你应该能读懂 `core/` 下的全部代码，并且能独立写算子和领域对象。
+
+## 怎么学
+
+每一课的结构相同：
+
+1. **为什么需要它**：先看一个不这样做会出什么问题的例子
+2. **怎么做**：概念和写法
+3. **项目里的例子**：打开真实的代码文件对照着看
+4. **练习**：动手改代码或写代码，每课 2～4 题
+5. **自测题**：答得出来就可以进入下一课
+
+每课大约需要 1～2 小时。示例代码在 `examples/` 下，都可以直接编译运行。
+
+## 课程大纲
+
+| 课 | 主题 | 学完能做什么 | 项目里对应的代码 | 状态 |
+|---|---|---|---|---|
+| [00](00-from-contest-to-engineering.md) | 从竞赛 C++ 到工程 C++ | 知道两种写法差在哪里，为什么 | — | ✅ |
+| [01](01-object-oriented-basics.md) | 面向对象基础：自己写一个字符串类（并用复数类做对照） | 明白封装、构造、析构、拷贝、移动各自解决什么问题；知道五法则和零法则 | `Roi`、`Image`、`Recipe` | ✅ |
+| 02 | 项目是怎么组织的：头文件、源文件、命名空间、CMake | 看懂项目目录；能新建一个模块并编译 | `core/kernel/`、各级 `CMakeLists.txt` | 待写 |
+| 03 | 值、引用、`const`、移动语义 | 知道什么时候拷贝、什么时候不拷贝；看懂 `std::move` | `operator_catalog.cpp`（一个真实的 bug） | 待写 |
+| 04 | 资源管理：RAII 与智能指针 | 不再手写 `new` / `delete`；会用 `unique_ptr`、`shared_ptr` | `Image`、`ExecutionService` | 待写 |
+| 05 | 类的设计：封装、不变量、值对象 | 写出“创建不出非法状态”的类 | `Roi`、`Recipe` | 待写 |
+| 06 | 错误处理：`Result`、`optional`、异常 | 知道三种方式各自什么时候用 | `result.h`、`Recipe::connect` | 待写 |
+| 07 | `variant`、`visit`、结构化绑定 | 看懂端口上流动的 `Value` | `value.h`、`describeValue` | 待写 |
+| 08 | 接口与多态：虚函数、依赖倒置 | 看懂“领域层定义接口，适配器实现接口” | `Operator`、`RecipeRepository`、`NodeRunner` | 待写 |
+| 09 | lambda、`std::function` 与 STL 算法 | 用 `find_if`、`any_of` 代替手写循环 | `recipe.cpp`、`in_memory_event_bus.cpp` | 待写 |
+| 10 | 模板入门与宏 | 看懂 `Result<T>`、`ctx.input<T>()` 和算子注册宏 | `result.h`、`VISION_REGISTER_OPERATOR` | 待写 |
+| 11 | 单元测试：GoogleTest | 给自己写的算子和类写测试 | `tests/` | 待写 |
+| 12 | 工具：编译警告、调试器、内存检查、代码格式化、Git | 自己定位崩溃和内存错误 | — | 待写 |
+| 13 | 并发入门：线程、互斥锁 | 看懂事件总线和执行计划缓存里的锁；为热切换做准备 | `in_memory_event_bus.cpp`、`execution_service.cpp` | 待写 |
+
+## 建议的学习顺序
+
+- **想尽快写算子**：00 → 01 → 02 → 03 → 06，然后看 [如何新增一个算子](../../dev/how-to-add-operator.md)。
+- **想读懂领域层**：再学 04 → 05 → 07 → 08 → 09。
+- **其余**（10～13）在用到的时候再学。
+
+## 环境
+
+教程的示例只用到标准库，不需要安装 OpenCV 等依赖。完整项目的环境见 [构建说明](../../dev/build.md)。
+
+| 系统 | 准备 | 编译单个示例 |
+|---|---|---|
+| macOS | `xcode-select --install` | `clang++ -std=c++17 -Wall -Wextra 文件.cpp -o 程序名` |
+| Windows | 安装 Visual Studio 2022 社区版，打开“x64 Native Tools Command Prompt for VS 2022” | `cl /std:c++17 /W4 /EHsc /utf-8 文件.cpp /Fe:程序名.exe` |
+| Linux | `sudo apt-get install g++` | `g++ -std=c++17 -Wall -Wextra 文件.cpp -o 程序名` |
+
+Windows 编译选项的含义：`/W4` 打开警告，`/EHsc` 启用异常，`/utf-8` 表示源文件是 UTF-8 编码（示例里有中文）。如果运行时中文显示成乱码，先执行 `chcp 65001` 把终端切换到 UTF-8。
+
+所有示例都在自动构建里用 Windows（MSVC）和 Linux（GCC）编译并运行过。
