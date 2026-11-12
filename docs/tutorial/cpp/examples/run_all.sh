@@ -77,6 +77,10 @@ run lesson16 "$TSAN" future_basics.cpp
 run lesson16 "$TSAN" inference_worker.cpp
 run lesson16 "$ASAN -pthread" inference_worker.cpp
 
+run lesson16a "$TSAN" pitfalls.cpp
+run lesson16a "$TSAN" parallel_nodes.cpp
+run lesson16a "-std=c++17 -Wall -Wextra -Wpedantic -Werror -O2 -pthread" pool_vs_spawn.cpp
+
 build_only lesson17 "$WARN -O0" crash.cpp
 
 echo
