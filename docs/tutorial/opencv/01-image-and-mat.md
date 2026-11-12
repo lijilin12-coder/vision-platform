@@ -244,7 +244,7 @@ out.write(reinterpret_cast<const char*>(encoded.data()), static_cast<std::stream
 
 `std::filesystem::u8path` 明确告诉标准库“这个字符串是 UTF-8 编码的”，它在每个系统上都能正确打开文件。
 
-示例程序在 Linux 上的输出是“直接用 imread 读中文路径：成功”。在 Windows 上会是什么，请看自动构建的记录，或者自己运行。
+示例程序会把两种办法都试一遍。在 Linux 上的输出是“直接用 imread 读中文路径：成功”。在 Windows 上的输出我们还没有记录（自动构建只在测试失败时才显示输出），请自己运行一次看看；而 `imdecode` 的办法在 Windows 和 Linux 的自动构建里都通过了检查。
 
 > **和平台的关系**：平台读写图像用的就是这个办法，见 [`adapters/imaging/src/cv_bridge.cpp`](../../../adapters/imaging/src/cv_bridge.cpp)。产线上的目录名、产品名常常是中文，这是必须处理的问题（设计决定 ADR-23）。教程示例的 `cvtut::save` 和 `cvtut::load` 也是这样实现的。
 
