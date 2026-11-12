@@ -2,7 +2,7 @@
 
 | 项 | 内容 |
 |---|---|
-| 版本 | v1.0（已确认） |
+| 版本 | v1.1（按场景走查修订） |
 | 日期 | 2026-11-12 |
 | 依据 | [01-event-storming.md](01-event-storming.md)、[02-glossary.md](02-glossary.md)、[03-subdomains.md](03-subdomains.md) |
 
@@ -15,7 +15,7 @@
 | BC-1 | **算子目录** | 支撑 | 管理有哪些算子、各自的端口和参数定义 | `OperatorMeta`、`PortType`、`ParamDef` | A1–A5 | MVP |
 | BC-2 | **方案编排** | 🟥 核心 | 编辑方案草稿，守护编辑规则，发布方案版本 | `RecipeDraft`、`Node`、`Edge`、`NamedRegion`、`ModelDependency`、`RecipeVersion` | B1–B18、C1–C3、C10 | MVP |
 | BC-3 | **检测执行** | 🟥 核心 | 把方案编译成执行计划，对图像执行一次检测，得出检测结果和判定 | `ExecutionPlan`、`Inspection`、`NodeExecution`、`InspectionResult`、`Verdict` | D3–D7 | MVP |
-| BC-4 | **上线管理** | 🟥 核心 | 用方案版本和具体模型版本组装上线包，做一致性验证；在平台之间交换方案包 | `Release`、`ConsistencyCheck`、`GoldenSet`、`RecipePackage` | C4–C7、B16–B18（导入导出） | MVP（简化） |
+| BC-4 | **上线管理** | 🟥 核心 | 用方案版本和具体模型版本组装上线包，做验收检查和跨平台一致性检查；在平台之间交换方案包和上线包文件 | `Release`、`GoldenSet`、`RecipePackage`、`ReleaseBundle` | C4–C7、C11–C12、B16–B18 | MVP（简化） |
 | BC-5 | **工位运行** | 🟥 核心 | 管理工位的生命周期：启动、热启动、部署、热切换、回滚；驱动检测 | `Station`、`activeRelease`、`pendingRelease`、`ImageSource` 绑定 | D0–D2、D10、C8–C9、G1–G8 | MVP（简化） |
 | BC-6 | **标定** | 支撑 | 为工位的相机建立像素与毫米的换算关系；标定档案属于工位相机（D4-1） | `CalibrationProfile` | D0a–D0b | P1 |
 | BC-7 | **模型仓库** | 支撑 | 管理模型、模型版本、模型契约和各平台的模型制品 | `Model`、`ModelVersion`、`ModelContract`、`ModelArtifact` | F1–F2、F8–F9 | P1 |
@@ -82,7 +82,7 @@ flowchart LR
     BC8 -- "ACL" --> EXT4
     BC3 -- "ACL：端口" --> EXT1
     BC5 -- "ACL：图像源端口" --> EXT2
-    BC4 <-- "PL：方案包<br/>（PackageExchange 端口）" --> OTHER
+    BC4 <-- "PL：方案包 / 上线包文件<br/>（PackageExchange 端口）" --> OTHER
 ```
 
 ### 协作关系说明
@@ -94,7 +94,7 @@ flowchart LR
 | BC-1 → BC-3 | 开放主机服务 | 根据算子 ID 创建算子实例 | |
 | BC-2 → BC-4 | **发布语言** + 领域事件 | 方案版本 JSON（带 `schemaVersion`）；`方案版本已发布` | 编排内部怎么变都不影响下游，只要发布格式不变 |
 | BC-2 → BC-3 | 客户-供应商 | 调试运行：草稿编译成执行计划后运行，返回所有节点的中间结果 | BC-3 是**检测引擎**，被三个上下文复用（见 D4-2） |
-| BC-4 → BC-3 | 客户-供应商 | 一致性验证：用基准图集运行上线包 | |
+| BC-4 → BC-3 | 客户-供应商 | 验收检查和跨平台一致性检查：用基准图集运行上线包 | 见 F-1 |
 | BC-5 → BC-3 | 客户-供应商 | 产线检测 | |
 | BC-7 → BC-4 | 客户-供应商 + 领域事件 | 查询模型版本、模型契约、各平台制品是否齐全；`模型版本已发布`（触发规则 P9） | |
 | BC-4 → BC-5 | **发布语言** | 上线包清单：方案版本 + 锁定的模型版本 + 制品位置 | 工位只认上线包，不关心它是怎么组装出来的 |
@@ -107,7 +107,7 @@ flowchart LR
 | BC-8 → 转换工具 | 防腐层 | | MindSpore Lite 等工具的变化只影响适配器 |
 | BC-3 → 算法库、推理 | 防腐层（端口） | `IInferBackend` 等 | |
 | BC-5 → 图像源 | 防腐层（端口） | `IImageSource` | |
-| BC-4 ↔ 其他平台 | 发布语言 | 方案包（`PackageExchange` 端口，先实现文件适配器） | 见 H-06 |
+| BC-4 ↔ 其他平台 | 发布语言 | 方案包（带走继续编辑）、上线包文件（带到产线部署）；`PackageExchange` 端口，先实现文件适配器 | 见 H-06、F-2 |
 
 ## 4. 同一个词，在不同上下文里的不同模型
 
