@@ -274,4 +274,6 @@ cl /std:c++17 /O2 /EHsc /utf-8 benchmark.cpp && benchmark.exe
 
 ## 下一课
 
+延伸阅读：[第 14 课（延伸）：内存池与缓冲区复用](14a-memory-pool.md)（申请内存的开销、什么时候需要内存池）
+
 [第 15 课（预备）：线程和进程到底是什么](15a-threads-and-processes.md)，然后是 [第 15 课：并发基础](15-concurrency-basics.md)
