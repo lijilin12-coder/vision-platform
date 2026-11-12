@@ -62,6 +62,12 @@ call :run lesson15 sync.cpp || exit /b 1
 call :run lesson16 future_basics.cpp || exit /b 1
 call :run lesson16 inference_worker.cpp || exit /b 1
 
+set F=%F% /O2
+call :run lesson16a pitfalls.cpp || exit /b 1
+call :run lesson16a parallel_nodes.cpp || exit /b 1
+call :run lesson16a pool_vs_spawn.cpp || exit /b 1
+set F=%SAVED%
+
 call :build lesson17 crash.cpp || exit /b 1
 
 echo.
