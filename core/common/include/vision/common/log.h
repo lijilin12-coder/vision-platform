@@ -15,11 +15,13 @@
 // 这里只定义接口和分发。日志写到哪里（控制台、文件、系统日志）由接收器 LogSink 决定，
 // 实现在 adapters/logging 里；鸿蒙上可以换成写入系统日志的接收器。
 
+#include <atomic>
 #include <chrono>
 #include <initializer_list>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -33,6 +35,15 @@ const char* toString(LogLevel level);
 LogLevel parseLogLevel(const std::string& text, LogLevel fallback);
 
 using LogFields = std::vector<std::pair<std::string, std::string>>;
+
+// 写日志时传入的一个键值对。
+// 用 string_view 而不是 string：调用处只是“指向”已有的字符，不申请内存、不复制。
+// 只有当这条日志确实要输出时，Logger 才把它们复制进 LogRecord。
+// 所以级别被关掉的日志（比如默认级别下的 debug）几乎没有开销。
+struct LogField {
+    std::string_view key;
+    std::string_view value;
+};
 
 struct LogRecord {
     std::chrono::system_clock::time_point time;
@@ -63,12 +74,15 @@ public:
     void addSink(std::shared_ptr<LogSink> sink);
     void clearSinks();
 
-    void write(LogLevel level, std::string component, std::string message, LogFields fields = {});
+    // 参数只在这次调用期间被读取，不会被保存，所以可以安全地传入临时字符串。
+    void write(LogLevel level, std::string_view component, std::string_view message,
+               std::initializer_list<LogField> fields = {});
     void flush();
 
 private:
-    mutable std::mutex mutex_;
-    LogLevel level_ = LogLevel::Info;
+    // 级别用原子变量保存：每次写日志都要先看一眼级别，这一步不应该加锁。
+    std::atomic<LogLevel> level_{LogLevel::Info};
+    mutable std::mutex mutex_;  // 保护 sinks_，并保证同一时刻只有一个线程在调用接收器
     std::vector<std::shared_ptr<LogSink>> sinks_;
 };
 
@@ -79,20 +93,20 @@ std::string formatLogLine(const LogRecord& record);
 
 namespace log {
 
-inline void trace(std::string component, std::string message, LogFields fields = {}) {
-    Logger::global().write(LogLevel::Trace, std::move(component), std::move(message), std::move(fields));
+inline void trace(std::string_view component, std::string_view message, std::initializer_list<LogField> fields = {}) {
+    Logger::global().write(LogLevel::Trace, component, message, fields);
 }
-inline void debug(std::string component, std::string message, LogFields fields = {}) {
-    Logger::global().write(LogLevel::Debug, std::move(component), std::move(message), std::move(fields));
+inline void debug(std::string_view component, std::string_view message, std::initializer_list<LogField> fields = {}) {
+    Logger::global().write(LogLevel::Debug, component, message, fields);
 }
-inline void info(std::string component, std::string message, LogFields fields = {}) {
-    Logger::global().write(LogLevel::Info, std::move(component), std::move(message), std::move(fields));
+inline void info(std::string_view component, std::string_view message, std::initializer_list<LogField> fields = {}) {
+    Logger::global().write(LogLevel::Info, component, message, fields);
 }
-inline void warn(std::string component, std::string message, LogFields fields = {}) {
-    Logger::global().write(LogLevel::Warn, std::move(component), std::move(message), std::move(fields));
+inline void warn(std::string_view component, std::string_view message, std::initializer_list<LogField> fields = {}) {
+    Logger::global().write(LogLevel::Warn, component, message, fields);
 }
-inline void error(std::string component, std::string message, LogFields fields = {}) {
-    Logger::global().write(LogLevel::Error, std::move(component), std::move(message), std::move(fields));
+inline void error(std::string_view component, std::string_view message, std::initializer_list<LogField> fields = {}) {
+    Logger::global().write(LogLevel::Error, component, message, fields);
 }
 
 }  // namespace log

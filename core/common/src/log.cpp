@@ -37,19 +37,14 @@ Logger& Logger::global() {
     return instance;
 }
 
-void Logger::setLevel(LogLevel level) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    level_ = level;
-}
+void Logger::setLevel(LogLevel level) { level_.store(level, std::memory_order_relaxed); }
 
-LogLevel Logger::level() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return level_;
-}
+LogLevel Logger::level() const { return level_.load(std::memory_order_relaxed); }
 
 bool Logger::enabled(LogLevel level) const {
+    if (level == LogLevel::Off || level < level_.load(std::memory_order_relaxed)) return false;
     std::lock_guard<std::mutex> lock(mutex_);
-    return level != LogLevel::Off && level >= level_ && !sinks_.empty();
+    return !sinks_.empty();
 }
 
 void Logger::addSink(std::shared_ptr<LogSink> sink) {
@@ -63,18 +58,22 @@ void Logger::clearSinks() {
     sinks_.clear();
 }
 
-void Logger::write(LogLevel level, std::string component, std::string message, LogFields fields) {
+void Logger::write(LogLevel level, std::string_view component, std::string_view message,
+                   std::initializer_list<LogField> fields) {
+    // 快速路径：级别不够就立刻返回。到这里为止没有加锁，也没有申请任何内存。
+    if (level == LogLevel::Off || level < level_.load(std::memory_order_relaxed)) return;
+
     LogRecord record;
     record.time = std::chrono::system_clock::now();
     record.level = level;
-    record.component = std::move(component);
-    record.message = std::move(message);
-    record.fields = std::move(fields);
+    record.component = std::string(component);
+    record.message = std::string(message);
+    record.fields.reserve(fields.size());
+    for (const LogField& field : fields) record.fields.emplace_back(std::string(field.key), std::string(field.value));
 
     // 在锁里调用接收器：保证多个线程写的日志不会互相穿插，也保证顺序和时间一致。
     // 代价是写日志的线程会互相等待，所以接收器必须很快（写一行文本）。
     std::lock_guard<std::mutex> lock(mutex_);
-    if (level == LogLevel::Off || level < level_) return;
     for (const auto& sink : sinks_) sink->write(record);
 }
 
