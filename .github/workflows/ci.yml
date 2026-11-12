@@ -67,6 +67,10 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
+      - name: 指定使用 C:\vcpkg
+        # “设置 MSVC 环境”会把 VCPKG_ROOT 改成 Visual Studio 自带的 vcpkg，这里改回来
+        shell: pwsh
+        run: Add-Content -Path $env:GITHUB_ENV -Value "VCPKG_ROOT=C:\vcpkg"
       - name: 配置（首次会编译 OpenCV，较慢）
         run: cmake --preset windows
       - name: 编译

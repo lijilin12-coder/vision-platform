@@ -6,9 +6,13 @@
     {
       "name": "opencv4",
       "default-features": false,
-      "features": ["jpeg", "png"]
+      "features": [
+        "jpeg",
+        "png"
+      ]
     },
     "nlohmann-json",
     "gtest"
-  ]
+  ],
+  "builtin-baseline": "9eec002df1cd109f8f104cd966a763daf9751489"
 }
