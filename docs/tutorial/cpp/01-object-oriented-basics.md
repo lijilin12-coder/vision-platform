@@ -381,4 +381,4 @@ cl %FLAGS% broken_copy.cpp /Fe:broken_copy.exe && broken_copy.exe
 
 ## 下一课
 
-[第 2 课：项目是怎么组织的](README.md)：头文件和源文件为什么要分开，命名空间怎么用，CMake 是怎么把几十个文件编译成一个程序的。
+[第 2 课：项目是怎么组织的](02-project-organization.md)：头文件和源文件为什么要分开，命名空间怎么用，CMake 是怎么把几十个文件编译成一个程序的。

@@ -106,3 +106,5 @@ vision-data/
 samples/images/
 .vcpkg-cache/
 vcpkg_installed/
+build.log
+prog.exe

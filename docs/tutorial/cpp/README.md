@@ -18,7 +18,7 @@
 4. **练习**：动手改代码或写代码，每课 2～4 题
 5. **自测题**：答得出来就可以进入下一课
 
-每课大约需要 1～2 小时。示例代码在 `examples/` 下，都可以直接编译运行。
+每课大约需要 1～2.5 小时。示例代码在 `examples/` 下，都可以直接编译运行。
 
 ## 课程大纲
 
@@ -26,24 +26,39 @@
 |---|---|---|---|---|
 | [00](00-from-contest-to-engineering.md) | 从竞赛 C++ 到工程 C++ | 知道两种写法差在哪里，为什么 | — | ✅ |
 | [01](01-object-oriented-basics.md) | 面向对象基础：自己写一个字符串类（并用复数类做对照） | 明白封装、构造、析构、拷贝、移动各自解决什么问题；知道五法则和零法则 | `Roi`、`Image`、`Recipe` | ✅ |
-| 02 | 项目是怎么组织的：头文件、源文件、命名空间、CMake | 看懂项目目录；能新建一个模块并编译 | `core/kernel/`、各级 `CMakeLists.txt` | 待写 |
-| 03 | 值、引用、`const`、移动语义 | 知道什么时候拷贝、什么时候不拷贝；看懂 `std::move` | `operator_catalog.cpp`（一个真实的 bug） | 待写 |
-| 04 | 资源管理：RAII 与智能指针 | 不再手写 `new` / `delete`；会用 `unique_ptr`、`shared_ptr` | `Image`、`ExecutionService` | 待写 |
-| 05 | 类的设计：封装、不变量、值对象 | 写出“创建不出非法状态”的类 | `Roi`、`Recipe` | 待写 |
-| 06 | 错误处理：`Result`、`optional`、异常 | 知道三种方式各自什么时候用 | `result.h`、`Recipe::connect` | 待写 |
-| 07 | `variant`、`visit`、结构化绑定 | 看懂端口上流动的 `Value` | `value.h`、`describeValue` | 待写 |
-| 08 | 接口与多态：虚函数、依赖倒置 | 看懂“领域层定义接口，适配器实现接口” | `Operator`、`RecipeRepository`、`NodeRunner` | 待写 |
-| 09 | lambda、`std::function` 与 STL 算法 | 用 `find_if`、`any_of` 代替手写循环 | `recipe.cpp`、`in_memory_event_bus.cpp` | 待写 |
-| 10 | 模板入门与宏 | 看懂 `Result<T>`、`ctx.input<T>()` 和算子注册宏 | `result.h`、`VISION_REGISTER_OPERATOR` | 待写 |
-| 11 | 单元测试：GoogleTest | 给自己写的算子和类写测试 | `tests/` | 待写 |
-| 12 | 工具：编译警告、调试器、内存检查、代码格式化、Git | 自己定位崩溃和内存错误 | — | 待写 |
-| 13 | 并发入门：线程、互斥锁 | 看懂事件总线和执行计划缓存里的锁；为热切换做准备 | `in_memory_event_bus.cpp`、`execution_service.cpp` | 待写 |
+| [02](02-project-organization.md) | 项目是怎么组织的：头文件、源文件、命名空间、CMake | 看懂项目目录；能新建一个模块并编译 | `core/kernel/`、各级 `CMakeLists.txt` | ✅ |
+| [03](03-values-references-move.md) | 值、引用、`const`、移动语义 | 知道什么时候拷贝、什么时候不拷贝；看懂 `std::move` | `operator_catalog.cpp`（一个真实的 bug） | ✅ |
+| [04](04-raii-smart-pointers.md) | 资源管理：RAII 与智能指针 | 不再手写 `new` / `delete`；会用 `unique_ptr`、`shared_ptr` | `Image`、`ExecutionService` | ✅ |
+| [05](05-class-design.md) | 类的设计：封装、不变量、值对象 | 写出“创建不出非法状态”的类；分清值对象和实体 | `Roi`、`Recipe` | ✅ |
+| [06](06-error-handling.md) | 错误处理：`Result`、`optional`、异常 | 知道三种方式各自什么时候用 | `result.h`、`Recipe::connect` | ✅ |
+| [07](07-variant-and-bindings.md) | `variant`、`visit`、结构化绑定 | 看懂端口上流动的 `Value` | `value.h`、`describeValue` | ✅ |
+| [08](08-interfaces-polymorphism.md) | 接口与多态：虚函数、依赖倒置 | 看懂“领域层定义接口，适配器实现接口” | `Operator`、`RecipeRepository`、`NodeRunner` | ✅ |
+| [09](09-lambdas-algorithms.md) | lambda、`std::function` 与 STL 算法 | 用 `find_if`、`any_of` 代替手写循环 | `recipe.cpp`、`in_memory_event_bus.cpp` | ✅ |
+| [10](10-templates-macros.md) | 模板入门与宏 | 看懂 `Result<T>`、`ctx.input<T>()` 和算子注册宏 | `result.h`、`VISION_REGISTER_OPERATOR` | ✅ |
+| [11](11-unit-testing.md) | 单元测试：GoogleTest | 给自己写的算子和类写测试 | `tests/` | ✅ |
+| [12](12-debugging.md) | 调试技巧 | 按固定的步骤定位问题；会用调试器的断点、单步、调用栈 | `vision-cli recipe debug` | ✅ |
+| [13](13-memory-analysis.md) | 内存分析 | 用工具发现越界、泄漏、未定义行为；识别“没有泄漏但一直在涨” | `Image::create`、`planCache` | ✅ |
+| [14](14-performance.md) | 性能分析 | 正确地测量时间；用性能分析器找到热点；知道最常见的几类性能问题 | 各节点的耗时记录 | ✅ |
+| [15](15-concurrency-basics.md) | 并发基础：线程、互斥锁、条件变量 | 识别数据竞争；正确使用锁和条件变量 | `in_memory_event_bus.cpp`、`execution_service.cpp` | ✅ |
+| [16](16-promise-future-inference.md) | `promise`、`future` 与生产者消费者：推理服务 | 实现一个多工位共用、按批推理的推理服务 | 推理后端（待实现）、热切换 | ✅ |
 
 ## 建议的学习顺序
 
 - **想尽快写算子**：00 → 01 → 02 → 03 → 06，然后看 [如何新增一个算子](../../dev/how-to-add-operator.md)。
-- **想读懂领域层**：再学 04 → 05 → 07 → 08 → 09。
-- **其余**（10～13）在用到的时候再学。
+- **想读懂领域层**：再学 04 → 05 → 07 → 08 → 09 → 10 → 11。
+- **工程能力**：12（调试）→ 13（内存）→ 14（性能）。遇到问题时随时可以先看这三课。
+- **多线程**：15 → 16。实现推理和工位运行之前学。
+
+## 一键运行全部示例
+
+所有示例都可以用一个脚本编译并运行，自动构建用的也是它：
+
+| 系统 | 命令 |
+|---|---|
+| macOS / Linux | `bash docs/tutorial/cpp/examples/run_all.sh` |
+| Windows（在“x64 Native Tools Command Prompt for VS 2022”里） | `docs\tutorial\cpp\examples\run_all.bat` |
+
+脚本里标了“只编译”的，是**故意**有错的示例，用来演示内存检查和线程检查工具的报告，需要按对应课程里的说明单独运行。
 
 ## 环境
 

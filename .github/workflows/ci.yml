@@ -32,17 +32,8 @@ jobs:
         run: cmake --build --preset default
       - name: 测试
         run: ctest --preset default
-      - name: 编译并运行教程示例
-        run: |
-          set -e
-          F="-std=c++17 -Wall -Wextra -Wpedantic -Werror -g -fsanitize=address,undefined"
-          cd docs/tutorial/cpp/examples/lesson00
-          g++ $F main.cpp blob_count.cpp -o main && test "$(./main < input.txt)" = "2"
-          g++ $F test.cpp blob_count.cpp -o t && ./t
-          cd ../lesson01
-          g++ $F test.cpp my_string.cpp -o t && ./t
-          g++ $F complex_rule_of_zero.cpp -o c && ./c
-          g++ $F c_style.cpp -o s && ./s
+      - name: 编译并运行教程示例（内存检查、线程检查）
+        run: CXX=g++ bash docs/tutorial/cpp/examples/run_all.sh
 
   windows:
     name: Windows (MSVC)
@@ -94,16 +85,4 @@ jobs:
           if (-not ($out -match "OK 2.+NG 2.+ERROR 0")) { throw "检测结果与预期不符" }
       - name: 编译并运行教程示例
         shell: cmd
-        run: |
-          set F=/nologo /std:c++17 /W4 /EHsc /utf-8
-          cd docs\tutorial\cpp\examples\lesson00
-          cl %F% main.cpp blob_count.cpp /Fe:main.exe || exit /b 1
-          cl %F% test.cpp blob_count.cpp /Fe:t.exe || exit /b 1
-          t.exe || exit /b 1
-          cd ..\lesson01
-          cl %F% test.cpp my_string.cpp /Fe:t.exe || exit /b 1
-          t.exe || exit /b 1
-          cl %F% complex_rule_of_zero.cpp /Fe:c.exe || exit /b 1
-          c.exe || exit /b 1
-          cl %F% c_style.cpp /Fe:s.exe || exit /b 1
-          s.exe || exit /b 1
+        run: docs\tutorial\cpp\examples\run_all.bat
