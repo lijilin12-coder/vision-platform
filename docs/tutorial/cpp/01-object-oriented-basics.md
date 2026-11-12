@@ -351,6 +351,16 @@ clang++ $FLAGS broken_copy.cpp -o broken_copy && ./broken_copy                # 
 
 Linux 上把 `clang++` 换成 `g++`。
 
+Windows 上，在“x64 Native Tools Command Prompt for VS 2022”里（`/fsanitize=address` 是微软编译器的内存检查选项，`/Zi` 生成调试信息，报错时才能显示行号）：
+
+```bat
+set FLAGS=/std:c++17 /W4 /EHsc /utf-8 /Zi /fsanitize=address
+
+cl %FLAGS% test.cpp my_string.cpp /Fe:my_string_test.exe && my_string_test.exe
+cl %FLAGS% complex_rule_of_zero.cpp /Fe:complex.exe && complex.exe
+cl %FLAGS% broken_copy.cpp /Fe:broken_copy.exe && broken_copy.exe
+```
+
 ## 12. 练习
 
 1. **运行并观察**：按第 11 节运行三个程序。阅读 `broken_copy` 的报错信息，找到它指出的“第一次释放”和“第二次释放”分别发生在哪一行。

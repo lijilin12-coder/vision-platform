@@ -64,7 +64,7 @@ int main() {
 | 输入的某一行少了几个字符 | 没有任何检查，带着错误的数据继续算 |
 | 想写个测试验证它对不对 | 它从 `cin` 读、往 `cout` 写，**没法在程序里直接调用它并检查结果** |
 | 三个月后同事来改 | `g`、`a`、`b`、`t` 是什么？要读完整段代码才知道 |
-| 在 Mac 上编译 | **编译不过**：`<bits/stdc++.h>` 是 GCC 特有的，Mac 默认的编译器没有这个文件 |
+| 在 Mac 或 Windows 上编译 | **编译不过**：`<bits/stdc++.h>` 是 GCC 特有的，Mac 默认的编译器和 Windows 上微软的编译器都没有这个文件 |
 
 这些问题没有一个是算法错误。**算法是对的，但代码承受不了“被反复使用、被别人修改、在不同环境里运行”。** 工程 C++ 要解决的就是这些问题。
 
@@ -188,7 +188,7 @@ static std::optional<BinaryGrid> fromLines(...);   // 可能创建失败
 #include <vector>
 ```
 
-`<bits/stdc++.h>` 有两个问题：它不是标准的一部分，换个编译器就可能没有（Mac 上就没有）；它会让每个文件的编译时间变长，项目有几百个文件时差别非常明显。
+`<bits/stdc++.h>` 有两个问题：它不是标准的一部分，换个编译器就可能没有（Mac 和 Windows 上都没有）；它会让每个文件的编译时间变长，项目有几百个文件时差别非常明显。
 
 ## 3. 换来了什么：可以测试
 
@@ -224,7 +224,17 @@ clang++ -std=c++17 -Wall -Wextra test.cpp blob_count.cpp -o blob_test
 
 Linux 上把 `clang++` 换成 `g++`。`-Wall -Wextra` 是打开编译器警告，工程代码要求**没有任何警告**。
 
-竞赛写法 `contest.cpp` 在 Linux 上可以用 `g++ contest.cpp` 编译；在 Mac 上会因为找不到 `<bits/stdc++.h>` 而失败，这正好印证了区别 7。
+Windows 上，在“x64 Native Tools Command Prompt for VS 2022”里：
+
+```bat
+cl /std:c++17 /W4 /EHsc /utf-8 main.cpp blob_count.cpp /Fe:blob_count.exe
+blob_count.exe < input.txt
+
+cl /std:c++17 /W4 /EHsc /utf-8 test.cpp blob_count.cpp /Fe:blob_test.exe
+blob_test.exe
+```
+
+竞赛写法 `contest.cpp` 在 Linux 上可以用 `g++ contest.cpp` 编译；在 Mac 和 Windows 上会因为找不到 `<bits/stdc++.h>` 而失败，这正好印证了区别 7。
 
 ## 5. 代价是什么
 

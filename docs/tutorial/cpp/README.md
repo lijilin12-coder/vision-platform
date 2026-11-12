@@ -47,5 +47,14 @@
 
 ## 环境
 
-- macOS：`xcode-select --install`，再按 [构建说明](../../dev/build.md) 安装依赖
-- 编译单个示例：`clang++ -std=c++17 -Wall -Wextra 文件.cpp -o 程序名`（Linux 上把 `clang++` 换成 `g++`）
+教程的示例只用到标准库，不需要安装 OpenCV 等依赖。完整项目的环境见 [构建说明](../../dev/build.md)。
+
+| 系统 | 准备 | 编译单个示例 |
+|---|---|---|
+| macOS | `xcode-select --install` | `clang++ -std=c++17 -Wall -Wextra 文件.cpp -o 程序名` |
+| Windows | 安装 Visual Studio 2022 社区版，打开“x64 Native Tools Command Prompt for VS 2022” | `cl /std:c++17 /W4 /EHsc /utf-8 文件.cpp /Fe:程序名.exe` |
+| Linux | `sudo apt-get install g++` | `g++ -std=c++17 -Wall -Wextra 文件.cpp -o 程序名` |
+
+Windows 编译选项的含义：`/W4` 打开警告，`/EHsc` 启用异常，`/utf-8` 表示源文件是 UTF-8 编码（示例里有中文）。如果运行时中文显示成乱码，先执行 `chcp 65001` 把终端切换到 UTF-8。
+
+所有示例都在自动构建里用 Windows（MSVC）和 Linux（GCC）编译并运行过。

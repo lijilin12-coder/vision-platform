@@ -40,13 +40,14 @@
                      │ 量化 · 转换 · 验证             │
                      └────────────────────────────┘
 
-开发机（Mac）：编译运行 vision-runtime + 浏览器，用于日常开发调试；Docker 运行 model-toolchain
+开发机（Mac 或 Windows）：编译运行 vision-runtime + 浏览器，用于日常开发调试；
+          model-toolchain 在 Mac 上用 Docker 运行，在 Windows 上用 WSL2 运行
 ```
 
 | 部署单元 | 包含的上下文 | 平台 | 说明 |
 |---|---|---|---|
 | 鸿蒙应用 | BC-1～7、BC-9、BC-10 | 鸿蒙电脑 | 核心编译成 `.so`，由 ArkTS 外壳加载 |
-| vision-runtime | BC-1～7、BC-9、BC-10 | Linux、Windows（开发时 Mac） | 作为系统服务运行，开机自启即热启动；界面通过浏览器访问 |
+| vision-runtime | BC-1～7、BC-9、BC-10 | Windows、Linux、macOS（开发用） | 作为系统服务运行，开机自启即热启动；界面通过浏览器访问 |
 | model-toolchain | BC-8 | Linux（Docker） | 可部署在开发机、产线 Linux 主机或服务器上 |
 
 ## 3. 分层（每个上下文内部）
@@ -132,7 +133,7 @@ vision-platform/
 
 ## 5. 平台差异：只在适配器里
 
-| 端口（领域层定义） | 鸿蒙电脑 | Linux | Windows | 开发机 Mac |
+| 端口（领域层定义） | 鸿蒙电脑 | Linux | Windows | macOS（仅开发） |
 |---|---|---|---|---|
 | 驱动入口 | NAPI / ArkWeb JSBridge | HTTP + WS | HTTP + WS | HTTP + WS |
 | `InferBackend` | MindSpore Lite | ONNX Runtime | ONNX Runtime | ONNX Runtime |
@@ -221,7 +222,7 @@ v0.1 中仍然有效的决策保留编号；作废的标注说明。
 | ADR-06 | 方案格式 JSON + `schemaVersion` | 有效 |
 | ADR-07 | 界面使用 Web（Vue 3 + TS + Vue Flow + Konva + Naive UI） | 有效 |
 | ADR-08 | 鸿蒙端：ArkUI 原生外壳 + ArkWeb 嵌入 Web 界面 | 有效 |
-| ADR-09 | ~~Mac 端本地 HTTP + WS~~ → 改为：Linux / Windows 上的 vision-runtime 提供 HTTP + WS；Mac 仅用于开发 | **修订** |
+| ADR-09 | ~~Mac 端本地 HTTP + WS~~ → 改为：Linux / Windows 上的 vision-runtime 提供 HTTP + WS；macOS 和 Windows 都是开发机 | **修订** |
 | ADR-10 | 鸿蒙端桥接方式 | 待 POC |
 | ADR-11 | 推理后端接口：ONNX Runtime / MindSpore Lite | 有效，待 POC |
 | ADR-12 | 测试：GoogleTest + 图像回归测试（基准图集） | 有效 |
@@ -233,6 +234,8 @@ v0.1 中仍然有效的决策保留编号；作废的标注说明。
 | **ADR-18** | **Linux / Windows 上的运行时作为系统服务运行**，开机自启即热启动 | 新增 |
 | **ADR-19** | **模型工具链是独立的 Python + Docker 服务** | 新增 |
 | **ADR-20** | **持久化：聚合用 JSON 文件；检测记录等用 SQLite；二进制用内容寻址文件存储** | 新增 |
+| **ADR-22** | **开发机为 macOS 和 Windows**；Windows 用 MSVC + vcpkg（清单模式），macOS 用 Homebrew；用 CMake 预设统一命令；GitHub Actions 在 Windows 和 Linux 上自动构建和测试 | 新增 |
+| **ADR-23** | **程序内部的路径和文本一律使用 UTF-8**；路径与字符串的转换只通过 `vision/common/path.h`；图像文件在内存中编解码，不使用 `cv::imread` / `cv::imwrite`（它们在 Windows 上不支持中文路径） | 新增 |
 | **ADR-21** | **进程内事件总线，保存后同步发布**；可靠性需求出现后再引入发件箱 | 新增 |
 
 ## 8. 决策点
