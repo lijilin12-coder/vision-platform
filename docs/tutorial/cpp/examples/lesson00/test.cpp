@@ -1,5 +1,5 @@
 // 工程写法 · 测试：因为 countBlobs 不依赖全局变量和 cin，可以直接用几组数据检查它。
-// （第 10 课会改用 GoogleTest，这里先用最朴素的 assert。）
+// （第 11 课会改用 GoogleTest，这里先用最朴素的 assert。）
 #include <cassert>
 #include <iostream>
 

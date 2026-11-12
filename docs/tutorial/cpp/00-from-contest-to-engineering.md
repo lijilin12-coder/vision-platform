@@ -147,7 +147,7 @@ std::vector<bool> cells_;     // 工程：有多少存多少
 - `fromLines` 会检查每一行的长度，不合格就创建失败；
 - 所以，**只要你手里有一个 `BinaryGrid`，它就一定是合法的**。`countBlobs` 里不需要再做任何检查。
 
-项目里的 `Roi`（宽高必须大于 0）、`Recipe`（不能有环）用的是同一个思路。第 4 课会详细讲。
+项目里的 `Roi`（宽高必须大于 0）、`Recipe`（不能有环）用的是同一个思路。第 1 课和第 5 课会详细讲。
 
 ### 区别 4：出错要明确地告诉调用者
 
@@ -155,7 +155,7 @@ std::vector<bool> cells_;     // 工程：有多少存多少
 static std::optional<BinaryGrid> fromLines(...);   // 可能创建失败
 ```
 
-`std::optional<BinaryGrid>` 的意思是“可能有一个 `BinaryGrid`，也可能没有”。调用者必须先检查有没有，才能使用。这比“带着错误的数据继续算”要好得多：错误在它发生的地方就被发现。第 5 课会讲 `optional` 和项目里的 `Result`。
+`std::optional<BinaryGrid>` 的意思是“可能有一个 `BinaryGrid`，也可能没有”。调用者必须先检查有没有，才能使用。这比“带着错误的数据继续算”要好得多：错误在它发生的地方就被发现。第 6 课会讲 `optional` 和项目里的 `Result`。
 
 ### 区别 5：名字要让人看得懂
 
@@ -255,4 +255,4 @@ Linux 上把 `clang++` 换成 `g++`。`-Wall -Wextra` 是打开编译器警告�
 
 ## 下一课
 
-[第 1 课：项目是怎么组织的](README.md)：为什么要分头文件和源文件，命名空间怎么用，CMake 是怎么把几十个文件编译成一个程序的。
+[第 1 课：面向对象基础——自己写一个字符串类](01-object-oriented-basics.md)：为什么要把数据放进 `private`，构造、析构、拷贝、移动各自解决什么问题。
