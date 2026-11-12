@@ -73,5 +73,7 @@ run lesson16 "$TSAN" future_basics.cpp
 run lesson16 "$TSAN" inference_worker.cpp
 run lesson16 "$ASAN -pthread" inference_worker.cpp
 
+build_only lesson17 "$WARN -O0" crash.cpp
+
 echo
 echo "全部示例通过"

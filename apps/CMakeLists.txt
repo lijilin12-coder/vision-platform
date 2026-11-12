@@ -8,8 +8,15 @@ target_link_libraries(vision-cli PRIVATE
   vision_imaging
   vision_eventbus
   vision_persistence
+  vision_logging
+  vision_crash
   nlohmann_json::nlohmann_json)
 
 if(WIN32)
   target_link_libraries(vision-cli PRIVATE shell32)  # CommandLineToArgvW
+endif()
+
+# 导出符号：这样崩溃报告里的调用栈能显示函数名，而不只是地址（macOS / Linux）。
+if(NOT WIN32)
+  set_target_properties(vision-cli PROPERTIES ENABLE_EXPORTS ON)
 endif()

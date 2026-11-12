@@ -2,6 +2,7 @@
 #include <mutex>
 
 #include "vision/common/id.h"
+#include "vision/common/log.h"
 #include "vision/execution/api.h"
 #include "vision/execution/domain/executor.h"
 #include "vision/execution/domain/plan.h"
@@ -160,6 +161,18 @@ struct ExecutionService::Impl {
             r.nodes.push_back(std::move(nr));
         }
         r.totalMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+
+        // 日志由应用层来写，领域层不写（它不依赖任何技术）。
+        // 节点失败是需要排查的情况，记为 warn；每次检测的结果量很大，记为 debug，平时不输出。
+        for (const auto& n : r.nodes) {
+            if (n.status == "failed") {
+                log::warn("execution", "节点执行失败",
+                          {{"inspection", r.inspectionId}, {"node", n.nodeId}, {"operator", n.operatorId}, {"reason", n.message}});
+            }
+        }
+        log::debug("execution", "检测完成",
+                   {{"inspection", r.inspectionId}, {"recipe", r.recipeVersionId}, {"purpose", r.purpose},
+                    {"verdict", r.verdict}, {"ms", std::to_string(r.totalMs)}});
         dr.outputs = std::move(outputs).value();
         return dr;
     }
