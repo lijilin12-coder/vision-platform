@@ -1,0 +1,17 @@
+{
+  "name": "亮斑缺陷检测（示例）",
+  "nodes": [
+    { "key": "input", "operator": "vision.image_input" },
+    { "key": "gray",  "operator": "vision.to_gray" },
+    { "key": "bin",   "operator": "vision.threshold", "params": { "method": "fixed", "value": 200, "invert": false },
+      "roi": { "x": 120, "y": 90, "width": 400, "height": 300 } },
+    { "key": "blobs", "operator": "vision.blob", "params": { "minArea": 20 } },
+    { "key": "judge", "operator": "vision.judge_count", "params": { "maxCount": 0, "label": "亮斑" } }
+  ],
+  "edges": [
+    ["input.image", "gray.image"],
+    ["gray.image",  "bin.image"],
+    ["bin.region",  "blobs.region"],
+    ["blobs.blobs", "judge.blobs"]
+  ]
+}

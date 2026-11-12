@@ -7,7 +7,19 @@
 - **界面**：Web（Vue 3），鸿蒙端为原生 ArkUI 外壳加 ArkWeb
 - **模型工具链**：独立的 Linux 服务（Python + Docker）
 
-> 当前阶段：**设计完成，待评审**。评审通过后进入 POC 开发（从 POC-1 核心骨架开始）。
+> 当前阶段：**POC**。POC-1（核心骨架）已完成，见 [docs/poc/poc-1-report.md](docs/poc/poc-1-report.md)。
+
+## 快速开始
+
+```bash
+cmake -S . -B build -G Ninja && cmake --build build && (cd build && ctest)
+./build/apps/vision-cli sample-images samples/images
+RID=$(./build/apps/vision-cli recipe build samples/recipes/bright-spot.draft.json)
+VID=$(./build/apps/vision-cli recipe publish $RID)
+./build/apps/vision-cli inspect $VID samples/images
+```
+
+依赖和更多命令见 [docs/dev/build.md](docs/dev/build.md)；新增算子见 [docs/dev/how-to-add-operator.md](docs/dev/how-to-add-operator.md)。
 
 ## 文档
 
@@ -33,6 +45,9 @@
 | [docs/04-poc-plan.md](docs/04-poc-plan.md) | POC 计划（v0.2） |
 | [docs/05-roadmap.md](docs/05-roadmap.md) | 里程碑与分工 |
 | [docs/06-open-questions.md](docs/06-open-questions.md) | 待决问题 |
+| [docs/poc/poc-1-report.md](docs/poc/poc-1-report.md) | POC-1 结论报告 |
+| [docs/dev/build.md](docs/dev/build.md) | 构建与运行 |
+| [docs/dev/how-to-add-operator.md](docs/dev/how-to-add-operator.md) | 如何新增一个算子 |
 
 ## 目录结构（计划）
 
