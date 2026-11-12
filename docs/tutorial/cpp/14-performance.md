@@ -274,4 +274,4 @@ cl /std:c++17 /O2 /EHsc /utf-8 benchmark.cpp && benchmark.exe
 
 ## 下一课
 
-[第 15 课：并发基础——线程、互斥锁、条件变量](15-concurrency-basics.md)
+[第 15 课（预备）：线程和进程到底是什么](15a-threads-and-processes.md)，然后是 [第 15 课：并发基础](15-concurrency-basics.md)

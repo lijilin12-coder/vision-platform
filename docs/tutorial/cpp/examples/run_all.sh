@@ -67,6 +67,10 @@ run lesson13 "$ASAN" growth.cpp
 
 run lesson14 "-std=c++17 -Wall -Wextra -Wpedantic -Werror -O2" benchmark.cpp
 
+run lesson15a "$TSAN" address_space.cpp
+run lesson15a "$TSAN" context_switch.cpp
+run lesson15a "-std=c++17 -Wall -Wextra -Wpedantic -Werror -O2 -pthread" why_threads.cpp
+
 build_only lesson15 "$TSAN" race.cpp
 run lesson15 "$TSAN" sync.cpp
 run lesson16 "$TSAN" future_basics.cpp

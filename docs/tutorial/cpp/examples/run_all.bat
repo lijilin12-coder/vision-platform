@@ -51,6 +51,12 @@ set F=%F% /O2
 call :run lesson14 benchmark.cpp || exit /b 1
 set F=%SAVED%
 
+set F=%F% /O2
+call :run lesson15a address_space.cpp || exit /b 1
+call :run lesson15a context_switch.cpp || exit /b 1
+call :run lesson15a why_threads.cpp || exit /b 1
+set F=%SAVED%
+
 call :build lesson15 race.cpp || exit /b 1
 call :run lesson15 sync.cpp || exit /b 1
 call :run lesson16 future_basics.cpp || exit /b 1
