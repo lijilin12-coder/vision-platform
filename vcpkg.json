@@ -1,0 +1,14 @@
+{
+  "name": "vision-platform",
+  "version-string": "0.1.0",
+  "description": "可编排的工业外观缺陷检测与测量平台",
+  "dependencies": [
+    {
+      "name": "opencv4",
+      "default-features": false,
+      "features": ["jpeg", "png"]
+    },
+    "nlohmann-json",
+    "gtest"
+  ]
+}

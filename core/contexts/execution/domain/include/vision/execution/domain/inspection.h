@@ -10,7 +10,8 @@ namespace vision::execution {
 
 enum class InspectionPurpose { Production, Debug, Check };
 enum class NodeStatus { Succeeded, Failed, Skipped };
-enum class VerdictKind { OK, NG, ERROR };
+// 注意：不能叫 ERROR。Windows 的系统头文件把 ERROR 定义成了宏，一旦被包含就会编译失败。
+enum class VerdictKind { Ok, Ng, Error };
 
 const char* toString(InspectionPurpose p);
 const char* toString(NodeStatus s);
@@ -33,7 +34,7 @@ struct VerdictReason {
 
 // 值对象：判定
 struct Verdict {
-    VerdictKind kind = VerdictKind::OK;
+    VerdictKind kind = VerdictKind::Ok;
     std::vector<VerdictReason> reasons;
 };
 

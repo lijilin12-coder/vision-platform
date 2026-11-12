@@ -9,3 +9,7 @@ target_link_libraries(vision-cli PRIVATE
   vision_eventbus
   vision_persistence
   nlohmann_json::nlohmann_json)
+
+if(WIN32)
+  target_link_libraries(vision-cli PRIVATE shell32)  # CommandLineToArgvW
+endif()
