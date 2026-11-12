@@ -77,8 +77,15 @@ namespace {
 
 wchar_t g_dumpPath[MAX_PATH * 2] = L"";
 wchar_t g_reportPath[MAX_PATH * 2] = L"";
+bool g_dumpWritten = false;
+LPTOP_LEVEL_EXCEPTION_FILTER g_previousFilter = nullptr;
+
+// 微软编译器用这个异常代码表示“C++ 异常”。
+const DWORD kCppExceptionCode = 0xE06D7363;
 
 void writeDump(EXCEPTION_POINTERS* exception) {
+    if (g_dumpWritten) return;  // 已经写过带异常信息的转储，不要用信息更少的覆盖它
+    g_dumpWritten = true;
     const HANDLE file =
         CreateFileW(g_dumpPath, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE) return;
@@ -111,8 +118,17 @@ void writeReport(const char* reason, DWORD code, const void* address) {
 LONG WINAPI onUnhandledException(EXCEPTION_POINTERS* exception) {
     const DWORD code = exception && exception->ExceptionRecord ? exception->ExceptionRecord->ExceptionCode : 0;
     const void* address = exception && exception->ExceptionRecord ? exception->ExceptionRecord->ExceptionAddress : nullptr;
-    writeReport("unhandled exception", code, address);
+    writeReport(code == kCppExceptionCode ? "uncaught C++ exception" : "unhandled exception", code, address);
     writeDump(exception);
+
+    // 未捕获的 C++ 异常在 Windows 上先到这里，而不是先到 std::terminate。
+    // 把它交还给 C++ 运行库原来的处理函数：运行库会调用 std::terminate，
+    // 于是我们的 onTerminate 得以把异常的内容写进日志。转储已经在上面写好了。
+    if (code == kCppExceptionCode) {
+        if (g_previousFilter != nullptr) return g_previousFilter(exception);
+        log::error("crash", "未捕获的 C++ 异常，程序即将终止");
+        Logger::global().flush();
+    }
     return EXCEPTION_EXECUTE_HANDLER;  // 结束进程，退出码为异常代码
 }
 
@@ -146,7 +162,7 @@ CrashHandlerInfo installCrashHandler(const CrashHandlerOptions& options) {
     _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
 #endif
 
-    SetUnhandledExceptionFilter(onUnhandledException);
+    g_previousFilter = SetUnhandledExceptionFilter(onUnhandledException);
     std::signal(SIGABRT, onAbort);
     std::set_terminate(onTerminate);
     return info;
