@@ -166,11 +166,17 @@ TEST(Logger, ConcurrentWritesProduceWholeLines) {
     const int perThread = 500;
     std::vector<std::thread> workers;
     for (int t = 0; t < threads; ++t) {
-        workers.emplace_back([&logger, t] {
-            for (int i = 0; i < perThread; ++i) {
-                logger.write(LogLevel::Info, "worker", "并发写入", {{"thread", std::to_string(t)}, {"i", std::to_string(i)}});
-            }
-        });
+        // 线程编号和次数作为参数传给线程，而不是由 lambda 捕获。
+        // 原因：perThread 是常量，“要不要捕获它”三个编译器的要求不一致：
+        // MSVC 要求捕获，Clang 对多余的捕获给出警告。作为参数传递，三个编译器都没有意见。
+        workers.emplace_back(
+            [&logger](int thread, int count) {
+                for (int i = 0; i < count; ++i) {
+                    logger.write(LogLevel::Info, "worker", "并发写入",
+                                 {{"thread", std::to_string(thread)}, {"i", std::to_string(i)}});
+                }
+            },
+            t, perThread);
     }
     for (auto& w : workers) w.join();
     logger.clearSinks();  // 关闭文件
