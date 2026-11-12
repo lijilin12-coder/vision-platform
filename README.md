@@ -40,6 +40,7 @@ VID=$(./build/apps/vision-cli recipe publish $RID)
 | 文档 | 内容 |
 |---|---|
 | [docs/02-architecture.md](docs/02-architecture.md) | 技术架构（v0.2，按 DDD 重写） |
+| [docs/07-architecture-diagrams.md](docs/07-architecture-diagrams.md) | 架构图：模块关系、消息传递、数据流向 |
 | [docs/03-tech-research.md](docs/03-tech-research.md) | 技术调研 |
 | [docs/01-requirements.md](docs/01-requirements.md) | 需求规格（v0.2，按限界上下文组织） |
 | [docs/04-poc-plan.md](docs/04-poc-plan.md) | POC 计划（v0.2） |
