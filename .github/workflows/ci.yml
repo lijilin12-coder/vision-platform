@@ -43,6 +43,15 @@ jobs:
           g++ $F test.cpp my_string.cpp -o t && ./t
           g++ $F complex_rule_of_zero.cpp -o c && ./c
           g++ $F c_style.cpp -o s && ./s
+          cd ../lesson03
+          g++ $F copy_counter.cpp -o cc && ./cc
+          g++ $F registry_bug.cpp -o rb && ./rb
+          g++ $F dangling.cpp -o dg      # 故意有错的示例：只编译，不运行
+          cd ../lesson02
+          cmake -S . -B build -G Ninja -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
+          cmake --build build
+          ctest --test-dir build --output-on-failure
+          ./build/app/overlap_app
 
   windows:
     name: Windows (MSVC)
@@ -107,3 +116,14 @@ jobs:
           c.exe || exit /b 1
           cl %F% c_style.cpp /Fe:s.exe || exit /b 1
           s.exe || exit /b 1
+          cd ..\lesson03
+          cl %F% copy_counter.cpp /Fe:cc.exe || exit /b 1
+          cc.exe || exit /b 1
+          cl %F% registry_bug.cpp /Fe:rb.exe || exit /b 1
+          rb.exe || exit /b 1
+          cl %F% dangling.cpp /Fe:dg.exe || exit /b 1
+          cd ..\lesson02
+          cmake -S . -B build -G Ninja || exit /b 1
+          cmake --build build || exit /b 1
+          ctest --test-dir build --output-on-failure || exit /b 1
+          build\app\overlap_app.exe || exit /b 1

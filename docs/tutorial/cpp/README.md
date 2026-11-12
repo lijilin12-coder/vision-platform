@@ -26,8 +26,8 @@
 |---|---|---|---|---|
 | [00](00-from-contest-to-engineering.md) | 从竞赛 C++ 到工程 C++ | 知道两种写法差在哪里，为什么 | — | ✅ |
 | [01](01-object-oriented-basics.md) | 面向对象基础：自己写一个字符串类（并用复数类做对照） | 明白封装、构造、析构、拷贝、移动各自解决什么问题；知道五法则和零法则 | `Roi`、`Image`、`Recipe` | ✅ |
-| 02 | 项目是怎么组织的：头文件、源文件、命名空间、CMake | 看懂项目目录；能新建一个模块并编译 | `core/kernel/`、各级 `CMakeLists.txt` | 待写 |
-| 03 | 值、引用、`const`、移动语义 | 知道什么时候拷贝、什么时候不拷贝；看懂 `std::move` | `operator_catalog.cpp`（一个真实的 bug） | 待写 |
+| [02](02-project-organization.md) | 项目是怎么组织的：头文件、源文件、命名空间、CMake | 看懂项目目录；能新建一个模块并编译 | `core/kernel/`、各级 `CMakeLists.txt` | ✅ |
+| [03](03-values-references-move.md) | 值、引用、`const`、移动语义 | 知道什么时候拷贝、什么时候不拷贝；看懂 `std::move` | `operator_catalog.cpp`（一个真实的 bug） | ✅ |
 | 04 | 资源管理：RAII 与智能指针 | 不再手写 `new` / `delete`；会用 `unique_ptr`、`shared_ptr` | `Image`、`ExecutionService` | 待写 |
 | 05 | 类的设计：封装、不变量、值对象 | 写出“创建不出非法状态”的类 | `Roi`、`Recipe` | 待写 |
 | 06 | 错误处理：`Result`、`optional`、异常 | 知道三种方式各自什么时候用 | `result.h`、`Recipe::connect` | 待写 |
