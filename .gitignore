@@ -104,3 +104,5 @@ models/**/*.ms
 build-*/
 vision-data/
 samples/images/
+.vcpkg-cache/
+vcpkg_installed/

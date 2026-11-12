@@ -12,13 +12,13 @@ Verdict Judge::judge(const std::vector<NodeExecution>& executions, const std::ve
         if (e.status == NodeStatus::Failed) errors.push_back({e.nodeId, false, "节点执行失败：" + e.message});
     }
     if (!errors.empty()) {
-        v.kind = VerdictKind::ERROR;
+        v.kind = VerdictKind::Error;
         v.reasons = std::move(errors);
         return v;
     }
     v.reasons = reasons;
     const bool anyFail = std::any_of(reasons.begin(), reasons.end(), [](const VerdictReason& r) { return !r.pass; });
-    v.kind = anyFail ? VerdictKind::NG : VerdictKind::OK;
+    v.kind = anyFail ? VerdictKind::Ng : VerdictKind::Ok;
     return v;
 }
 

@@ -5,6 +5,8 @@
 #include <nlohmann/json.hpp>
 #include <sstream>
 
+#include "vision/common/path.h"
+
 namespace vision::persistence {
 
 using nlohmann::json;
@@ -180,15 +182,16 @@ std::vector<NamedRegion> regionsFromJson(const json& a) {
 Status writeFileAtomically(const fs::path& path, const std::string& content) {
     std::error_code ec;
     fs::create_directories(path.parent_path(), ec);
-    const fs::path tmp = path.string() + ".tmp";
+    fs::path tmp = path;
+    tmp += ".tmp";
     {
         std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
-        if (!out) return Status::failure("persistence.write", "无法写入 " + tmp.string());
+        if (!out) return Status::failure("persistence.write", "无法写入 " + pathToUtf8(tmp));
         out << content;
-        if (!out) return Status::failure("persistence.write", "写入失败 " + tmp.string());
+        if (!out) return Status::failure("persistence.write", "写入失败 " + pathToUtf8(tmp));
     }
     fs::rename(tmp, path, ec);  // 先写临时文件再改名，避免写到一半时程序崩溃留下损坏的文件
-    if (ec) return Status::failure("persistence.write", "无法替换 " + path.string() + "：" + ec.message());
+    if (ec) return Status::failure("persistence.write", "无法替换 " + pathToUtf8(path) + "：" + ec.message());
     return Status::success();
 }
 
@@ -234,7 +237,7 @@ std::vector<RecipeId> JsonRecipeRepository::listIds() {
     std::error_code ec;
     if (!fs::exists(dir_, ec)) return ids;
     for (const auto& entry : fs::directory_iterator(dir_, ec)) {
-        if (entry.path().extension() == ".json") ids.push_back(entry.path().stem().string());
+        if (entry.path().extension() == ".json") ids.push_back(pathToUtf8(entry.path().stem()));
     }
     std::sort(ids.begin(), ids.end());
     return ids;
