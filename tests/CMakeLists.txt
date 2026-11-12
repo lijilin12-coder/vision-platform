@@ -27,6 +27,18 @@ target_link_libraries(integration_tests PRIVATE
   GTest::gtest_main)
 gtest_discover_tests(integration_tests)
 
+# ---- 日志 ----
+add_executable(logging_tests logging_test.cpp)
+target_link_libraries(logging_tests PRIVATE vision_logging GTest::gtest_main)
+gtest_discover_tests(logging_tests)
+
+# ---- 崩溃处理：故意让程序崩溃，检查留下的崩溃报告、转储文件和日志 ----
+foreach(kind segv abort throw)
+  add_test(NAME crash_leaves_report_${kind}
+           COMMAND ${CMAKE_COMMAND} -DCLI=$<TARGET_FILE:vision-cli> -DWORK_DIR=${CMAKE_BINARY_DIR}/crash-test-${kind}
+                   -DKIND=${kind} -P ${CMAKE_CURRENT_SOURCE_DIR}/crash/check_crash.cmake)
+endforeach()
+
 # ---- 边界测试：故意违反边界的代码必须编译失败 ----
 add_library(boundary_violation OBJECT EXCLUDE_FROM_ALL boundary/violation.cpp)
 target_link_libraries(boundary_violation PRIVATE authoring_application)

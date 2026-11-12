@@ -120,6 +120,8 @@ macOS 不在自动构建里：日常开发就在 Mac 上进行；macOS 构建机
 | `authoring_domain_tests` | 方案编排的不变量 R1～R6、发布规则 P1/P5 | 否 |
 | `execution_domain_tests` | 执行计划、检测的不变量 I1～I4、判定 | 否 |
 | `integration_tests` | 真实算子 + OpenCV + JSON 仓储的完整流程；中文路径 | 是 |
+| `logging_tests` | 日志的格式、级别过滤、文件轮转、多线程写入 | 否 |
+| `crash_leaves_report_*` | 故意让程序以三种方式崩溃，检查崩溃报告、转储文件和日志是否留下 | — |
 | `boundary_violation_fails_to_compile` | 跨上下文引用领域类必须编译失败 | — |
 
 ## 命令行示例

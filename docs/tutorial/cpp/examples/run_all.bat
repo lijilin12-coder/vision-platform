@@ -56,6 +56,8 @@ call :run lesson15 sync.cpp || exit /b 1
 call :run lesson16 future_basics.cpp || exit /b 1
 call :run lesson16 inference_worker.cpp || exit /b 1
 
+call :build lesson17 crash.cpp || exit /b 1
+
 echo.
 echo All examples passed
 exit /b 0

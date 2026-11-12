@@ -10,16 +10,20 @@
 #include <nlohmann/json.hpp>
 #include <opencv2/imgproc.hpp>
 #include <random>
+#include <stdexcept>
 #include <sstream>
 #include <string>
 #include <vector>
 
 #include "vision/authoring/api.h"
 #include "vision/catalog/api.h"
+#include "vision/common/log.h"
 #include "vision/common/path.h"
+#include "vision/crash/crash_handler.h"
 #include "vision/eventbus/in_memory_event_bus.h"
 #include "vision/execution/api.h"
 #include "vision/imaging/cv_bridge.h"
+#include "vision/logging/sinks.h"
 #include "vision/persistence/json_repositories.h"
 
 #ifdef _WIN32
@@ -55,8 +59,15 @@ constexpr const char* kUsage = R"(用法：vision-cli [--data <目录>] <命令>
   inspect <方案版本ID> <图像或目录>...          执行检测，输出判定、判定依据和各节点耗时
 工具
   sample-images <输出目录>                      生成示例图像（良品与带亮斑缺陷的产品）
+  debug crash <segv|abort|throw>                故意让程序崩溃，用来验证崩溃报告和转储文件能否生成
 
-默认数据目录：./vision-data
+选项
+  --data <目录>          数据目录，默认 ./vision-data
+  --log-level <级别>     写入日志文件的最低级别：trace / debug / info（默认）/ warn / error / off
+  --events               在控制台显示领域事件
+  --no-core-dump         崩溃时不生成 core 文件（macOS / Linux）
+
+日志在 <数据目录>/logs/vision-cli.log，崩溃报告和转储文件在 <数据目录>/crashes/。
 )";
 
 struct App {
@@ -73,14 +84,47 @@ struct App {
           authoring(recipes, versions, catalog::OperatorCatalog::global(), bus),
           execution(catalog::OperatorCatalog::global(), bus) {
         bus.subscribe("*", [this](const EventPtr& e) {
+            log::info("event", e->name());  // 每个领域事件都记入日志：事后可以还原“发生过什么”
             if (verboseEvents) std::cerr << "  [事件] " << e->name() << "\n";
         });
     }
 };
 
 int fail(const Error& e) {
+    log::error("cli", "命令失败", {{"code", e.code}, {"message", e.message}});
     std::cerr << "错误：" << e.message << "  (" << e.code << ")\n";
     return 1;
+}
+
+// ---------- 故意崩溃：用来验证崩溃报告、转储文件、日志是否如预期留下 ----------
+// 分成几层函数，是为了让调用栈里能看到一条完整的调用链。
+
+#if defined(_MSC_VER)
+#define VISION_NOINLINE __declspec(noinline)
+#else
+#define VISION_NOINLINE __attribute__((noinline))
+#endif
+
+VISION_NOINLINE void crashWriteThroughNull(volatile int* target) { *target = 42; }
+VISION_NOINLINE void crashInOperator(const std::string& kind) {
+    if (kind == "segv") {
+        crashWriteThroughNull(nullptr);
+    } else if (kind == "abort") {
+        std::abort();
+    } else {
+        throw std::runtime_error("这是一个故意抛出、没有人捕获的异常");
+    }
+}
+VISION_NOINLINE void crashInInspection(const std::string& kind) { crashInOperator(kind); }
+
+int cmdDebugCrash(const std::string& kind) {
+    if (kind != "segv" && kind != "abort" && kind != "throw") {
+        std::cerr << "未知的崩溃类型：" << kind << "（可选 segv、abort、throw）\n";
+        return 1;
+    }
+    log::warn("cli", "即将按要求故意崩溃", {{"kind", kind}});
+    crashInInspection(kind);
+    return 0;  // 不会执行到这里
 }
 
 ParamValue parseParam(const std::string& s) {
@@ -306,10 +350,18 @@ int main(int argc, char** argv) {
     std::vector<std::string> args = utf8Args(argc, argv);
     fs::path data = "vision-data";
     bool verbose = false;
+    bool coreDumps = true;
+    LogLevel logLevel = LogLevel::Info;
     for (size_t i = 0; i < args.size();) {
         if (args[i] == "--data" && i + 1 < args.size()) {
             data = pathFromUtf8(args[i + 1]);
             args.erase(args.begin() + i, args.begin() + i + 2);
+        } else if (args[i] == "--log-level" && i + 1 < args.size()) {
+            logLevel = parseLogLevel(args[i + 1], LogLevel::Info);
+            args.erase(args.begin() + i, args.begin() + i + 2);
+        } else if (args[i] == "--no-core-dump") {
+            coreDumps = false;
+            args.erase(args.begin() + i);
         } else if (args[i] == "--events") {
             verbose = true;
             args.erase(args.begin() + i);
@@ -321,6 +373,24 @@ int main(int argc, char** argv) {
         std::cout << kUsage;
         return args.empty() ? 1 : 0;
     }
+
+    // 日志和崩溃处理要最先准备好：之后任何地方出问题，都能留下记录。
+    logging::LoggingOptions logOptions;
+    logOptions.dir = data / "logs";
+    logOptions.name = "vision-cli";
+    logOptions.level = logLevel;
+    logOptions.consoleLevel = LogLevel::Off;  // 命令行程序自己负责向用户输出，日志只写文件
+    logging::setupLogging(logOptions);
+
+    crash::CrashHandlerOptions crashOptions;
+    crashOptions.dir = data / "crashes";
+    crashOptions.appName = "vision-cli";
+    crashOptions.enableCoreDumps = coreDumps;
+    crash::installCrashHandler(crashOptions);
+
+    std::string commandLine;
+    for (const auto& a : args) commandLine += (commandLine.empty() ? "" : " ") + a;
+    log::info("cli", "启动", {{"command", commandLine}});
 
     App app(data);
     app.verboseEvents = verbose;
@@ -334,6 +404,7 @@ int main(int argc, char** argv) {
     };
 
     if (cmd == "operators") return cmdOperators();
+    if (cmd == "debug" && need(3) && args[1] == "crash") return cmdDebugCrash(args[2]);
     if (cmd == "sample-images" && need(2)) return cmdSampleImages(args[1]);
     if (cmd == "inspect" && need(3)) return cmdInspect(app, args[1], {args.begin() + 2, args.end()});
     if (cmd == "version" && need(3) && args[1] == "show") {

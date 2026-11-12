@@ -17,3 +17,16 @@ target_include_directories(vision_persistence PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
 target_link_libraries(vision_persistence
   PUBLIC authoring_domain authoring_application
   PRIVATE nlohmann_json::nlohmann_json)
+
+# 日志接收器：控制台、轮转文件
+add_library(vision_logging STATIC logging/src/sinks.cpp)
+target_include_directories(vision_logging PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/logging/include)
+target_link_libraries(vision_logging PUBLIC vision_common)
+
+# 崩溃处理：Windows 写 minidump，macOS / Linux 写崩溃报告并放开 core 文件限制
+add_library(vision_crash STATIC crash/src/crash_handler.cpp)
+target_include_directories(vision_crash PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/crash/include)
+target_link_libraries(vision_crash PUBLIC vision_common)
+if(WIN32)
+  target_link_libraries(vision_crash PRIVATE dbghelp)
+endif()
