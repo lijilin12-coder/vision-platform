@@ -331,4 +331,4 @@ cl %FLAGS% dangling.cpp && dangling.exe
 
 ## 下一课
 
-第 4 课：资源管理——RAII 与智能指针（待写）。
+[第 4 课：资源管理——RAII 与智能指针](04-raii-smart-pointers.md)
