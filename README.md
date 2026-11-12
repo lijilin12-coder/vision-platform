@@ -7,7 +7,7 @@
 - **界面**：Web（Vue 3），鸿蒙端为原生 ArkUI 外壳加 ArkWeb
 - **模型工具链**：独立的 Linux 服务（Python + Docker）
 
-> 当前阶段：**领域设计与架构设计**。设计完成后进入 POC 开发。
+> 当前阶段：**设计完成，待评审**。评审通过后进入 POC 开发（从 POC-1 核心骨架开始）。
 
 ## 文档
 
@@ -29,8 +29,8 @@
 |---|---|
 | [docs/02-architecture.md](docs/02-architecture.md) | 技术架构（v0.2，按 DDD 重写） |
 | [docs/03-tech-research.md](docs/03-tech-research.md) | 技术调研 |
-| [docs/01-requirements.md](docs/01-requirements.md) | 需求规格（待按 DDD 设计更新） |
-| [docs/04-poc-plan.md](docs/04-poc-plan.md) | POC 计划（待按 DDD 设计更新） |
+| [docs/01-requirements.md](docs/01-requirements.md) | 需求规格（v0.2，按限界上下文组织） |
+| [docs/04-poc-plan.md](docs/04-poc-plan.md) | POC 计划（v0.2） |
 | [docs/05-roadmap.md](docs/05-roadmap.md) | 里程碑与分工 |
 | [docs/06-open-questions.md](docs/06-open-questions.md) | 待决问题 |
 
