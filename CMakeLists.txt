@@ -7,6 +7,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(VISION_BUILD_TESTS "Build unit and integration tests" ON)
+option(VISION_BUILD_TUTORIALS "Build the OpenCV tutorial examples" ON)
 
 if(MSVC)
   add_compile_options(/W4 /utf-8)
@@ -32,6 +33,11 @@ add_subdirectory(apps)
 
 if(VISION_BUILD_TESTS)
   add_subdirectory(tests)
+endif()
+
+if(VISION_BUILD_TUTORIALS)
+  enable_testing()
+  add_subdirectory(docs/tutorial/opencv/examples)
 endif()
 
 # 配置阶段检查：所有领域层目标只能依赖共享内核和 common
