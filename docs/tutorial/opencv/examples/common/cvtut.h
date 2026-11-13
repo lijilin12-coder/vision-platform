@@ -119,6 +119,55 @@ inline cv::Mat drawHistogram(const cv::Mat& histogram, int markAt = -1) {
     return canvas;
 }
 
+// ---------- 模板匹配用的示例（第 8 课和大作业） ----------
+
+// 一个“标记件”：深色的矩形零件，上面有一个圆孔、一个小方孔、一条灰色的标记线，左上角切掉一个角。
+// 特意做成不对称的：转任何角度（除了 0 度）都和原来不一样，所以它的角度是唯一确定的。
+// 返回 200×140 的图像，零件在正中间（中心在 (100, 70)），大小 160×100，背景灰度 170。
+inline cv::Mat makeWidget() {
+    cv::Mat image(140, 200, CV_8UC1, cv::Scalar(170));
+    cv::rectangle(image, cv::Rect(20, 20, 160, 100), cv::Scalar(70), cv::FILLED);        // 零件本体
+    cv::circle(image, cv::Point(60, 70), 18, cv::Scalar(170), cv::FILLED);               // 圆孔
+    cv::rectangle(image, cv::Rect(135, 35, 22, 22), cv::Scalar(170), cv::FILLED);        // 小方孔
+    cv::rectangle(image, cv::Rect(100, 98, 60, 8), cv::Scalar(120), cv::FILLED);         // 灰色的标记线
+    const std::vector<cv::Point> corner = {{20, 20}, {50, 20}, {20, 45}};
+    cv::fillConvexPoly(image, corner, cv::Scalar(170));                                  // 左上角切掉一个角
+    return image;
+}
+
+// 标记件在场景里的一个摆放：中心位置和角度。
+// 角度的约定（整套示例统一）：单位是度；在屏幕上看，正的角度是【顺时针】，和第 5 课一致。
+struct Placement {
+    double x = 0, y = 0, angle = 0;
+};
+
+// 把一张小图按“中心放在 (x, y)、顺时针转 angle 度”的方式贴到场景上。小图里灰度等于 170（背景）的地方不贴。
+inline void placeOnScene(cv::Mat& scene, const cv::Mat& object, const Placement& p) {
+    const cv::Point2f center(object.cols / 2.0f, object.rows / 2.0f);
+    cv::Mat m = cv::getRotationMatrix2D(center, -p.angle, 1.0);   // getRotationMatrix2D 的正方向是逆时针，所以取负
+    m.at<double>(0, 2) += p.x - center.x;
+    m.at<double>(1, 2) += p.y - center.y;
+    cv::Mat warped(scene.size(), CV_8UC1, cv::Scalar(170)), valid;
+    cv::warpAffine(object, warped, m, scene.size(), cv::INTER_LINEAR, cv::BORDER_CONSTANT, cv::Scalar(170));
+    cv::warpAffine(cv::Mat(object.size(), CV_8UC1, cv::Scalar(255)), valid, m, scene.size(), cv::INTER_NEAREST);
+    warped.copyTo(scene, valid);
+}
+
+// 生成一张场景图像（640×480，背景 170）：把标记件按给定的摆放贴上去，再加上几个“干扰物”和噪声。
+// 干扰物：一个比标记件大的亮矩形、一个和标记件一样大但没有任何细节的深色矩形。
+inline cv::Mat makeScene(const std::vector<Placement>& placements, double sigmaNoise = 3.0, bool withDistractors = true) {
+    cv::Mat scene(480, 640, CV_8UC1, cv::Scalar(170));
+    if (withDistractors) {
+        cv::rectangle(scene, cv::Rect(430, 330, 180, 120), cv::Scalar(245), cv::FILLED);   // 很亮的矩形
+        cv::rectangle(scene, cv::Rect(30, 340, 160, 100), cv::Scalar(70), cv::FILLED);     // 没有细节的深色矩形
+    }
+    const cv::Mat widget = makeWidget();
+    for (const auto& p : placements) placeOnScene(scene, widget, p);
+    cv::GaussianBlur(scene, scene, cv::Size(3, 3), 0.8);   // 镜头的一点模糊
+    if (sigmaNoise > 0) addNoise(scene, sigmaNoise);
+    return scene;
+}
+
 // 检查结果是否符合预期。示例同时也是测试：有一项不符合，程序就以失败退出。
 class Checker {
 public:
