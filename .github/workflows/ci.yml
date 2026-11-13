@@ -80,9 +80,17 @@ jobs:
           & $cli --data $data sample-images $images; Check
           $rid = (& $cli --data $data recipe build samples\recipes\bright-spot.draft.json | Select-Object -Last 1).Trim(); Check
           $vid = (& $cli --data $data recipe publish $rid | Select-Object -Last 1).Trim(); Check
-          $out = & $cli --data $data inspect $vid $images; Check
+          $out = & $cli --data $data inspect $vid $images
+          $code = $LASTEXITCODE
           $out
-          if (-not ($out -match "OK 2.+NG 2.+ERROR 0")) { throw "检测结果与预期不符" }
+          if ($code -ne 0 -or -not ($out -match "OK 2.+NG 2.+ERROR 0")) {
+            # 失败时把能找到的线索都打印出来：退出码、方案和版本的编号、日志、崩溃报告
+            Write-Host "inspect 的退出码：$code；输出 $(@($out).Count) 行；rid=[$rid] vid=[$vid]"
+            Get-ChildItem -Recurse $data | ForEach-Object { Write-Host $_.FullName $_.Length }
+            Get-ChildItem "$data\logs" -Filter *.log -ErrorAction SilentlyContinue | ForEach-Object { Get-Content $_.FullName -Tail 40 -Encoding utf8 }
+            Get-ChildItem "$data\crashes" -Filter *.txt -ErrorAction SilentlyContinue | ForEach-Object { Get-Content $_.FullName -Encoding utf8 }
+            throw "检测结果与预期不符"
+          }
       - name: 编译并运行教程示例
         shell: cmd
         run: docs\tutorial\cpp\examples\run_all.bat
