@@ -9,7 +9,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-cmake --preset default
+cmake --preset default -DCPPTUT_WARNINGS_AS_ERRORS=ON
 cmake --build --preset default
 ctest --preset default
 
