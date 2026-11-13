@@ -330,4 +330,4 @@ cv::morphologyEx(cleaned, outline, cv::MORPH_GRADIENT, k3);   // 膨胀 − 腐�
 
 ## 下一课
 
-第 5 课：Blob 分析（待写）
+[第 5 课：Blob 分析](05-blob-analysis.md)

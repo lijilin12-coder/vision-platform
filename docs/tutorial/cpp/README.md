@@ -46,6 +46,8 @@
 | [16 延伸](16a-thread-pool.md) | 线程池 | 实现一个最小的线程池；并行执行互不依赖的节点；避开四个常见的坑 | 节点并行执行（计划中） | ✅ |
 | [17](17-logging-and-core-dumps.md) | 日志与崩溃转储 | 写出有用的日志；从 core 文件或 minidump 里找出崩溃原因 | `log.h`、`adapters/logging`、`adapters/crash` | ✅ |
 
+学完第 00～04 课之后，可以同时开始 [OpenCV 与机器视觉基础教程](../opencv/README.md)。
+
 ## 建议的学习顺序
 
 - **想尽快写算子**：00 → 01 → 02 → 03 → 06，然后看 [如何新增一个算子](../../dev/how-to-add-operator.md)。
