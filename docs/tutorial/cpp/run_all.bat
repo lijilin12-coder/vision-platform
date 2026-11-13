@@ -10,6 +10,11 @@ cmake --preset default || exit /b 1
 cmake --build --preset default || exit /b 1
 ctest --preset default || exit /b 1
 
+rem Second pass: MSVC AddressSanitizer build.
+cmake --preset msvc-asan || exit /b 1
+cmake --build --preset msvc-asan || exit /b 1
+ctest --preset msvc-asan || exit /b 1
+
 echo.
 echo All examples passed
 exit /b 0
