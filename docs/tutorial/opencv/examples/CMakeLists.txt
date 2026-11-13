@@ -47,3 +47,13 @@ cvtut_example(06 caliper)
 cvtut_example(07 transform)
 cvtut_example(07 pyramid)
 cvtut_example(08 matching)
+
+# ---- 大作业：带旋转角度的模板匹配 ----
+# 同一个评分程序，分别链接学生的实现和参考实现。
+foreach(who student reference)
+  add_executable(cv09_evaluate_${who} capstone/evaluate.cpp capstone/${who}/rotated_match.cpp)
+  target_include_directories(cv09_evaluate_${who} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/common" "${CMAKE_CURRENT_SOURCE_DIR}/capstone")
+  target_link_libraries(cv09_evaluate_${who} PRIVATE ${OpenCV_LIBS})
+endforeach()
+# 参考实现必须通过评分，作为测试运行；学生的实现在完成之前通不过，所以只编译，不作为测试。
+add_test(NAME cv09_evaluate_reference COMMAND cv09_evaluate_reference "${CVTUT_OUT_DIR}/capstone")
