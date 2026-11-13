@@ -94,6 +94,7 @@ Windows 上是 `build\bin\l03_registry_bug.exe`。
 几点说明：
 
 - **内存检查和线程检查是自动加上的**：在 macOS 和 Linux 上，每个示例都按它的内容带着 AddressSanitizer 或 ThreadSanitizer 编译（第 13、15 课会讲），有问题时运行就会报告。Windows 上不加。
+- **警告默认不当成错误**。换了更新的编译器、多出几条新警告时，示例仍然能编译。自动构建时会打开（`-DCPPTUT_WARNINGS_AS_ERRORS=ON`）。
 - **标了 `BUILD_ONLY` 的示例是故意有错的**，用来演示这些工具的报告。它们会被编译，但 `ctest` 不运行它们；按对应课程里的说明手动运行 `build/bin/` 下的程序来看报告。
 - **第 00、01 课还没有讲 CMake**（第 02 课才讲）。前两课照着上面的命令用就可以，不需要看懂 `CMakeLists.txt`；学完第 02 课再回来读它。
 

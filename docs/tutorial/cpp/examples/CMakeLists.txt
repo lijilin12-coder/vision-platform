@@ -28,11 +28,26 @@ if(MSVC)
   string(REGEX REPLACE "/RTC[1csu]+" "" CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}")
   set(CPPTUT_WARNINGS /W4 /utf-8 /EHsc)
 else()
-  set(CPPTUT_WARNINGS -Wall -Wextra -Wpedantic -Werror)
+  set(CPPTUT_WARNINGS -Wall -Wextra -Wpedantic)
+endif()
+
+# 把警告当成错误。自动构建时打开（run_all 脚本会打开它）；平时默认关闭，
+# 这样换了更新的编译器、多出几条新警告时，示例仍然能编译。
+option(CPPTUT_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
+if(CPPTUT_WARNINGS_AS_ERRORS AND NOT MSVC)
+  list(APPEND CPPTUT_WARNINGS -Werror)
+endif()
+
+# 内存检查、线程检查工具只在 macOS 和 Linux 上启用。
+# Windows 上不启用：MSVC 的用法不同；MinGW（Windows 上的 GCC）不带这些工具，加了会链接失败。
+if(UNIX)
+  set(CPPTUT_SANITIZERS ON)
+else()
+  set(CPPTUT_SANITIZERS OFF)
 endif()
 
 # cpptut_example(<课号> <名字> SOURCES <源文件...>
-#                [SANITIZE address|thread|undefined|none]   用哪种检查工具编译（GCC、Clang 上有效；默认 address）
+#                [SANITIZE address|thread|undefined|none]   用哪种检查工具编译（macOS、Linux 上有效；默认 address）
 #                [OPTIMIZE]                                 打开优化（测量时间的示例需要）
 #                [BUILD_ONLY]                               只编译，不作为测试运行
 #                [SUFFIX <后缀>]                            同一个源文件用两种检查工具各编译一次时，用来区分目标名
@@ -55,8 +70,8 @@ function(cpptut_example lesson name)
     target_compile_options(${target} PRIVATE $<IF:$<CXX_COMPILER_ID:MSVC>,/O2,-O2>)
   endif()
 
-  # 内存检查、线程检查工具：只在 GCC 和 Clang 上启用。优化过的测量示例不加（会让时间失真）。
-  if(NOT MSVC AND NOT A_OPTIMIZE AND NOT A_SANITIZE STREQUAL "none")
+  # 内存检查、线程检查工具。优化过的测量示例不加（会让时间失真）。
+  if(CPPTUT_SANITIZERS AND NOT A_OPTIMIZE AND NOT A_SANITIZE STREQUAL "none")
     if(A_SANITIZE STREQUAL "address")
       set(flags -fsanitize=address,undefined)
     else()
@@ -121,7 +136,7 @@ cpptut_example(14 benchmark SOURCES benchmark.cpp OPTIMIZE)
 cpptut_example(14a alloc_cost SOURCES alloc_cost.cpp OPTIMIZE)
 cpptut_example(14a block_pool SOURCES block_pool.cpp)
 cpptut_example(14a buffer_pool SOURCES buffer_pool.cpp SANITIZE thread)
-if(NOT MSVC)
+if(CPPTUT_SANITIZERS)
   cpptut_example(14a buffer_pool SOURCES buffer_pool.cpp SANITIZE address SUFFIX _asan)
 endif()
 
@@ -135,7 +150,7 @@ cpptut_example(15 sync SOURCES sync.cpp SANITIZE thread)
 # ---- 第 16 课：promise、future 与推理服务；第 16 课延伸：线程池 ----
 cpptut_example(16 future_basics SOURCES future_basics.cpp SANITIZE thread)
 cpptut_example(16 inference_worker SOURCES inference_worker.cpp SANITIZE thread)
-if(NOT MSVC)
+if(CPPTUT_SANITIZERS)
   cpptut_example(16 inference_worker SOURCES inference_worker.cpp SANITIZE address SUFFIX _asan)
 endif()
 cpptut_example(16a pitfalls SOURCES pitfalls.cpp SANITIZE thread)

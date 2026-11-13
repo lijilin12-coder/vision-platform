@@ -34,6 +34,27 @@
 
 选好之后它会自动执行配置，相当于在终端里敲 `cmake --preset default`。底部的输出面板里看到 “Build files have been written to …” 就是成功了。
 
+**Windows 上要留意用的是哪个编译器。** 配置时输出的第一行会写明，例如：
+
+```
+-- The CXX compiler identification is MSVC 19.44...      ← Visual Studio 的编译器
+-- The CXX compiler identification is GNU 16.2.0         ← MinGW（Windows 上的 GCC）
+```
+
+两种都能编译教程的示例。区别是：
+
+| | MSVC | MinGW |
+|---|---|---|
+| 是否经过自动构建验证 | 是，每次提交都验证 | **否**，没有验证过 |
+| 调试器 | Visual Studio 的调试器（`cppvsdbg`） | GDB（`cppdbg`） |
+| 和整个平台是否一致 | 一致，平台在 Windows 上用 MSVC | 不一致 |
+
+建议用 MSVC。如果电脑上同时装了两个，从普通的终端启动 VS Code 时，CMake 常常会选中 MinGW。要换成 MSVC：
+
+1. 关掉 VS Code。
+2. 打开开始菜单里的“x64 Native Tools Command Prompt for VS 2022”。
+3. 进入 `examples` 目录，删掉旧的构建目录（`rmdir /s /q build`），再输入 `code .`。
+
 > Windows 上如果配置失败、提示找不到编译器：先打开“x64 Native Tools Command Prompt for VS 2022”，在里面进入 `examples` 目录，输入 `code .` 启动 VS Code。这样 VS Code 就带着编译器的环境变量。
 
 ## 3. 编译和运行
@@ -225,5 +246,7 @@ Mac 的笔记本键盘上，`F5`、`F7` 这些键默认是调亮度、音量的�
 | 单步时光标乱跳、有些变量看不到 | 这个示例打开了优化（第 14 课等测量时间的示例）。优化后的程序和源代码不再一一对应，这是正常现象 |
 | macOS 第一次调试时弹出“开发者工具访问”的授权框 | 输入电脑密码允许，只需要一次 |
 | Windows 终端里中文是乱码 | 在终端里先执行 `chcp 65001` |
+| Windows 上想换编译器（MinGW ↔ MSVC） | 编译器是在第一次配置时定下来的，记在 `build` 目录里。删掉 `build` 目录后，按第 2 节的办法从对应的环境里重新打开 VS Code |
+| 用 MinGW 时调试不起来 | 最快的调试方式默认找的是 Visual Studio 的调试器。MinGW 要用 GDB：`launch.json` 里把 `"type"` 写成 `"cppdbg"`，并加上 `"MIMode": "gdb"` |
 | 改了代码，运行的还是旧结果 | 用 CMake Tools 的运行或调试会自动重新编译；如果是在终端里手动运行 `build/bin/` 下的程序，要先按 `F7` |
 | 想从头再来 | 命令面板里 `CMake: Delete Cache and Reconfigure` |
