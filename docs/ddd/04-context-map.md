@@ -22,7 +22,7 @@
 | BC-8 | **模型工具链** | 支撑 | 执行量化、转换、验证任务（独立的 Linux 服务） | `ToolchainJob`、`QuantCalibrationSet` | F3–F7 | P1 |
 | BC-9 | **数据** | 支撑 | 按采集策略保存样本，管理数据集、数据集版本和标注，导出数据集 | `CapturePolicy`、`Sample`、`Dataset`、`DatasetVersion`、`Annotation` | E1–E8 | P1 |
 | BC-10 | **质量分析** | 支撑 | 复判、误报和漏检统计、批次报告、SPC | `Review`、`Batch`、`InspectionRecord`、`MeasurementSeries` | D8–D9 | P1（SPC 为 P2） |
-| BC-11 | **方案助手** | 🟥 核心 | 按套路搭出候选方案，驱动“提议 → 应用 → 实验 → 评估”的循环，产出候选方案和助手报告 | `AssistSession`、`InspectionBrief`、`Playbook`、`Proposal`、`Evaluation`、`AssistReport` | H1–H13 | P1 |
+| BC-11 | **方案助手** | 🟥 核心 | 按工作流搭出候选方案，驱动“提议 → 应用 → 实验 → 评估”的循环，产出候选方案和助手报告 | `AssistSession`、`InspectionBrief`、`Workflow`、`Proposal`、`Evaluation`、`AssistReport` | H1–H13 | P1 |
 
 **通用域不是上下文**：视觉算法库、推理运行时、量化和转换工具、图像采集驱动、大模型都作为外部系统，通过防腐层（端口和适配器）接入。
 
@@ -158,5 +158,5 @@ flowchart LR
 | 阶段 | 上下文 |
 |---|---|
 | POC / MVP | BC-1、BC-2、BC-3、BC-4（只做上线包和方案包导入导出）、BC-5（只做启动、部署、热切换、回滚） |
-| P1 | BC-6、BC-7、BC-8、BC-9、BC-10，以及 BC-4 的一致性验证；**BC-11 方案助手（套路内调参）** |
+| P1 | BC-6、BC-7、BC-8、BC-9、BC-10，以及 BC-4 的一致性验证；**BC-11 方案助手（工作流内调参）** |
 | P2 | SPC、影子运行、脚本算子；BC-11 的自由搭建 |

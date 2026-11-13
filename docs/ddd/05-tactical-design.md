@@ -348,10 +348,10 @@ Station（聚合根）
 
 | 类别 | 内容 |
 |---|---|
-| 聚合 | `AssistSession`（根；含 `InspectionBrief`、`Budget`、`Round` × N、最好的候选、`AssistReport`）；`Playbook`（根；方案骨架 + `Tunable` × N + 稳健性检查的设定） |
+| 聚合 | `AssistSession`（根；含 `InspectionBrief`、`Budget`、`Round` × N、最好的候选、`AssistReport`）；`Workflow`（根；方案骨架 + `Tunable` × N + 稳健性检查的设定） |
 | 领域服务 | `Evaluator`（检测结果对照真实判定 → 评估；是否达标；两次评估谁更好）、`RobustnessProber` |
 | 端口 | `RecipeAdvisor`（**大模型在这里接入**）、`DraftEditor`（BC-2）、`TrialRunner`（BC-3）、`GoldenCases`（BC-4）、`ImagePerturber` |
-| 仓储 | `AssistSessionRepository`、`PlaybookRepository` |
+| 仓储 | `AssistSessionRepository`、`WorkflowRepository` |
 
 | `AssistSession` 的不变量 |
 |---|
@@ -364,7 +364,7 @@ Station（聚合根）
 | A7 留出集在一次会话中只评估一次，之后不能再迭代 |
 | A8 只有人可以采纳 |
 | A9 外发给顾问的内容必须符合任务书的数据外发策略（由领域层检查） |
-| A10 套路内调参时，提议只能修改套路声明的可调项，且在声明的范围内 |
+| A10 工作流内调参时，提议只能修改工作流声明的可调项，且在声明的范围内 |
 
 **对其他上下文的改动**只有一处：BC-1 的 `OperatorMeta` 新增面向助手的**使用说明**（适合什么情况、什么情况下失效、参数怎么选）。BC-2、BC-3、BC-4 不为助手做任何改动。
 
