@@ -267,4 +267,4 @@ cv::adaptiveThreshold(shadedDots, dotsAdaptive, 255,
 
 ## 下一课
 
-第 4 课：滤波与形态学（待写）
+[第 4 课：滤波与形态学](04-filtering-and-morphology.md)
