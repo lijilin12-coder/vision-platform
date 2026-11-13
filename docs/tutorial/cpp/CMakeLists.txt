@@ -38,13 +38,17 @@ if(CPPTUT_WARNINGS_AS_ERRORS AND NOT MSVC)
   list(APPEND CPPTUT_WARNINGS -Werror)
 endif()
 
-# 内存检查、线程检查工具只在 macOS 和 Linux 上启用。
-# Windows 上不启用：MSVC 的用法不同；MinGW（Windows 上的 GCC）不带这些工具，加了会链接失败。
+# 内存检查、线程检查工具（AddressSanitizer、ThreadSanitizer）：
+#   macOS、Linux：默认启用。
+#   Windows + MSVC：默认不启用；用预设 msvc-asan（或 -DCPPTUT_MSVC_ASAN=ON）打开 AddressSanitizer。
+#                   MSVC 没有 ThreadSanitizer。
+#   Windows + MinGW：不支持（MinGW 不带这些工具，加了会链接失败）。
 if(UNIX)
   set(CPPTUT_SANITIZERS ON)
 else()
   set(CPPTUT_SANITIZERS OFF)
 endif()
+option(CPPTUT_MSVC_ASAN "Enable AddressSanitizer with MSVC" OFF)
 
 # cpptut_example(<课号> <名字> SOURCES <源文件...>
 #                [SANITIZE address|thread|undefined|none]   用哪种检查工具编译（macOS、Linux 上有效；默认 address）
@@ -79,6 +83,9 @@ function(cpptut_example lesson name)
     endif()
     target_compile_options(${target} PRIVATE ${flags})
     target_link_options(${target} PRIVATE ${flags})
+  endif()
+  if(MSVC AND CPPTUT_MSVC_ASAN AND NOT A_OPTIMIZE AND A_SANITIZE STREQUAL "address")
+    target_compile_options(${target} PRIVATE /fsanitize=address /Zi)
   endif()
 
   if(NOT A_BUILD_ONLY)

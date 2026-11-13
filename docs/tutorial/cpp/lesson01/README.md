@@ -365,6 +365,16 @@ cl %FLAGS% broken_copy.cpp /Fe:broken_copy.exe && broken_copy.exe
 
 1. **运行并观察**：按第 11 节运行三个程序。阅读 `broken_copy` 的报错信息，找到它指出的“第一次释放”和“第二次释放”分别发生在哪一行。
 2. **制造一个 bug 再修好**：把 `my_string.cpp` 里的拷贝构造函数改成只复制指针（`data_ = other.data_;`），重新编译运行测试，看内存检查工具报什么错。然后改回去。
+
+   这里的“内存检查工具”指 **AddressSanitizer**（第 4 节第一次用到它，第 13 课会详细讲）。它不是一个单独的软件，而是编译器的一个选项：带着它编译，程序运行时一旦重复释放、越界或者使用已释放的内存，就会立刻停下来并打印报告。要看到报告，程序必须是**带着这个选项编译的**：
+
+   | 你的环境 | 怎样带上它 |
+   |---|---|
+   | macOS、Linux，用 CMake 或 VS Code | 已经自动带上了，直接编译运行 `l01_test` |
+   | Windows（MSVC），用 CMake 或 VS Code | 默认**没有**带。把配置预设换成“Windows + MSVC，打开内存检查工具……”那一项（命令面板 `CMake: Select Configure Preset`；命令行是 `cmake --preset msvc-asan`），再编译运行 `l01_test` |
+   | 手动敲命令 | 用第 11 节的命令，里面有 `-fsanitize=address`（Windows 是 `/fsanitize=address`） |
+
+   如果没有带这个选项，改坏之后的程序可能直接崩溃、弹出一个看不懂的对话框，也可能看起来一切正常。这正是需要这个工具的原因。
 3. **加一个功能**：给 `MyString` 增加成员函数 `MyString substr(std::size_t start, std::size_t length) const;`，返回从 `start` 开始、最多 `length` 个字符的子串；`start` 超出范围时抛出 `std::out_of_range`。在 `test.cpp` 里补上测试。写完后想一想：你的实现保持了不变量吗？
 4. **写一个零法则的类**：写一个二维向量类 `Vec2`（两个 `double`），支持 `+`、`-`、数乘、`==`、求长度 `length()`。要求：不写析构、拷贝、移动；所有不修改对象的函数都标 `const`。
 5. **读项目代码**：打开 `Roi` 的定义。它为什么不提供 `setWidth()` 这样的修改函数？如果要把一个 ROI 向右移动 10 个像素，按它的设计应该怎么做？
