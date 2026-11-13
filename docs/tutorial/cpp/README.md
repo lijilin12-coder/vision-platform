@@ -55,26 +55,74 @@
 - **工程能力**：12（调试）→ 13（内存）→ 14（性能）→ 14 延伸（内存池）→ 17（日志与崩溃转储）。遇到问题时随时可以先看这几课。
 - **多线程**：15 预备 → 15 → 16 → 16 延伸。实现推理和工位运行之前学。没有学过操作系统的话，预备课不要跳过。
 
-## 一键运行全部示例
+## 运行示例：用 CMake（推荐）
 
-所有示例都可以用一个脚本编译并运行，自动构建用的也是它：
+全部示例是一个 CMake 项目，在 [`examples/`](examples/) 目录下。三条命令，三个系统上相同：
+
+```bash
+cd docs/tutorial/cpp/examples
+```
+
+```bash
+cmake --preset default
+```
+
+```bash
+cmake --build --preset default
+```
+
+```bash
+ctest --preset default
+```
+
+第一条是配置，只需要做一次；第二条编译全部示例；第三条把它们都运行一遍并报告结果。
+
+**只编译、运行某一个示例**。目标的名字是“l课号_文件名”，可执行程序都在 `build/bin/` 下：
+
+```bash
+cmake --build --preset default --target l03_registry_bug
+```
+
+```bash
+./build/bin/l03_registry_bug
+```
+
+Windows 上是 `build\bin\l03_registry_bug.exe`。
+
+**在编辑器里用**：用 VS Code（安装 CMake Tools 扩展）、CLion 或 Visual Studio 打开 `examples` 这个文件夹，它们会自动识别 CMake 项目，可以选择一个目标直接编译、运行、打断点调试（第 12 课）。
+
+几点说明：
+
+- **内存检查和线程检查是自动加上的**：在 macOS 和 Linux 上，每个示例都按它的内容带着 AddressSanitizer 或 ThreadSanitizer 编译（第 13、15 课会讲），有问题时运行就会报告。Windows 上不加。
+- **标了 `BUILD_ONLY` 的示例是故意有错的**，用来演示这些工具的报告。它们会被编译，但 `ctest` 不运行它们；按对应课程里的说明手动运行 `build/bin/` 下的程序来看报告。
+- **第 00、01 课还没有讲 CMake**（第 02 课才讲）。前两课照着上面的命令用就可以，不需要看懂 `CMakeLists.txt`；学完第 02 课再回来读它。
+
+一条命令做完上面三步（自动构建用的就是它）：
 
 | 系统 | 命令 |
 |---|---|
 | macOS / Linux | `bash docs/tutorial/cpp/examples/run_all.sh` |
 | Windows（在“x64 Native Tools Command Prompt for VS 2022”里） | `docs\tutorial\cpp\examples\run_all.bat` |
 
-脚本里标了“只编译”的，是**故意**有错的示例，用来演示内存检查和线程检查工具的报告，需要按对应课程里的说明单独运行。
-
 ## 环境
 
 教程的示例只用到标准库，不需要安装 OpenCV 等依赖。完整项目的环境见 [构建说明](../../dev/build.md)。
 
-| 系统 | 准备 | 编译单个示例 |
-|---|---|---|
-| macOS | `xcode-select --install` | `clang++ -std=c++17 -Wall -Wextra 文件.cpp -o 程序名` |
-| Windows | 安装 Visual Studio 2022 社区版，打开“x64 Native Tools Command Prompt for VS 2022” | `cl /std:c++17 /W4 /EHsc /utf-8 文件.cpp /Fe:程序名.exe` |
-| Linux | `sudo apt-get install g++` | `g++ -std=c++17 -Wall -Wextra 文件.cpp -o 程序名` |
+| 系统 | 准备 |
+|---|---|
+| macOS | `xcode-select --install`；`brew install cmake ninja` |
+| Windows | 安装 Visual Studio 2022 社区版（勾选“使用 C++ 的桌面开发”，自带 CMake 和 Ninja），打开“x64 Native Tools Command Prompt for VS 2022” |
+| Linux | `sudo apt-get install g++ cmake ninja-build` |
+
+## 不用 CMake，直接编译一个文件
+
+每一课的“动手运行”里给出的是直接调用编译器的命令。它适合只有一个源文件的小例子，也能让你看清楚 CMake 替你做了什么：
+
+| 系统 | 编译单个示例 |
+|---|---|
+| macOS | `clang++ -std=c++17 -Wall -Wextra 文件.cpp -o 程序名` |
+| Windows | `cl /std:c++17 /W4 /EHsc /utf-8 文件.cpp /Fe:程序名.exe` |
+| Linux | `g++ -std=c++17 -Wall -Wextra 文件.cpp -o 程序名` |
 
 Windows 编译选项的含义：`/W4` 打开警告，`/EHsc` 启用异常，`/utf-8` 表示源文件是 UTF-8 编码（示例里有中文）。如果运行时中文显示成乱码，先执行 `chcp 65001` 把终端切换到 UTF-8。
 
