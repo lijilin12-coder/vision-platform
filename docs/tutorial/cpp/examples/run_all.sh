@@ -4,91 +4,14 @@
 #   用法：在任意目录下执行   bash docs/tutorial/cpp/examples/run_all.sh
 #   可以用环境变量 CXX 指定编译器，例如：CXX=clang++ bash run_all.sh
 #
-# 标了“只编译”的是【故意】有错的示例：它们用来演示内存检查、线程检查工具的报告，运行会报错。
+# 它只是依次执行三条 CMake 命令（见 CMakeLists.txt 开头的说明）。
+# 构建结果放在本目录的 build/ 下，可执行程序在 build/bin/。
 set -euo pipefail
-
 cd "$(dirname "$0")"
-CXX="${CXX:-c++}"
-OUT="$(mktemp -d)"
-trap 'rm -rf "$OUT"' EXIT
 
-WARN="-std=c++17 -Wall -Wextra -Wpedantic -Werror -g"
-ASAN="$WARN -fsanitize=address,undefined"
-TSAN="$WARN -pthread -fsanitize=thread"
-# 屏蔽标准库里一处已知的误报，原因见 tsan_suppressions.txt
-export TSAN_OPTIONS="suppressions=$PWD/tsan_suppressions.txt"
-
-# run <目录> <编译选项> <源文件...>      编译并运行
-run() {
-    local dir="$1" flags="$2"; shift 2
-    echo "== $dir: $* "
-    (cd "$dir" && $CXX $flags "$@" -o "$OUT/prog" && "$OUT/prog" > "$OUT/log" 2>&1) || { cat "$OUT/log" 2>/dev/null; echo "失败：$dir $*"; exit 1; }
-    tail -1 "$OUT/log"
-}
-# build_only <目录> <编译选项> <源文件...>   只编译
-build_only() {
-    local dir="$1" flags="$2"; shift 2
-    echo "== $dir: $*（只编译）"
-    (cd "$dir" && $CXX $flags "$@" -o "$OUT/prog") || { echo "失败：$dir $*"; exit 1; }
-}
-
-run lesson00 "$ASAN" test.cpp blob_count.cpp
-echo "== lesson00: main.cpp"
-(cd lesson00 && $CXX $ASAN main.cpp blob_count.cpp -o "$OUT/prog" && test "$("$OUT/prog" < input.txt)" = "2") || { echo "失败：lesson00 main"; exit 1; }
-
-run lesson01 "$ASAN" test.cpp my_string.cpp
-run lesson01 "$ASAN" complex_rule_of_zero.cpp
-run lesson01 "$ASAN" c_style.cpp
-build_only lesson01 "$ASAN" broken_copy.cpp
-
-echo "== lesson02: CMake 项目"
-cmake -S lesson02 -B "$OUT/lesson02" -G Ninja -DCMAKE_COMPILE_WARNING_AS_ERROR=ON > /dev/null
-cmake --build "$OUT/lesson02" > /dev/null
-ctest --test-dir "$OUT/lesson02" --output-on-failure > /dev/null
-"$OUT/lesson02/app/overlap_app"
-
-run lesson03 "$ASAN" copy_counter.cpp
-run lesson03 "$ASAN" registry_bug.cpp
-build_only lesson03 "$ASAN" dangling.cpp
-
-run lesson04 "$ASAN" raii.cpp
-run lesson05 "$ASAN" measurement.cpp
-run lesson06 "$ASAN -I../../../../../core/common/include" errors.cpp
-run lesson07 "$ASAN" variant.cpp
-run lesson08 "$ASAN" interfaces.cpp
-run lesson09 "$ASAN" algorithms.cpp
-run lesson10 "$ASAN" templates.cpp
-
-run lesson12 "$ASAN" debug_me.cpp            # 结果故意是错的，但程序正常结束
-
-build_only lesson13 "$ASAN" overflow.cpp
-build_only lesson13 "$ASAN" leak.cpp
-build_only lesson13 "$WARN -fsanitize=undefined" int_overflow.cpp
-run lesson13 "$ASAN" leak_fixed.cpp
-run lesson13 "$ASAN" growth.cpp
-
-run lesson14 "-std=c++17 -Wall -Wextra -Wpedantic -Werror -O2" benchmark.cpp
-
-run lesson14a "-std=c++17 -Wall -Wextra -Wpedantic -Werror -O2" alloc_cost.cpp
-run lesson14a "$ASAN" block_pool.cpp
-run lesson14a "$TSAN" buffer_pool.cpp
-run lesson14a "$ASAN -pthread" buffer_pool.cpp
-
-run lesson15a "$TSAN" address_space.cpp
-run lesson15a "$TSAN" context_switch.cpp
-run lesson15a "-std=c++17 -Wall -Wextra -Wpedantic -Werror -O2 -pthread" why_threads.cpp
-
-build_only lesson15 "$TSAN" race.cpp
-run lesson15 "$TSAN" sync.cpp
-run lesson16 "$TSAN" future_basics.cpp
-run lesson16 "$TSAN" inference_worker.cpp
-run lesson16 "$ASAN -pthread" inference_worker.cpp
-
-run lesson16a "$TSAN" pitfalls.cpp
-run lesson16a "$TSAN" parallel_nodes.cpp
-run lesson16a "-std=c++17 -Wall -Wextra -Wpedantic -Werror -O2 -pthread" pool_vs_spawn.cpp
-
-build_only lesson17 "$WARN -O0" crash.cpp
+cmake --preset default
+cmake --build --preset default
+ctest --preset default
 
 echo
 echo "全部示例通过"

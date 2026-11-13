@@ -267,6 +267,18 @@ build\app\overlap_app.exe
 
 四条命令在两个系统上几乎一样，这就是 CMake 的价值。
 
+### 整套教程的示例也是一个 CMake 项目
+
+学到这里，可以回头读一读 [`examples/CMakeLists.txt`](examples/CMakeLists.txt)：教程全部 20 课的示例都由它管理。它比这一课的示例多了三样东西，现在不必全懂，知道它们是做什么的就行：
+
+| 内容 | 作用 |
+|---|---|
+| `function(cpptut_example ...)` | 自己定义的一个 CMake 函数。每个示例的设置都差不多，写成函数之后，登记一个示例只要一行 |
+| `add_subdirectory(lesson02)` | 把这一课的小项目整个包含进去。一个 CMake 项目可以包含另一个 |
+| `CMakePresets.json` | **预设**：把“用哪个生成器、构建目录放哪里”这些选项起个名字存下来，之后只要写 `--preset default`，不用每次敲一长串参数。仓库根目录的项目也是这样做的 |
+
+用法见[教程首页](README.md)的“运行示例”一节。
+
 **试一试增量编译**：改一下 `geometry/src/rect.cpp`（比如加一行注释），再运行 `cmake --build build`。观察输出：只重新编译了 `rect.cpp`，然后重新链接，其他文件都没有动。
 
 ## 6. 两种最常见的链接错误
