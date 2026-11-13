@@ -49,6 +49,9 @@ call :run lesson13 growth.cpp || exit /b 1
 
 set F=%F% /O2
 call :run lesson14 benchmark.cpp || exit /b 1
+call :run lesson14a alloc_cost.cpp || exit /b 1
+call :run lesson14a block_pool.cpp || exit /b 1
+call :run lesson14a buffer_pool.cpp || exit /b 1
 set F=%SAVED%
 
 set F=%F% /O2

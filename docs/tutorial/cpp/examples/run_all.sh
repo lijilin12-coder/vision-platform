@@ -67,6 +67,11 @@ run lesson13 "$ASAN" growth.cpp
 
 run lesson14 "-std=c++17 -Wall -Wextra -Wpedantic -Werror -O2" benchmark.cpp
 
+run lesson14a "-std=c++17 -Wall -Wextra -Wpedantic -Werror -O2" alloc_cost.cpp
+run lesson14a "$ASAN" block_pool.cpp
+run lesson14a "$TSAN" buffer_pool.cpp
+run lesson14a "$ASAN -pthread" buffer_pool.cpp
+
 run lesson15a "$TSAN" address_space.cpp
 run lesson15a "$TSAN" context_switch.cpp
 run lesson15a "-std=c++17 -Wall -Wextra -Wpedantic -Werror -O2 -pthread" why_threads.cpp
