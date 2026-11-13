@@ -78,9 +78,12 @@
 ```cpp
 //   新 x = 1·x + 0·y + 30.5
 //   新 y = 0·x + 1·y + 12
-const cv::Mat shift = (cv::Mat_<double>(2, 3) << 1, 0, 30.5, 0, 1, 12);
+const cv::Matx23d shift(1, 0, 30.5,
+                        0, 1, 12);
 cv::warpAffine(dot, shifted, shift, dot.size());
 ```
+
+`cv::Matx23d` 是一个固定大小的小矩阵：2 行 3 列，每个数是 `double`，按行依次写出 6 个数。变换矩阵用它来写最直接。
 
 ```
 平移 (30.5, 12)：重心从 (100, 80) 移到 (130.5, 92)

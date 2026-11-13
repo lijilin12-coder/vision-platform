@@ -56,7 +56,8 @@ int main(int argc, char** argv) {
     cv::circle(dot, cv::Point(100, 80), 20, cv::Scalar(255), cv::FILLED);
     //   新 x = 1·x + 0·y + 30.5
     //   新 y = 0·x + 1·y + 12
-    const cv::Mat shift = (cv::Mat_<double>(2, 3) << 1, 0, 30.5, 0, 1, 12);
+    const cv::Matx23d shift(1, 0, 30.5,    // Matx23d：2 行 3 列的 double 小矩阵，按行依次写出 6 个数
+                            0, 1, 12);
     cv::Mat shifted;
     cv::warpAffine(dot, shifted, shift, dot.size());
     const cv::Point2d before = centroid(dot > 127), after = centroid(shifted > 127);
