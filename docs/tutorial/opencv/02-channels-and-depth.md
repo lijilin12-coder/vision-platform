@@ -295,4 +295,4 @@ cvtut::load(out / "02_part_16bit.png", cv::IMREAD_GRAYSCALE).type();       // CV
 
 ## 下一课
 
-第 3 课：亮度、直方图与阈值（待写）
+[第 3 课：直方图与阈值](03-histogram-and-threshold.md)

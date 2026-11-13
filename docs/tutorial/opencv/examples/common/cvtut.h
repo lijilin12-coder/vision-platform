@@ -79,6 +79,46 @@ inline cv::Mat makeBoardImage() {
     return image;
 }
 
+// 示例图像三：一块印着 24 个深色圆点的浅色标定板（灰度）。6 列 4 行，圆点半径 8。640×480。
+inline cv::Mat makeDotsImage() {
+    cv::Mat image(480, 640, CV_8UC1, cv::Scalar(200));
+    for (int row = 0; row < 4; ++row) {
+        for (int col = 0; col < 6; ++col) {
+            cv::circle(image, cv::Point(95 + col * 90, 105 + row * 90), 8, cv::Scalar(60), cv::FILLED);
+        }
+    }
+    addNoise(image, 3.0);
+    return image;
+}
+
+// 模拟不均匀的光照：从左到右，亮度从 leftGain 倍均匀地变到 rightGain 倍。
+inline cv::Mat applyShading(const cv::Mat& image, double leftGain, double rightGain) {
+    cv::Mat result = image.clone();
+    for (int y = 0; y < result.rows; ++y) {
+        uchar* row = result.ptr<uchar>(y);
+        for (int x = 0; x < result.cols; ++x) {
+            const double gain = leftGain + (rightGain - leftGain) * x / (result.cols - 1);
+            row[x] = cv::saturate_cast<uchar>(row[x] * gain);
+        }
+    }
+    return result;
+}
+
+// 把灰度直方图画成一张图：横轴是灰度 0～255，纵轴是像素个数（按最高的一柱缩放）。
+// markAt >= 0 时在那个灰度的位置画一条竖线（用来标出阈值）。
+inline cv::Mat drawHistogram(const cv::Mat& histogram, int markAt = -1) {
+    double maxCount = 0;
+    cv::minMaxLoc(histogram, nullptr, &maxCount);
+    cv::Mat canvas(220, 256 * 2, CV_8UC1, cv::Scalar(255));
+    for (int g = 0; g < 256; ++g) {
+        const int height = maxCount > 0 ? static_cast<int>(histogram.at<float>(g) / maxCount * 200) : 0;
+        cv::rectangle(canvas, cv::Rect(g * 2, 210 - height, 2, height), cv::Scalar(60), cv::FILLED);
+    }
+    cv::line(canvas, cv::Point(0, 210), cv::Point(511, 210), cv::Scalar(0));
+    if (markAt >= 0) cv::line(canvas, cv::Point(markAt * 2, 0), cv::Point(markAt * 2, 219), cv::Scalar(0), 1);
+    return canvas;
+}
+
 // 检查结果是否符合预期。示例同时也是测试：有一项不符合，程序就以失败退出。
 class Checker {
 public:
