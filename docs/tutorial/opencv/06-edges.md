@@ -334,4 +334,4 @@ double findEdge(profile, from, to, polarity, minStrength);
 
 ## 下一课
 
-第 7 课：几何变换（待写）
+[第 7 课：几何变换](07-geometric-transforms.md)
