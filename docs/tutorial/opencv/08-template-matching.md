@@ -340,4 +340,4 @@ fine.y += window.y;
 
 ## 下一课
 
-第 9 课：大作业——带旋转角度的模板匹配（待写）
+[第 9 课：大作业——带旋转角度的模板匹配](09-capstone-rotated-matching.md)
