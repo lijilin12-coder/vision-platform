@@ -1,6 +1,6 @@
 # 在 VS Code 里编译、运行和调试
 
-> 配合 [教程首页](README.md) 的“运行示例”和 [第 12 课：调试技巧](12-debugging.md) 使用。
+> 配合 [教程首页](README.md) 的“运行示例”和 [第 12 课：调试技巧](lesson12/README.md) 使用。
 >
 > 这份说明是按 VS Code 和两个扩展的常规用法写的，**没有在 Mac 上逐步实测过**。菜单的名字和快捷键可能随版本略有不同，对不上的地方以你看到的界面为准，并告诉我们来修正。
 
@@ -23,9 +23,13 @@
 
 ## 2. 打开示例项目
 
-菜单 **文件 → 打开文件夹**，选择仓库里的 `docs/tutorial/cpp/examples` 这个文件夹。
+菜单 **文件 → 打开文件夹**，选择仓库里的 `docs/tutorial/cpp` 这个文件夹。
 
-注意要打开的是 **`examples` 这一层**，不是仓库的根目录。CMake Tools 会在打开的文件夹里找 `CMakeLists.txt`；根目录的那个是整个平台的，需要先安装 OpenCV 等依赖。
+注意要打开的是 **`docs/tutorial/cpp` 这一层**，不是仓库的根目录。CMake Tools 会在打开的文件夹里找 `CMakeLists.txt`；根目录的那个是整个平台的，需要先安装 OpenCV 等依赖。
+
+打开之后，左边的文件列表里每一课是一个文件夹（`lesson00`、`lesson01`……）。文件夹里的 `README.md` 是这一课的正文，旁边就是示例代码，**读正文和改代码在同一个窗口里**。打开 `README.md` 后按 `Ctrl+Shift+V`（Mac 是 `Cmd+Shift+V`）可以看排好版的效果；按 `Ctrl+K` 再按 `V` 可以把预览放在右边，左边留着写代码。
+
+打开之后，左边的文件列表里每一课是一个文件夹（`lesson00`、`lesson01`……）。文件夹里的 `README.md` 是这一课的正文，旁边就是示例代码，**读正文和改代码在同一个窗口里**。打开 `README.md` 后按 `Ctrl+Shift+V`（Mac 是 `Cmd+Shift+V`）可以看排好版的效果；按 `Ctrl+K` 再按 `V` 可以把预览放在右边，左边留着写代码。
 
 第一次打开时，CMake Tools 会询问用哪个配置：
 
@@ -53,9 +57,9 @@
 
 1. 关掉 VS Code。
 2. 打开开始菜单里的“x64 Native Tools Command Prompt for VS 2022”。
-3. 进入 `examples` 目录，删掉旧的构建目录（`rmdir /s /q build`），再输入 `code .`。
+3. 进入 `docs\tutorial\cpp` 目录，删掉旧的构建目录（`rmdir /s /q build`），再输入 `code .`。
 
-> Windows 上如果配置失败、提示找不到编译器：先打开“x64 Native Tools Command Prompt for VS 2022”，在里面进入 `examples` 目录，输入 `code .` 启动 VS Code。这样 VS Code 就带着编译器的环境变量。
+> Windows 上如果配置失败、提示找不到编译器：先打开“x64 Native Tools Command Prompt for VS 2022”，在里面进入 `docs\tutorial\cpp` 目录，输入 `code .` 启动 VS Code。这样 VS Code 就带着编译器的环境变量。
 
 ## 3. 编译和运行
 
@@ -165,7 +169,7 @@ Mac 的笔记本键盘上，`F5`、`F7` 这些键默认是调亮度、音量的�
 
 上面“最快的办法”有一个限制：它不能给程序传命令行参数，也不能把文件接到标准输入。这时需要写一个**启动配置**。
 
-在 `examples` 文件夹下新建 `.vscode/launch.json`（这个文件是你个人的设置，已经被 `.gitignore` 忽略，不会提交）：
+在 `docs/tutorial/cpp` 文件夹下新建 `.vscode/launch.json`（这个文件是你个人的设置，已经被 `.gitignore` 忽略，不会提交）：
 
 **macOS**（需要安装 CodeLLDB 扩展）：
 
@@ -240,7 +244,7 @@ Mac 的笔记本键盘上，`F5`、`F7` 这些键默认是调亮度、音量的�
 
 | 现象 | 原因和处理 |
 |---|---|
-| 状态栏上没有 CMake 的按钮 | 新版本默认不显示，见第 3.1 节的三个办法。如果命令面板里也搜不到 `CMake:` 开头的命令，说明打开的不是 `examples` 这一层，或者 CMake Tools 扩展没装好 |
+| 状态栏上没有 CMake 的按钮 | 新版本默认不显示，见第 3.1 节的三个办法。如果命令面板里也搜不到 `CMake:` 开头的命令，说明打开的不是 `docs/tutorial/cpp` 这一层，或者 CMake Tools 扩展没装好 |
 | 配置时提示找不到 Ninja | macOS：`brew install ninja`。Windows：从“x64 Native Tools Command Prompt”里用 `code .` 启动 |
 | 断点是灰色的空心圆，程序不停 | 这个源文件不属于当前的启动目标；或者程序还没重新编译。先按 `F7` |
 | 单步时光标乱跳、有些变量看不到 | 这个示例打开了优化（第 14 课等测量时间的示例）。优化后的程序和源代码不再一一对应，这是正常现象 |

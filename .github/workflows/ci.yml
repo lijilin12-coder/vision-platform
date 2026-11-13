@@ -33,7 +33,7 @@ jobs:
       - name: 测试
         run: ctest --preset default
       - name: 编译并运行教程示例（内存检查、线程检查）
-        run: CXX=g++ bash docs/tutorial/cpp/examples/run_all.sh
+        run: CXX=g++ bash docs/tutorial/cpp/run_all.sh
 
   windows:
     name: Windows (MSVC)
@@ -93,4 +93,4 @@ jobs:
           }
       - name: 编译并运行教程示例
         shell: cmd
-        run: docs\tutorial\cpp\examples\run_all.bat
+        run: docs\tutorial\cpp\run_all.bat
