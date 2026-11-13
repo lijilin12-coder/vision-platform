@@ -357,4 +357,4 @@ flowchart LR
 
 ## 下一课
 
-第 8 课：模板匹配（待写）
+[第 8 课：模板匹配](08-template-matching.md)
