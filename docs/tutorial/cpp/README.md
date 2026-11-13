@@ -89,7 +89,7 @@ cmake --build --preset default --target l03_registry_bug
 
 Windows 上是 `build\bin\l03_registry_bug.exe`。
 
-**在编辑器里用**：用 VS Code（安装 CMake Tools 扩展）、CLion 或 Visual Studio 打开 `examples` 这个文件夹，它们会自动识别 CMake 项目，可以选择一个目标直接编译、运行、打断点调试（第 12 课）。
+**在编辑器里用**：用 VS Code（安装 CMake Tools 扩展）、CLion 或 Visual Studio 打开 `examples` 这个文件夹，它们会自动识别 CMake 项目，可以选择一个目标直接编译、运行、打断点调试（第 12 课）。VS Code 的详细步骤见 [在 VS Code 里编译、运行和调试](vscode-guide.md)。
 
 几点说明：
 
