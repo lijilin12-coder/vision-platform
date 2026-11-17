@@ -1,8 +1,11 @@
 // INT8 比 FP32 快吗？测一测“矩阵 × 向量”（全连接层的核心）。
 //
-// 结论先说：整数并不天然比浮点快。快的原因有两个，都要靠 SIMD 才能兑现：
-//   1. 一个数只占 1 个字节，同样宽的 SIMD 寄存器一次能装下 4 倍的数；
-//   2. 数据量是 1/4，读内存的时间也是 1/4。
+// 对比四种写法：FP32 和 INT8，各有“普通循环”和“手写 SIMD”两个版本。
+//
+// INT8 快的原因有两个：
+//   1. 一个数只占 1 个字节，同样宽的 SIMD 寄存器一次能装下 4 倍的数；有的 CPU 还有专门的指令；
+//   2. 数据量是 1/4，读内存的时间也少得多（矩阵大到放不进缓存时，这一条更重要）。
+// 另外会看到一个现象：整数的“普通循环”编译器能自动改成 SIMD，浮点的求和循环不能，原因见正文。
 //
 //   macOS / Linux：clang++ -std=c++17 -O2 -march=native -I../common quant_speed.cpp -o quant_speed && ./quant_speed
 //   Windows：      cl /std:c++17 /O2 /arch:AVX2 /EHsc /utf-8 /I..\common quant_speed.cpp && quant_speed.exe
