@@ -7,6 +7,7 @@
 //   Windows：      cl /std:c++17 /O2 /EHsc /utf-8 /I..\common quant_mlp.cpp && quant_mlp.exe
 #include <cstdio>
 #include <cstdlib>
+#include <initializer_list>
 #include <vector>
 
 #include "inftut/common.h"

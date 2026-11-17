@@ -5,6 +5,7 @@
 //   Windows：      cl /std:c++17 /EHsc /utf-8 /I..\common quant_basics.cpp && quant_basics.exe
 #include <cstdio>
 #include <cstdlib>
+#include <initializer_list>
 #include <vector>
 
 #include "inftut/common.h"

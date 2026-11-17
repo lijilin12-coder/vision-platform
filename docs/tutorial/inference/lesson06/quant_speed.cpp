@@ -16,7 +16,8 @@
 
 #include "inftut/common.h"
 
-#if defined(__AVX2__) && defined(__FMA__)
+// MSVC 打开 /arch:AVX2 时只定义 __AVX2__，不定义 __FMA__，但可以使用 FMA 指令
+#if defined(__AVX2__) && (defined(__FMA__) || defined(_MSC_VER))
 #include <immintrin.h>
 #define SPEED_SIMD_NAME "AVX2 + FMA"
 #define SPEED_AVX2 1
