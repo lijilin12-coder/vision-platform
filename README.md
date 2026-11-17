@@ -53,6 +53,7 @@ VID=$(./build/apps/vision-cli recipe publish $RID)
 | [docs/dev/logging-and-crash-dumps.md](docs/dev/logging-and-crash-dumps.md) | 日志与崩溃转储：文件在哪里、怎么写日志、怎么分析崩溃 |
 | [docs/tutorial/cpp/](docs/tutorial/cpp/README.md) | 现代工程 C++ 教程（从竞赛写法到工程写法） |
 | [docs/tutorial/opencv/](docs/tutorial/opencv/README.md) | OpenCV 与机器视觉基础教程（以“带旋转角度的模板匹配”大作业结束） |
+| [docs/tutorial/inference/](docs/tutorial/inference/README.md) | 推理引擎与大模型推理优化教程（算子、计算图、量化、NPU 后端；KV Cache、Continuous Batching、PagedAttention 等） |
 
 ## 目录结构（计划）
 
