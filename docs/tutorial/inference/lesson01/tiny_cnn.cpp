@@ -122,7 +122,7 @@ int main() {
         all += t.ms;
         if (t.name.rfind("conv", 0) == 0) conv += t.ms;
     }
-    std::printf("%-8s %-12s %10s %7s\n", "层", "输出形状", "耗时 ms", "占比");
+    std::printf("层       输出形状        耗时 ms    占比\n");
     for (const LayerTime& t : times)
         std::printf("%-8s %-12s %10.3f %6.1f%%\n", t.name.c_str(), t.outShape.c_str(), t.ms, 100 * t.ms / all);
     std::printf("合计 %.2f ms，其中三个卷积层占 %.1f%%\n", all, 100 * conv / all);

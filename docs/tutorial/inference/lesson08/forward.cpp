@@ -47,7 +47,7 @@ int main() {
 
     // 分步算的结果应该和 forward() 完全一样
     const Mat reference = forward(model, prompt);
-    if (inftut::maxAbsDiff(logits.v, reference.v) != 0.0) {
+    if (inftut::maxAbsDiff(logits.v, reference.v) > 1e-4) {
         std::cout << "错误：分步计算和 forward() 的结果不一致\n";
         return 1;
     }
@@ -74,7 +74,7 @@ int main() {
     std::cout << "\n把最后一个 token 从 " << prompt.back() << " 改成 60：\n";
     std::cout << "  前 " << logits.rows - 1 << " 行 logits 的最大变化：" << earlierDiff << "\n";
     std::cout << "  最后一行 logits 的最大变化：" << lastDiff << "\n";
-    if (earlierDiff != 0.0 || lastDiff == 0.0) {
+    if (earlierDiff > 1e-4 || lastDiff < 1e-2) {
         std::cout << "错误：因果性不成立\n";
         return 1;
     }

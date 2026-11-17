@@ -1,4 +1,4 @@
-// 矩阵乘法 C = A × B 的五种写法，结果相同，速度相差上百倍。
+// 矩阵乘法 C = A × B 的五种写法：朴素 → 交换循环顺序 → SIMD → 分块 → 多线程。结果相同，速度相差上百倍。
 //
 // 矩阵都按行存放在一段连续的 float 里：M 行 N 列的矩阵，第 i 行第 j 列在 data[i * N + j]。
 //   A：M × K      B：K × N      C：M × N
@@ -50,32 +50,12 @@ inline void reordered(const float* a, const float* b, float* c, int M, int K, in
     }
 }
 
-// c 的一行 += aik * b 的一行。分块版本和 SIMD 版本共用外层循环，只有这一步不同。
+// c 的一行 += aik * b 的一行（标量）。k 的个数不是 4 的倍数时，SIMD 版本用它处理剩下的。
 inline void axpyScalar(float aik, const float* brow, float* crow, int n) {
     for (int j = 0; j < n; ++j) crow[j] += aik * brow[j];
 }
 
-// 3. 分块：把 k 和 j 两个方向切成小块，一小块 B 反复使用时一直留在缓存里
-constexpr int kBlockK = 64;
-constexpr int kBlockJ = 256;
-
-inline void blocked(const float* a, const float* b, float* c, int M, int K, int N) {
-    std::memset(c, 0, sizeof(float) * static_cast<std::size_t>(M) * N);
-    for (int k0 = 0; k0 < K; k0 += kBlockK) {
-        const int k1 = std::min(k0 + kBlockK, K);
-        for (int j0 = 0; j0 < N; j0 += kBlockJ) {
-            const int j1 = std::min(j0 + kBlockJ, N);
-            // 这三层循环只碰 B 的一个 kBlockK × kBlockJ 的小块（64 KB）
-            for (int i = 0; i < M; ++i) {
-                for (int k = k0; k < k1; ++k) {
-                    axpyScalar(a[i * K + k], b + k * N + j0, c + i * N + j0, j1 - j0);
-                }
-            }
-        }
-    }
-}
-
-// 4. SIMD：一次处理 c 的一行里的一段，同时把 4 个 k 合并成一趟
+// 3. SIMD：一条指令处理 c 的一行里相邻的 8 个（或 4 个）数，同时把 4 个 k 合并成一趟
 //    crow[j] += a0*b0[j] + a1*b1[j] + a2*b2[j] + a3*b3[j]
 //    这样 crow[j] 只读一次、写一次，而不是四次。
 inline void axpy4(const float* a4, const float* b0, const float* b1, const float* b2, const float* b3,
@@ -111,9 +91,27 @@ inline void axpy4(const float* a4, const float* b0, const float* b1, const float
     for (; j < n; ++j) crow[j] += a4[0] * b0[j] + a4[1] * b1[j] + a4[2] * b2[j] + a4[3] * b3[j];  // 剩下不足一组的
 }
 
+inline void simd(const float* a, const float* b, float* c, int M, int K, int N) {
+    std::memset(c, 0, sizeof(float) * static_cast<std::size_t>(M) * N);
+    for (int i = 0; i < M; ++i) {
+        float* crow = c + i * N;
+        int k = 0;
+        for (; k + 4 <= K; k += 4) {
+            axpy4(a + i * K + k, b + k * N, b + (k + 1) * N, b + (k + 2) * N, b + (k + 3) * N, crow, N);
+        }
+        for (; k < K; ++k) axpyScalar(a[i * K + k], b + k * N, crow, N);
+    }
+}
+
+// 4. 分块：把 k 和 j 两个方向切成小块。最里面三层循环只碰 B 的一个 kBlockK × kBlockJ 的小块，
+//    它有 64 × 256 × 4 字节 = 64 KB，算 C 的每一行时都要用到它，所以它一直留在缓存里。
+constexpr int kBlockK = 64;
+constexpr int kBlockJ = 256;
+
 // 只计算 C 的第 [rowBegin, rowEnd) 行。多线程版本让每个线程算其中一段。
-inline void simdRows(const float* a, const float* b, float* c, int K, int N, int rowBegin, int rowEnd) {
-    std::memset(c + static_cast<std::size_t>(rowBegin) * N, 0, sizeof(float) * static_cast<std::size_t>(rowEnd - rowBegin) * N);
+inline void blockedRows(const float* a, const float* b, float* c, int K, int N, int rowBegin, int rowEnd) {
+    std::memset(c + static_cast<std::size_t>(rowBegin) * N, 0,
+                sizeof(float) * static_cast<std::size_t>(rowEnd - rowBegin) * N);
     for (int k0 = 0; k0 < K; k0 += kBlockK) {
         const int k1 = std::min(k0 + kBlockK, K);
         for (int j0 = 0; j0 < N; j0 += kBlockJ) {
@@ -131,7 +129,9 @@ inline void simdRows(const float* a, const float* b, float* c, int K, int N, int
     }
 }
 
-inline void simd(const float* a, const float* b, float* c, int M, int K, int N) { simdRows(a, b, c, K, N, 0, M); }
+inline void blocked(const float* a, const float* b, float* c, int M, int K, int N) {
+    blockedRows(a, b, c, K, N, 0, M);
+}
 
 // 5. 多线程：C 的每一行互不相干，把行平均分给几个线程。各线程写的是 C 的不同行，不需要锁。
 inline void threaded(const float* a, const float* b, float* c, int M, int K, int N, int threads) {
@@ -140,7 +140,7 @@ inline void threaded(const float* a, const float* b, float* c, int M, int K, int
     for (int t = 0; t < threads; ++t) {
         const int begin = M * t / threads;
         const int end = M * (t + 1) / threads;
-        workers.emplace_back([=] { simdRows(a, b, c, K, N, begin, end); });
+        workers.emplace_back([=] { blockedRows(a, b, c, K, N, begin, end); });
     }
     for (auto& w : workers) w.join();
 }

@@ -43,6 +43,7 @@ double onceMs(Fn&& fn) {
 inline void keep(double value) {
     static volatile double sink = 0;
     sink = value;
+    (void)sink;  // 避免“变量只被赋值、没有被使用”的警告
 }
 
 // ---------- 可重复的随机数 ----------
