@@ -34,6 +34,8 @@ jobs:
         run: ctest --preset default
       - name: 编译并运行教程示例（内存检查、线程检查）
         run: CXX=g++ bash docs/tutorial/cpp/run_all.sh
+      - name: 编译并运行推理教程示例
+        run: CXX=g++ bash docs/tutorial/inference/run_all.sh
 
   windows:
     name: Windows (MSVC)
@@ -94,3 +96,6 @@ jobs:
       - name: 编译并运行教程示例
         shell: cmd
         run: docs\tutorial\cpp\run_all.bat
+      - name: 编译并运行推理教程示例
+        shell: cmd
+        run: docs\tutorial\inference\run_all.bat
