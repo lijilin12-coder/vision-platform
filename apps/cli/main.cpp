@@ -15,16 +15,13 @@
 #include <string>
 #include <vector>
 
-#include "vision/authoring/api.h"
 #include "vision/catalog/api.h"
 #include "vision/common/log.h"
 #include "vision/common/path.h"
 #include "vision/crash/crash_handler.h"
-#include "vision/eventbus/in_memory_event_bus.h"
-#include "vision/execution/api.h"
 #include "vision/imaging/cv_bridge.h"
 #include "vision/logging/sinks.h"
-#include "vision/persistence/json_repositories.h"
+#include "cli_app.h"
 
 #ifdef _WIN32
 #define NOMINMAX
@@ -36,6 +33,7 @@
 
 namespace fs = std::filesystem;
 using namespace vision;
+using namespace vision::cli;
 
 namespace {
 
@@ -57,8 +55,23 @@ constexpr const char* kUsage = R"(用法：vision-cli [--data <目录>] <命令>
   version show <方案版本ID>                     以发布语言（JSON）显示方案版本
 检测执行（BC-3）
   inspect <方案版本ID> <图像或目录>...          执行检测，输出判定、判定依据和各节点耗时
+上线管理（BC-4）
+  release create <方案版本ID>                   用方案版本创建上线包，输出上线包 ID
+  release list
+  release show <上线包ID>
+  release withdraw <上线包ID>                   撤回：不允许再部署
+工位运行（BC-5）
+  station create <名称> [--auto-rollback N]     创建工位，输出工位 ID（N：连续多少次 ERROR 自动回滚，默认 3）
+  station list
+  station show <工位ID>
+  station deploy <工位ID> <上线包ID>            部署：加载完成后，在下一次检测开始前生效
+  station rollback <工位ID> [--withdraw]        回滚到上一个上线包；--withdraw 同时撤回出问题的上线包
+  station run <工位ID> <图像或目录>... [--repeat N]
+                                               热启动工位，对图像逐张检测
+  station stress <工位ID> <上线包A> <上线包B> <图像或目录> [--count N] [--deploys N] [--rollbacks N]
+                                               一边连续检测，一边在两个上线包之间反复部署和回滚，输出测量结果
 工具
-  sample-images <输出目录>                      生成示例图像（良品与带亮斑缺陷的产品）
+  sample-images <输出目录> [宽 高]              生成示例图像（良品与带亮斑缺陷的产品），默认 640×480
   debug crash <segv|abort|throw>                故意让程序崩溃，用来验证崩溃报告和转储文件能否生成
 
 选项
@@ -70,31 +83,6 @@ constexpr const char* kUsage = R"(用法：vision-cli [--data <目录>] <命令>
 日志在 <数据目录>/logs/vision-cli.log，崩溃报告和转储文件在 <数据目录>/crashes/。
 )";
 
-struct App {
-    eventbus::InMemoryEventBus bus;
-    persistence::JsonRecipeRepository recipes;
-    persistence::JsonRecipeVersionRepository versions;
-    authoring::AuthoringService authoring;
-    execution::ExecutionService execution;
-    bool verboseEvents = false;
-
-    explicit App(const fs::path& data)
-        : recipes(data),
-          versions(data),
-          authoring(recipes, versions, catalog::OperatorCatalog::global(), bus),
-          execution(catalog::OperatorCatalog::global(), bus) {
-        bus.subscribe("*", [this](const EventPtr& e) {
-            log::info("event", e->name());  // 每个领域事件都记入日志：事后可以还原“发生过什么”
-            if (verboseEvents) std::cerr << "  [事件] " << e->name() << "\n";
-        });
-    }
-};
-
-int fail(const Error& e) {
-    log::error("cli", "命令失败", {{"code", e.code}, {"message", e.message}});
-    std::cerr << "错误：" << e.message << "  (" << e.code << ")\n";
-    return 1;
-}
 
 // ---------- 故意崩溃：用来验证崩溃报告、转储文件、日志是否如预期留下 ----------
 // 分成几层函数，是为了让调用栈里能看到一条完整的调用链。
@@ -235,25 +223,6 @@ int cmdRecipeShow(App& app, const std::string& rid) {
     return 0;
 }
 
-std::vector<fs::path> expandImages(const std::vector<std::string>& args) {
-    std::vector<fs::path> out;
-    for (const auto& a : args) {
-        const fs::path p = pathFromUtf8(a);
-        if (fs::is_directory(p)) {
-            std::vector<fs::path> files;
-            for (const auto& e : fs::directory_iterator(p)) {
-                const auto ext = pathToUtf8(e.path().extension());
-                if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp") files.push_back(e.path());
-            }
-            std::sort(files.begin(), files.end());
-            out.insert(out.end(), files.begin(), files.end());
-        } else {
-            out.push_back(p);
-        }
-    }
-    return out;
-}
-
 int cmdInspect(App& app, const std::string& versionId, const std::vector<std::string>& inputs) {
     auto doc = app.authoring.getVersionDocument(versionId);
     if (!doc) return fail(doc.error());
@@ -285,22 +254,26 @@ int cmdDebug(App& app, const std::string& rid, const std::string& image) {
 }
 
 // 示例图像：灰色背景上的“零件”（暗矩形），缺陷品带有亮斑。
-int cmdSampleImages(const std::string& dir) {
+int cmdSampleImages(const std::string& dir, int width, int height) {
     const fs::path outDir = pathFromUtf8(dir);
     fs::create_directories(outDir);
     std::mt19937 rng(42);
     std::normal_distribution<double> noise(0, 4);
+    const double sx = width / 640.0, sy = height / 480.0, sr = std::min(sx, sy);
+    const auto px = [sx](double v) { return static_cast<int>(std::lround(v * sx)); };
+    const auto py = [sy](double v) { return static_cast<int>(std::lround(v * sy)); };
     auto make = [&](int defects) {
-        cv::Mat m(480, 640, CV_8UC3, cv::Scalar(150, 150, 150));
-        cv::rectangle(m, cv::Rect(120, 90, 400, 300), cv::Scalar(70, 75, 80), cv::FILLED);
+        cv::Mat m(height, width, CV_8UC3, cv::Scalar(150, 150, 150));
+        cv::rectangle(m, cv::Rect(px(120), py(90), px(400), py(300)), cv::Scalar(70, 75, 80), cv::FILLED);
         for (int i = 0; i < defects; ++i) {
-            cv::circle(m, cv::Point(170 + 90 * i, 160 + 45 * (i % 3)), 6 + 2 * i, cv::Scalar(235, 235, 235), cv::FILLED);
+            cv::circle(m, cv::Point(px(170 + 90 * i), py(160 + 45 * (i % 3))), static_cast<int>(std::lround((6 + 2 * i) * sr)),
+                       cv::Scalar(235, 235, 235), cv::FILLED);
         }
         for (int y = 0; y < m.rows; ++y) {
             for (int x = 0; x < m.cols; ++x) {
-                auto& px = m.at<cv::Vec3b>(y, x);
+                auto& pixel = m.at<cv::Vec3b>(y, x);
                 const double n = noise(rng);
-                for (int c = 0; c < 3; ++c) px[c] = cv::saturate_cast<uchar>(px[c] + n);
+                for (int c = 0; c < 3; ++c) pixel[c] = cv::saturate_cast<uchar>(pixel[c] + n);
             }
         }
         return m;
@@ -345,6 +318,35 @@ std::vector<std::string> utf8Args(int argc, char** argv) {
 }
 
 }  // namespace
+
+namespace vision::cli {
+
+int fail(const Error& e) {
+    log::error("cli", "命令失败", {{"code", e.code}, {"message", e.message}});
+    std::cerr << "错误：" << e.message << "  (" << e.code << ")\n";
+    return 1;
+}
+
+std::vector<fs::path> expandImages(const std::vector<std::string>& args) {
+    std::vector<fs::path> out;
+    for (const auto& a : args) {
+        const fs::path p = pathFromUtf8(a);
+        if (fs::is_directory(p)) {
+            std::vector<fs::path> files;
+            for (const auto& e : fs::directory_iterator(p)) {
+                const auto ext = pathToUtf8(e.path().extension());
+                if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp") files.push_back(e.path());
+            }
+            std::sort(files.begin(), files.end());
+            out.insert(out.end(), files.begin(), files.end());
+        } else {
+            out.push_back(p);
+        }
+    }
+    return out;
+}
+
+}  // namespace vision::cli
 
 int main(int argc, char** argv) {
     std::vector<std::string> args = utf8Args(argc, argv);
@@ -405,7 +407,20 @@ int main(int argc, char** argv) {
 
     if (cmd == "operators") return cmdOperators();
     if (cmd == "debug" && need(3) && args[1] == "crash") return cmdDebugCrash(args[2]);
-    if (cmd == "sample-images" && need(2)) return cmdSampleImages(args[1]);
+    if (cmd == "sample-images" && need(2)) {
+        int width = 640, height = 480;
+        if (args.size() >= 4) {
+            width = std::atoi(args[2].c_str());
+            height = std::atoi(args[3].c_str());
+            if (width < 160 || height < 120) {
+                std::cerr << "图像尺寸至少为 160×120\n";
+                return 1;
+            }
+        }
+        return cmdSampleImages(args[1], width, height);
+    }
+    if (cmd == "release" && need(2)) return runReleaseCommand(app, args);
+    if (cmd == "station" && need(2)) return runStationCommand(app, args);
     if (cmd == "inspect" && need(3)) return cmdInspect(app, args[1], {args.begin() + 2, args.end()});
     if (cmd == "version" && need(3) && args[1] == "show") {
         auto doc = app.authoring.getVersionDocument(args[2]);

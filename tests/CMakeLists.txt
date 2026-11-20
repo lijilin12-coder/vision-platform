@@ -15,6 +15,14 @@ target_include_directories(execution_domain_tests PRIVATE ${CMAKE_CURRENT_SOURCE
 target_link_libraries(execution_domain_tests PRIVATE execution_domain GTest::gtest_main)
 gtest_discover_tests(execution_domain_tests)
 
+add_executable(release_domain_tests release_domain_test.cpp)
+target_link_libraries(release_domain_tests PRIVATE release_domain GTest::gtest_main)
+gtest_discover_tests(release_domain_tests)
+
+add_executable(station_domain_tests station_domain_test.cpp)
+target_link_libraries(station_domain_tests PRIVATE station_domain GTest::gtest_main)
+gtest_discover_tests(station_domain_tests)
+
 add_executable(catalog_tests catalog_test.cpp)
 target_link_libraries(catalog_tests PRIVATE catalog_application GTest::gtest_main)
 gtest_discover_tests(catalog_tests)
@@ -26,6 +34,14 @@ target_link_libraries(integration_tests PRIVATE
   vision_operators vision_imaging vision_eventbus vision_persistence
   GTest::gtest_main)
 gtest_discover_tests(integration_tests)
+
+# ---- 工位运行（POC-9）：热切换、回滚、热启动，含 10,000 次检测的并发测试 ----
+add_executable(station_integration_tests station_integration_test.cpp)
+target_link_libraries(station_integration_tests PRIVATE
+  station_application release_application authoring_application execution_application catalog_application
+  vision_operators vision_imaging vision_eventbus vision_persistence
+  GTest::gtest_main)
+gtest_discover_tests(station_integration_tests)
 
 # ---- 日志 ----
 add_executable(logging_tests logging_test.cpp)

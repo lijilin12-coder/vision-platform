@@ -93,6 +93,26 @@ jobs:
             Get-ChildItem "$data\crashes" -Filter *.txt -ErrorAction SilentlyContinue | ForEach-Object { Get-Content $_.FullName -Encoding utf8 }
             throw "检测结果与预期不符"
           }
+      - name: 热切换压力测试（POC-9：一边检测，一边部署和回滚）
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+          function Check { if ($LASTEXITCODE -ne 0) { throw "命令失败，退出码 $LASTEXITCODE" } }
+          function Last($lines) { return ($lines | Select-Object -Last 1).Trim() }
+          $cli = ".\build\apps\vision-cli.exe"
+          $data = "$env:RUNNER_TEMP\热切换数据"
+          $images = "$env:RUNNER_TEMP\示例图像"
+          $r1 = Last (& $cli --data $data recipe build samples\recipes\bright-spot.draft.json); Check
+          $v1 = Last (& $cli --data $data recipe publish $r1); Check
+          $r2 = Last (& $cli --data $data recipe build samples\recipes\bright-spot.draft.json); Check
+          & $cli --data $data recipe set-param $r2 n5 maxCount 5; Check
+          $v2 = Last (& $cli --data $data recipe publish $r2); Check
+          $a = Last (& $cli --data $data release create $v1); Check
+          $b = Last (& $cli --data $data release create $v2); Check
+          $station = Last (& $cli --data $data station create 工位一); Check
+          # 这里是调试版本，数字只用来看趋势；检查项（没有丢失、没有用错上线包）才是重点
+          & $cli --data $data station stress $station $a $b $images --count 3000 --deploys 12 --rollbacks 3; Check
       - name: 编译并运行教程示例
         shell: cmd
         run: docs\tutorial\cpp\run_all.bat

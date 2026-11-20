@@ -12,10 +12,12 @@ target_include_directories(vision_eventbus PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/ev
 target_link_libraries(vision_eventbus PUBLIC vision_common)
 
 # JSON 文件仓储：实现方案编排领域层的仓储接口，所以可以依赖 authoring_domain
-add_library(vision_persistence STATIC persistence/src/json_repositories.cpp)
+add_library(vision_persistence STATIC
+  persistence/src/json_repositories.cpp
+  persistence/src/runtime_repositories.cpp)
 target_include_directories(vision_persistence PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/persistence/include)
 target_link_libraries(vision_persistence
-  PUBLIC authoring_domain authoring_application
+  PUBLIC authoring_domain authoring_application release_domain station_domain
   PRIVATE nlohmann_json::nlohmann_json)
 
 # 日志接收器：控制台、轮转文件

@@ -190,6 +190,12 @@ Result<InspectionReport> ExecutionService::inspect(const authoring::RecipeVersio
     return std::move(r).value().report;
 }
 
+Status ExecutionService::prepare(const authoring::RecipeVersionDocument& recipe) {
+    auto plan = impl_->planFor(recipe, true);
+    if (!plan) return plan.error();
+    return Status::success();
+}
+
 Result<DebugReport> ExecutionService::debugRun(const authoring::RecipeVersionDocument& recipe, const Image& frame) {
     return impl_->run(recipe, frame, RunPurpose::Debug);
 }
