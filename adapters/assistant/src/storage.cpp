@@ -166,6 +166,7 @@ const char* outcomeName(RoundOutcome o) {
         case RoundOutcome::RejectedByRules: return "rejected-by-rules";
         case RoundOutcome::RejectedByEditor: return "rejected-by-editor";
         case RoundOutcome::AdvisorFinished: return "advisor-finished";
+        case RoundOutcome::Abandoned: return "abandoned";
     }
     return "?";
 }
@@ -192,6 +193,8 @@ json roundJson(const Round& r) {
             {"outcome", outcomeName(r.outcome)},
             {"rejectReason", r.rejectReason},
             {"evaluation", optionalEvaluation(r.evaluation)},
+            {"robustness", robustnessJson(r.robustness)},
+            {"hardening", r.hardening},
             {"decision", decisionName(r.decision)},
             {"seconds", r.seconds}};
 }
@@ -215,10 +218,12 @@ Round roundFrom(const json& j) {
     r.proposal.finish = p.at("finish").get<bool>();
     r.outcome = byName(j.at("outcome").get<std::string>(),
                        {RoundOutcome::Pending, RoundOutcome::Applied, RoundOutcome::RejectedByRules,
-                        RoundOutcome::RejectedByEditor, RoundOutcome::AdvisorFinished},
+                        RoundOutcome::RejectedByEditor, RoundOutcome::AdvisorFinished, RoundOutcome::Abandoned},
                        outcomeName);
     r.rejectReason = j.at("rejectReason").get<std::string>();
     r.evaluation = optionalEvaluationFrom(j.at("evaluation"));
+    if (j.contains("robustness")) r.robustness = robustnessFrom(j.at("robustness"));  // 旧的记录里没有这两项
+    r.hardening = j.value("hardening", false);
     r.decision = byName(j.at("decision").get<std::string>(),
                         {RoundDecision::None, RoundDecision::Kept, RoundDecision::RolledBack}, decisionName);
     r.seconds = j.at("seconds").get<double>();
@@ -234,6 +239,9 @@ json reportJson(const AssistReport& r) {
             {"robustness", robustnessJson(r.robustness)},
             {"initialValues", r.initialValues},
             {"finalValues", r.finalValues},
+            {"valuesWhenFirstMet", r.valuesWhenFirstMet},
+            {"robustnessWhenFirstMet", robustnessJson(r.robustnessWhenFirstMet)},
+            {"hardeningRounds", r.hardeningRounds},
             {"rounds", r.rounds}, {"kept", r.kept}, {"rolledBack", r.rolledBack}, {"rejected", r.rejected},
             {"seconds", r.seconds},
             {"advisor", r.advisor},
@@ -253,6 +261,9 @@ AssistReport reportFrom(const json& j) {
     r.robustness = robustnessFrom(j.at("robustness"));
     r.initialValues = j.at("initialValues").get<std::map<std::string, double>>();
     r.finalValues = j.at("finalValues").get<std::map<std::string, double>>();
+    if (j.contains("valuesWhenFirstMet")) r.valuesWhenFirstMet = j.at("valuesWhenFirstMet").get<std::map<std::string, double>>();
+    if (j.contains("robustnessWhenFirstMet")) r.robustnessWhenFirstMet = robustnessFrom(j.at("robustnessWhenFirstMet"));
+    r.hardeningRounds = j.value("hardeningRounds", 0);
     r.rounds = j.at("rounds").get<int>();
     r.kept = j.at("kept").get<int>();
     r.rolledBack = j.at("rolledBack").get<int>();
@@ -321,7 +332,8 @@ Status JsonAssistSessionRepository::save(const AssistSession& session) {
         {"id", s.id},
         {"brief", {{"goal", s.brief.goal}, {"goldenSet", s.brief.goldenSetId}, {"blindCases", s.brief.blindCaseIds},
                    {"dataSharing", toString(s.brief.dataSharing)}}},
-        {"budget", {{"maxRounds", s.budget.maxRounds}, {"maxSeconds", s.budget.maxSeconds}}},
+        {"budget", {{"maxRounds", s.budget.maxRounds}, {"maxSeconds", s.budget.maxSeconds},
+                    {"hardeningRounds", s.budget.hardeningRounds}}},
         {"advisor", s.advisor},
         {"candidateRecipe", s.candidateRecipeId},
         {"workflow", workflowJson(session.workflow())},
@@ -331,6 +343,10 @@ Status JsonAssistSessionRepository::save(const AssistSession& session) {
         {"bestValues", s.bestValues},
         {"baseline", optionalEvaluation(s.baseline)},
         {"best", optionalEvaluation(s.best)},
+        {"bestRobustness", s.bestRobustness ? robustnessJson(*s.bestRobustness) : json(nullptr)},
+        {"valuesWhenFirstMet", s.valuesWhenFirstMet},
+        {"robustnessWhenFirstMet", robustnessJson(s.robustnessWhenFirstMet)},
+        {"hardeningRounds", s.hardeningRounds},
         {"rounds", rounds},
         {"status", toString(s.status)},
         {"endReason", toString(s.endReason)},
@@ -366,6 +382,11 @@ std::optional<AssistSession> JsonAssistSessionRepository::find(const SessionId& 
     s.bestValues = j.at("bestValues").get<std::map<std::string, double>>();
     s.baseline = optionalEvaluationFrom(j.at("baseline"));
     s.best = optionalEvaluationFrom(j.at("best"));
+    s.budget.hardeningRounds = j.at("budget").value("hardeningRounds", 0);  // 旧的记录：没有加固
+    if (j.contains("bestRobustness") && !j.at("bestRobustness").is_null()) s.bestRobustness = robustnessFrom(j.at("bestRobustness"));
+    if (j.contains("valuesWhenFirstMet")) s.valuesWhenFirstMet = j.at("valuesWhenFirstMet").get<std::map<std::string, double>>();
+    if (j.contains("robustnessWhenFirstMet")) s.robustnessWhenFirstMet = robustnessFrom(j.at("robustnessWhenFirstMet"));
+    s.hardeningRounds = j.value("hardeningRounds", 0);
     for (const auto& r : j.at("rounds")) s.rounds.push_back(roundFrom(r));
     s.status = enumFrom(j.at("status"), {SessionStatus::InProgress, SessionStatus::Ended, SessionStatus::Adopted,
                                          SessionStatus::Abandoned});

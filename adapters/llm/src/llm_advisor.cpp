@@ -98,8 +98,16 @@ std::string LlmAdvisor::systemPrompt() {
 - cases：一部分用例在当前参数下的表现。truth 是正确答案，verdict 是方案给出的判定，outputs 是各节点输出的摘要和统计数字。你看不到图像，这些数字就是你的依据：判断阈值、面积之类的参数应该取多少，要从这里面找
 - history：之前每一轮你改了什么、结果如何。kept 表示比之前好，已经保留；rolled-back 表示没有变好，已经撤销（参数回到了之前最好的值）；rejected 表示提议不合规则，没有执行
 - rounds_left：还剩几轮
+- phase：tuning（调参）或 hardening（加固），见下
+- robustness：只在加固阶段有，见下
 
-目标：漏检、误报、出错都为 0。达到之后会话会自动结束。漏检比误报严重。
+第一阶段，调参（phase = tuning）。目标：漏检、误报、出错都为 0。漏检比误报严重。
+
+第二阶段，加固（phase = hardening）。所有用例都判对之后进入这个阶段，目标变成让方案更稳：把用例的图像整体调亮、调暗或加上噪声之后，方案仍然应该判得对。robustness 列出了每一种扰动下判错了几个（brightness 的 level 是亮度的倍数，例如 0.8 表示整体变暗到 80%；noise 的 level 是噪声的强度）。这个阶段里：
+- 只有“原来的用例仍然全部判对，并且更稳”的修改才会保留，其余都会撤销。“更稳”先看 robustness 里通不过（有判错）的扰动有几项，越少越好；一样多再看判错的总数。
+- robustness_wrong_cases 列出了判错的用例在扰动之后的表现，outputs 里是扰动之后的统计数字（灰度、连通域的面积）。直接从这些数字看：误报是哪些连通域造成的、有多大；漏检时缺陷的亮度降到了多少。
+- 从 robustness 看方案怕什么：变暗时漏检，说明阈值离缺陷的亮度太近；变亮或加噪声时误报，说明阈值离背景的亮度太近，或者面积下限太小。结合 cases 里的统计数字，推算扰动之后这些数字会变成多少，把参数移到两边都留有余地的位置。
+- 有的扰动可能无论如何都通不过（例如变暗之后缺陷比正常光照下的背景还暗）。如果你判断已经没有改进的余地，就结束。
 
 规则：
 - 只能修改 tunables 里列出的参数，取值必须在允许范围内。不能增删节点，不能改其他参数；这样的提议会被拒绝，并白白用掉一轮。
@@ -143,6 +151,10 @@ std::string LlmAdvisor::describe(const AdvisorView& view) {
             entry["misses"] = r.misses;
             entry["false_alarms"] = r.falseAlarms;
             entry["errors"] = r.errors;
+            if (r.robustnessWrong >= 0) {
+                entry["robustness_failed_checks"] = r.robustnessFailed;
+                entry["robustness_wrong_total"] = r.robustnessWrong;
+            }
         }
         history.push_back(std::move(entry));
     }
@@ -151,14 +163,31 @@ std::string LlmAdvisor::describe(const AdvisorView& view) {
         cases.push_back({{"id", o->caseId}, {"truth", o->truthNg ? "NG" : "OK"}, {"verdict", o->verdict},
                          {"correct", judgedCorrectly(*o)}, {"reasons", o->reasons}, {"outputs", o->outputs}});
     }
-    const json j = {{"goal", view.goal},
-                    {"workflow", {{"name", view.workflowName}, {"description", view.workflowDescription}, {"nodes", nodes}}},
-                    {"tunables", tunables},
-                    {"evaluation", evaluation},
-                    {"cases", cases},
-                    {"cases_note", "判错的用例全部列出；判对的每类最多列 6 个作参照"},
-                    {"history", history},
-                    {"rounds_left", view.roundsLeft}};
+    json robustness = json::array();
+    for (const auto& r : view.robustness) {
+        robustness.push_back({{"kind", r.kind}, {"level", r.level}, {"misses", r.misses}, {"false_alarms", r.falseAlarms},
+                              {"errors", r.errors}});
+    }
+    json j = {{"goal", view.goal},
+              {"phase", view.hardening ? "hardening" : "tuning"},
+              {"workflow", {{"name", view.workflowName}, {"description", view.workflowDescription}, {"nodes", nodes}}},
+              {"tunables", tunables},
+              {"evaluation", evaluation},
+              {"cases", cases},
+              {"cases_note", "判错的用例全部列出；判对的每类最多列 6 个作参照"},
+              {"history", history},
+              {"rounds_left", view.roundsLeft}};
+    if (view.hardening) {
+        j["robustness"] = robustness;
+        json wrong = json::array();
+        for (const auto& p : view.probeObservations) {
+            wrong.push_back({{"kind", p.kind}, {"level", p.level}, {"id", p.observation.caseId},
+                             {"truth", p.observation.truthNg ? "NG" : "OK"}, {"verdict", p.observation.verdict},
+                             {"reasons", p.observation.reasons}, {"outputs", p.observation.outputs}});
+        }
+        j["robustness_wrong_cases"] = wrong;
+        j["robustness_wrong_cases_note"] = "每种通不过的扰动下，最多列 2 个判错的用例在扰动之后的表现";
+    }
     return j.dump(1);
 }
 

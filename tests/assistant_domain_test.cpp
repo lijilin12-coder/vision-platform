@@ -37,7 +37,10 @@ InspectionBrief brief(DataSharing sharing = DataSharing::NoImages) {
     return b;
 }
 
-AssistSession newSession(Budget budget = {}, DataSharing sharing = DataSharing::NoImages) {
+// 不加固的预算：达标就结束。加固阶段有单独的一组测试。
+const Budget kNoHardening{20, 300, 0};
+
+AssistSession newSession(Budget budget = kNoHardening, DataSharing sharing = DataSharing::NoImages) {
     auto s = AssistSession::start("s-1", brief(sharing), budget, brightSpot(), "scripted", kAll, "recipe-cand");
     EXPECT_TRUE(s.ok());
     return std::move(s).value();
@@ -74,11 +77,16 @@ Proposal setParam(const std::string& node, const std::string& param, double valu
     return p;
 }
 
+// 不涉及稳健性检查时的简写：better 为真表示调参集的评估更好，否则更差
+Result<std::vector<TunableEdit>> rec(AssistSession& s, Evaluation e, bool better, double seconds) {
+    return s.recordEvaluation(std::move(e), better ? Comparison::Better : Comparison::Worse, std::nullopt, seconds);
+}
+
 // 走完一轮“提议被应用并评估”
 void playRound(AssistSession& s, Proposal p, const Evaluation& e, bool better) {
     ASSERT_TRUE(s.beginRound(0).ok());
     ASSERT_TRUE(s.submitProposal(std::move(p)).ok());
-    ASSERT_TRUE(s.recordEvaluation(e, better, 0.01).ok());
+    ASSERT_TRUE(rec(s, e, better, 0.01).ok());
 }
 
 std::vector<std::string> eventNames(AssistSession& s) {
@@ -150,6 +158,7 @@ TEST(AssistSession, StartRejectsBadInput) {
     EXPECT_TRUE(start(brief(), {}, kAll));
     EXPECT_FALSE(start(brief(), {}, kAll, ""));              // 没有候选方案
     EXPECT_FALSE(start(brief(), {0, 10}, kAll));             // 预算为 0
+    EXPECT_FALSE(start(brief(), {20, 300, -1}, kAll));       // 加固的轮数是负数
     EXPECT_FALSE(start(brief(), {}, {"ok1", "ng1"}));        // 盲测集里的用例不在基准图集里
     EXPECT_FALSE(start(brief(), {}, kBlind));                // 全部是盲测集，没有东西可以调参
     InspectionBrief freeform = brief();
@@ -185,7 +194,7 @@ TEST(AssistSession, BetterRoundIsKept_WorseIsRolledBack) {
     ASSERT_TRUE(edits.ok());
     ASSERT_EQ(edits.value().size(), 1u);
     EXPECT_EQ(edits.value()[0].value, 100);
-    auto rollback = s.recordEvaluation(tuningEval(0, 1), true, 0.01);
+    auto rollback = rec(s, tuningEval(0, 1), true, 0.01);
     ASSERT_TRUE(rollback.ok());
     EXPECT_TRUE(rollback.value().empty());
     EXPECT_EQ(s.state().bestValues.at("bin.value"), 100);
@@ -194,7 +203,7 @@ TEST(AssistSession, BetterRoundIsKept_WorseIsRolledBack) {
     // 第 2 轮：变差，回退到最好的状态
     ASSERT_TRUE(s.beginRound(0).ok());
     ASSERT_TRUE(s.submitProposal(setParam("bin", "value", 250)).ok());
-    rollback = s.recordEvaluation(tuningEval(2, 0), false, 0.01);
+    rollback = rec(s, tuningEval(2, 0), false, 0.01);
     ASSERT_TRUE(rollback.ok());
     bool restoresThreshold = false;
     for (const auto& e : rollback.value()) restoresThreshold |= (e.nodeKey == "bin" && e.param == "value" && e.value == 100);
@@ -278,7 +287,7 @@ TEST(AssistSession, A2_EditorRejectionIsRecordedAndRestored) {
 
 // A3：顾问看不到盲测集
 TEST(AssistSession, A3_AdvisorNeverSeesBlindCases) {
-    AssistSession s = newSession({}, DataSharing::Originals);
+    AssistSession s = newSession(kNoHardening, DataSharing::Originals);
     ASSERT_TRUE(s.recordBaseline(tuningEval(0, 2)).ok());
 
     std::vector<CaseObservation> observations;
@@ -332,9 +341,9 @@ TEST(AssistSession, A4_EvaluationMustCoverExactlyTheCases) {
     ASSERT_TRUE(s.recordBaseline(tuningEval(0, 2)).ok());
     ASSERT_TRUE(s.beginRound(0).ok());
     ASSERT_TRUE(s.submitProposal(setParam("bin", "value", 100)).ok());
-    EXPECT_FALSE(s.recordEvaluation(partial, true, 0).ok());
-    EXPECT_FALSE(s.recordEvaluation(blindEval(0, 0), true, 0).ok());  // 拿盲测集的评估冒充
-    EXPECT_TRUE(s.recordEvaluation(tuningEval(0, 1), true, 0).ok());
+    EXPECT_FALSE(rec(s, partial, true, 0).ok());
+    EXPECT_FALSE(rec(s, blindEval(0, 0), true, 0).ok());  // 拿盲测集的评估冒充
+    EXPECT_TRUE(rec(s, tuningEval(0, 1), true, 0).ok());
 }
 
 // A5：上一轮没有结束，不能开始下一轮；没有开始一轮，不能提交提议或评估
@@ -342,15 +351,15 @@ TEST(AssistSession, A5_OneRoundAtATime) {
     AssistSession s = newSession();
     ASSERT_TRUE(s.recordBaseline(tuningEval(0, 2)).ok());
     EXPECT_FALSE(s.submitProposal(setParam("bin", "value", 100)).ok());
-    EXPECT_FALSE(s.recordEvaluation(tuningEval(0, 1), true, 0).ok());
+    EXPECT_FALSE(rec(s, tuningEval(0, 1), true, 0).ok());
 
     ASSERT_TRUE(s.beginRound(0).ok());
     EXPECT_EQ(s.beginRound(0).error().code, "assistant.round_open");
-    EXPECT_FALSE(s.recordEvaluation(tuningEval(0, 1), true, 0).ok());  // 还没有提议
+    EXPECT_FALSE(rec(s, tuningEval(0, 1), true, 0).ok());  // 还没有提议
     ASSERT_TRUE(s.submitProposal(setParam("bin", "value", 100)).ok());
     EXPECT_EQ(s.beginRound(0).error().code, "assistant.round_open");  // 提议已应用但还没有评估
     EXPECT_FALSE(s.submitProposal(setParam("bin", "value", 110)).ok());
-    ASSERT_TRUE(s.recordEvaluation(tuningEval(0, 1), true, 0.5).ok());
+    ASSERT_TRUE(rec(s, tuningEval(0, 1), true, 0.5).ok());
 
     const Round& r = s.state().rounds[0];
     EXPECT_EQ(r.index, 1);
@@ -361,7 +370,7 @@ TEST(AssistSession, A5_OneRoundAtATime) {
 
 // A6：超出预算立即结束
 TEST(AssistSession, A6_BudgetOfRounds) {
-    AssistSession s = newSession(Budget{2, 100});
+    AssistSession s = newSession(Budget{2, 100, 0});
     ASSERT_TRUE(s.recordBaseline(tuningEval(0, 2)).ok());
     playRound(s, setParam("bin", "value", 100), tuningEval(0, 1), true);
     playRound(s, setParam("bin", "value", 110), tuningEval(0, 1), false);
@@ -372,11 +381,11 @@ TEST(AssistSession, A6_BudgetOfRounds) {
 }
 
 TEST(AssistSession, A6_BudgetOfTime) {
-    AssistSession s = newSession(Budget{20, 10});
+    AssistSession s = newSession(Budget{20, 10, 0});
     ASSERT_TRUE(s.recordBaseline(tuningEval(0, 2)).ok());
     EXPECT_TRUE(s.beginRound(9.9).ok());
     ASSERT_TRUE(s.submitProposal(setParam("bin", "value", 100)).ok());
-    ASSERT_TRUE(s.recordEvaluation(tuningEval(0, 1), true, 0).ok());
+    ASSERT_TRUE(rec(s, tuningEval(0, 1), true, 0).ok());
     EXPECT_FALSE(s.beginRound(10.0).ok());
     EXPECT_EQ(s.state().endReason, EndReason::BudgetExhausted);
 }
@@ -430,20 +439,20 @@ TEST(AssistSession, A9_DataSharingPolicy) {
     o.outputs["blobs.count"] = "number 3";
 
     {
-        AssistSession s = newSession({}, DataSharing::NoImages);
+        AssistSession s = newSession(kNoHardening, DataSharing::NoImages);
         const auto view = s.advisorView({o});
         ASSERT_EQ(view.observations.size(), 1u);
         EXPECT_TRUE(view.observations[0].imageRef.empty());                    // 图像不外发
         EXPECT_EQ(view.observations[0].outputs.at("blobs.count"), "number 3");  // 数字和判定可以
     }
     {
-        AssistSession s = newSession({}, DataSharing::Thumbnails);
+        AssistSession s = newSession(kNoHardening, DataSharing::Thumbnails);
         const auto view = s.advisorView({o});
         EXPECT_FALSE(view.observations[0].imageRef.empty());
         EXPECT_TRUE(view.observations[0].thumbnailOnly);
     }
     {
-        AssistSession s = newSession({}, DataSharing::Originals);
+        AssistSession s = newSession(kNoHardening, DataSharing::Originals);
         const auto view = s.advisorView({o});
         EXPECT_FALSE(view.observations[0].imageRef.empty());
         EXPECT_FALSE(view.observations[0].thumbnailOnly);
@@ -483,7 +492,7 @@ TEST(AssistReport, NoOverfitFlagWhenBlindIsAsGood) {
 TEST(AssistReport, SaysSoWhenThereIsNoBlindSetOrCriteriaNotMet) {
     InspectionBrief b = brief();
     b.blindCaseIds.clear();
-    auto created = AssistSession::start("s", b, Budget{1, 100}, brightSpot(), "x", kTuning, "r");
+    auto created = AssistSession::start("s", b, Budget{1, 100, 0}, brightSpot(), "x", kTuning, "r");
     ASSERT_TRUE(created.ok());
     AssistSession s = std::move(created).value();
     ASSERT_TRUE(s.recordBaseline(tuningEval(0, 2)).ok());
@@ -537,4 +546,248 @@ TEST(ChooseBlindCases, AlwaysLeavesSomethingToTuneOn) {
     const auto blind = chooseBlindCases({{"a", false}, {"b", false}, {"c", true}, {"d", true}}, 1.0, 1);
     EXPECT_EQ(blind.size(), 2u);  // 比例再大，每类也至少留一个调参
     EXPECT_TRUE(chooseBlindCases({{"a", false}, {"b", false}}, 0.0, 1).empty());
+}
+
+// ---------------- 加固阶段 ----------------
+// 工作流 brightSpot() 声明了一项稳健性检查：亮度 ×0.8 和 ×1.2。
+
+namespace {
+
+// 稳健性检查的结果：两个程度各判错几个
+std::vector<RobustnessResult> robust(int wrongAt08, int wrongAt12) {
+    return {{"brightness", 0.8, 4, wrongAt08, 0, 0, wrongAt08 == 0}, {"brightness", 1.2, 4, 0, wrongAt12, 0, wrongAt12 == 0}};
+}
+
+AssistSession hardeningSession(int hardeningRounds = 3) {
+    auto s = AssistSession::start("s-h", brief(), Budget{20, 300, hardeningRounds}, brightSpot(), "x", kAll, "recipe-cand");
+    EXPECT_TRUE(s.ok());
+    return std::move(s).value();
+}
+
+// 走到“刚达标”：稳健性检查里还有 wrong 个判错
+void reachCriteria(AssistSession& s, int wrongAt08, int wrongAt12) {
+    ASSERT_TRUE(s.recordBaseline(tuningEval(0, 2)).ok());
+    ASSERT_TRUE(s.beginRound(0).ok());
+    ASSERT_TRUE(s.submitProposal(setParam("bin", "value", 180)).ok());
+    ASSERT_TRUE(s.recordEvaluation(tuningEval(0, 0), Comparison::Better, robust(wrongAt08, wrongAt12), 0.01).ok());
+}
+
+}  // namespace
+
+TEST(Hardening, NeedsRobustnessOnlyWhenCriteriaMetAndEnabled) {
+    AssistSession on = hardeningSession();
+    EXPECT_TRUE(on.needsRobustness(tuningEval(0, 0)));
+    EXPECT_FALSE(on.needsRobustness(tuningEval(0, 1)));  // 没达标：不值得做
+    AssistSession off = newSession(kNoHardening);
+    EXPECT_FALSE(off.needsRobustness(tuningEval(0, 0)));  // 加固的预算是 0
+}
+
+// 达标之后不立即结束：稳健性检查里还有判错的，进入加固阶段
+TEST(Hardening, SessionContinuesAfterCriteriaMetWhileProbesFail) {
+    AssistSession s = hardeningSession();
+    reachCriteria(s, 2, 0);
+    EXPECT_EQ(s.status(), SessionStatus::InProgress);
+    EXPECT_TRUE(s.hardening());
+    EXPECT_EQ(s.state().valuesWhenFirstMet.at("bin.value"), 180);
+
+    const auto view = s.advisorView({});
+    EXPECT_TRUE(view.hardening);  // 顾问知道现在的目标变了
+    ASSERT_EQ(view.robustness.size(), 2u);
+    EXPECT_EQ(view.robustness[0].misses, 2);
+    EXPECT_EQ(view.roundsLeft, 3);  // 剩下的是加固的预算
+    EXPECT_EQ(view.history.back().robustnessWrong, 2);
+}
+
+// 稳健性检查全部通过：没有什么可以再加固的，直接结束
+TEST(Hardening, EndsImmediatelyWhenAllProbesPass) {
+    AssistSession s = hardeningSession();
+    reachCriteria(s, 0, 0);
+    EXPECT_EQ(s.status(), SessionStatus::Ended);
+    EXPECT_EQ(s.state().endReason, EndReason::CriteriaMet);
+    EXPECT_EQ(s.state().hardeningRounds, 0);
+}
+
+// A11：调参集一样好、稳健性更好 → 保留；稳健性没有更好 → 回退；调参集变差 → 回退，不管稳健性如何
+TEST(Hardening, A11_KeepsOnlyChangesThatAreMoreRobustWithoutHurtingTuning) {
+    AssistSession s = hardeningSession(5);
+    reachCriteria(s, 2, 1);
+
+    // 更稳：保留
+    ASSERT_TRUE(s.beginRound(0).ok());
+    ASSERT_TRUE(s.submitProposal(setParam("bin", "value", 170)).ok());
+    auto rollback = s.recordEvaluation(tuningEval(0, 0), Comparison::Equal, robust(1, 1), 0.01);
+    ASSERT_TRUE(rollback.ok());
+    EXPECT_TRUE(rollback.value().empty());
+    EXPECT_EQ(s.state().bestValues.at("bin.value"), 170);
+    EXPECT_TRUE(s.state().rounds.back().hardening);
+
+    // 一样稳：不保留（避免参数无意义地漂移）
+    ASSERT_TRUE(s.beginRound(0).ok());
+    ASSERT_TRUE(s.submitProposal(setParam("bin", "value", 165)).ok());
+    rollback = s.recordEvaluation(tuningEval(0, 0), Comparison::Equal, robust(1, 1), 0.01);
+    ASSERT_TRUE(rollback.ok());
+    EXPECT_FALSE(rollback.value().empty());
+    EXPECT_EQ(s.state().bestValues.at("bin.value"), 170);
+
+    // 调参集变差了（不再达标，所以没有稳健性检查的结果）：回退
+    ASSERT_TRUE(s.beginRound(0).ok());
+    ASSERT_TRUE(s.submitProposal(setParam("bin", "value", 120)).ok());
+    rollback = s.recordEvaluation(tuningEval(0, 1), Comparison::Worse, std::nullopt, 0.01);
+    ASSERT_TRUE(rollback.ok());
+    EXPECT_EQ(s.state().bestValues.at("bin.value"), 170);
+    EXPECT_TRUE(s.state().best->meetsCriteria);
+
+    // 全部通过：结束
+    ASSERT_TRUE(s.beginRound(0).ok());
+    ASSERT_TRUE(s.submitProposal(setParam("bin", "value", 175)).ok());
+    ASSERT_TRUE(s.recordEvaluation(tuningEval(0, 0), Comparison::Equal, robust(0, 0), 0.01).ok());
+    EXPECT_EQ(s.status(), SessionStatus::Ended);
+    EXPECT_EQ(s.state().endReason, EndReason::CriteriaMet);
+    EXPECT_EQ(s.state().hardeningRounds, 4);
+}
+
+// 加固有自己的预算；用完之后以“达标”结束，交出目前最稳的候选方案
+TEST(Hardening, StopsWhenHardeningBudgetIsUsedUp) {
+    AssistSession s = hardeningSession(2);
+    reachCriteria(s, 2, 0);
+    for (int i = 0; i < 2; ++i) {
+        ASSERT_TRUE(s.beginRound(0).ok());
+        ASSERT_TRUE(s.submitProposal(setParam("bin", "value", 150 + i)).ok());
+        ASSERT_TRUE(s.recordEvaluation(tuningEval(0, 0), Comparison::Equal, robust(2, 0), 0.01).ok());
+    }
+    EXPECT_EQ(s.beginRound(0).error().code, "assistant.hardening_done");
+    EXPECT_EQ(s.status(), SessionStatus::Ended);
+    EXPECT_EQ(s.state().endReason, EndReason::CriteriaMet);  // 不是“预算用尽”：方案是达标的
+    EXPECT_EQ(s.state().bestValues.at("bin.value"), 180);
+}
+
+// 总预算在加固阶段用尽：结果仍然是“达标”
+TEST(Hardening, TotalBudgetRunningOutDuringHardeningStillCountsAsMet) {
+    auto created = AssistSession::start("s", brief(), Budget{1, 300, 5}, brightSpot(), "x", kAll, "r");
+    ASSERT_TRUE(created.ok());
+    AssistSession s = std::move(created).value();
+    reachCriteria(s, 2, 0);
+    EXPECT_FALSE(s.beginRound(0).ok());
+    EXPECT_EQ(s.state().endReason, EndReason::CriteriaMet);
+}
+
+// A4 对稳健性检查同样适用：达标时必须给出，而且要和工作流声明的一一对应
+TEST(Hardening, A4_RobustnessMustBeGivenAndMatchTheDeclaredProbes) {
+    AssistSession s = hardeningSession();
+    ASSERT_TRUE(s.recordBaseline(tuningEval(0, 2)).ok());
+    ASSERT_TRUE(s.beginRound(0).ok());
+    ASSERT_TRUE(s.submitProposal(setParam("bin", "value", 180)).ok());
+
+    const auto submit = [&s](std::optional<std::vector<RobustnessResult>> r, const Evaluation& e) {
+        return s.recordEvaluation(e, Comparison::Better, std::move(r), 0.01);
+    };
+    EXPECT_EQ(submit(std::nullopt, tuningEval(0, 0)).error().code, "assistant.robustness_missing");
+    EXPECT_EQ(submit(robust(0, 0), tuningEval(0, 1)).error().code, "assistant.robustness_unexpected");  // 没达标却给了
+    auto partial = robust(0, 0);
+    partial.pop_back();
+    EXPECT_EQ(submit(partial, tuningEval(0, 0)).error().code, "assistant.robustness_coverage");  // 少了一个程度
+    auto wrongLevel = robust(0, 0);
+    wrongLevel[1].level = 1.1;
+    EXPECT_EQ(submit(wrongLevel, tuningEval(0, 0)).error().code, "assistant.robustness_coverage");
+    auto fewerCases = robust(0, 0);
+    fewerCases[0].total = 3;  // 没有覆盖整个调参集
+    EXPECT_EQ(submit(fewerCases, tuningEval(0, 0)).error().code, "assistant.robustness_coverage");
+    EXPECT_TRUE(submit(robust(1, 0), tuningEval(0, 0)).ok());
+}
+
+// 初始参数就达标：直接进入加固阶段，而不是结束
+TEST(Hardening, BaselineThatAlreadyMeetsCriteriaGoesStraightToHardening) {
+    AssistSession s = hardeningSession();
+    EXPECT_EQ(s.recordBaseline(tuningEval(0, 0)).error().code, "assistant.robustness_missing");
+    ASSERT_TRUE(s.recordBaseline(tuningEval(0, 0), robust(1, 0)).ok());
+    EXPECT_TRUE(s.hardening());
+    ASSERT_TRUE(s.beginRound(0).ok());
+    EXPECT_TRUE(s.state().rounds.back().hardening);
+}
+
+TEST(Hardening, ReportComparesBeforeAndAfter) {
+    AssistSession s = hardeningSession(1);
+    reachCriteria(s, 2, 1);
+    ASSERT_TRUE(s.beginRound(0).ok());
+    ASSERT_TRUE(s.submitProposal(setParam("bin", "value", 170)).ok());
+    ASSERT_TRUE(s.recordEvaluation(tuningEval(0, 0), Comparison::Equal, robust(1, 0), 0.01).ok());
+    EXPECT_FALSE(s.beginRound(0).ok());  // 加固的预算用完
+    ASSERT_TRUE(s.recordBlindEvaluation(blindEval(0, 0)).ok());
+    ASSERT_TRUE(s.generateReport(1.0).ok());
+
+    const AssistReport& r = *s.state().report;
+    EXPECT_EQ(r.hardeningRounds, 1);
+    EXPECT_EQ(r.valuesWhenFirstMet.at("bin.value"), 180);
+    EXPECT_EQ(r.finalValues.at("bin.value"), 170);
+    ASSERT_EQ(r.robustnessWhenFirstMet.size(), 2u);
+    EXPECT_EQ(r.robustnessWhenFirstMet[0].misses, 2);
+    ASSERT_EQ(r.robustness.size(), 2u);  // 最终的稳健性结果就是最好的候选方案的那一份，不用再测一遍
+    EXPECT_EQ(r.robustness[0].misses, 1);
+    bool mentioned = false;
+    for (const auto& n : r.notes) mentioned |= n.find("加固") != std::string::npos;
+    EXPECT_TRUE(mentioned);
+}
+
+// 会话在一轮进行中结束（例如顾问出错）：这一轮记为“未完成”，不算被拒绝
+TEST(AssistSession, RoundOpenWhenSessionEndsIsRecordedAsAbandoned) {
+    AssistSession s = newSession();
+    ASSERT_TRUE(s.recordBaseline(tuningEval(0, 2)).ok());
+    ASSERT_TRUE(s.beginRound(0).ok());
+    ASSERT_TRUE(s.end(EndReason::Failed).ok());
+    EXPECT_EQ(s.state().rounds[0].outcome, RoundOutcome::Abandoned);
+    ASSERT_TRUE(s.generateReport(1.0).ok());
+    EXPECT_EQ(s.state().report->rejected, 0);
+}
+
+// “更稳”的规则：先比通不过的扰动有几项，再比判错的总数，再比漏检
+TEST(Hardening, MoreRobustComparesFailedChecksFirst) {
+    const auto r = [](int misses, int falseAlarms) {
+        return RobustnessResult{"brightness", 1.0, 16, misses, falseAlarms, 0, misses + falseAlarms == 0};
+    };
+    // 1 项不过（8 个漏检）比 3 项不过（各 1 个误报）更稳：能用的范围更大。
+    // 如果按“漏检优先”来比，结论会反过来——那正是这条规则要避免的。
+    EXPECT_TRUE(moreRobust({r(8, 0), r(0, 0), r(0, 0)}, {r(0, 1), r(0, 1), r(0, 1)}));
+    EXPECT_FALSE(moreRobust({r(0, 1), r(0, 1), r(0, 1)}, {r(8, 0), r(0, 0), r(0, 0)}));
+    // 不过的项数一样：判错总数少的更稳
+    EXPECT_TRUE(moreRobust({r(2, 0), r(0, 0)}, {r(5, 0), r(0, 0)}));
+    // 总数也一样：漏检少的更稳
+    EXPECT_TRUE(moreRobust({r(0, 3), r(0, 0)}, {r(3, 0), r(0, 0)}));
+    // 完全一样：不算更稳
+    EXPECT_FALSE(moreRobust({r(1, 0), r(0, 0)}, {r(1, 0), r(0, 0)}));
+}
+
+// 顾问在加固阶段建议结束：方案是达标的，结束原因是“达标”而不是“顾问建议结束”
+TEST(Hardening, AdvisorFinishingDuringHardeningCountsAsMet) {
+    AssistSession s = hardeningSession();
+    reachCriteria(s, 2, 0);
+    ASSERT_TRUE(s.beginRound(0).ok());
+    Proposal done;
+    done.finish = true;
+    ASSERT_TRUE(s.submitProposal(done).ok());
+    EXPECT_EQ(s.state().endReason, EndReason::CriteriaMet);
+}
+
+// A3 在加固阶段同样成立：扰动之后的表现也只给调参集的，而且只在加固阶段给
+TEST(Hardening, A3_ProbeObservationsExcludeBlindCases) {
+    AssistSession s = hardeningSession();
+    const auto probeOf = [](const std::string& id) {
+        ProbeObservation p;
+        p.kind = "brightness";
+        p.level = 0.8;
+        p.observation.caseId = id;
+        p.observation.imageRef = "/img/" + id + ".png";
+        return p;
+    };
+    const std::vector<ProbeObservation> probes = {probeOf("ng1"), probeOf("ng3"), probeOf("stranger")};  // ng3 属于盲测集
+
+    ASSERT_TRUE(s.recordBaseline(tuningEval(0, 2)).ok());
+    EXPECT_TRUE(s.advisorView({}, probes).probeObservations.empty());  // 还没达标：不是加固阶段，不给
+
+    ASSERT_TRUE(s.beginRound(0).ok());
+    ASSERT_TRUE(s.submitProposal(setParam("bin", "value", 180)).ok());
+    ASSERT_TRUE(s.recordEvaluation(tuningEval(0, 0), Comparison::Better, robust(2, 0), 0.01).ok());
+    const auto view = s.advisorView({}, probes);
+    ASSERT_EQ(view.probeObservations.size(), 1u);
+    EXPECT_EQ(view.probeObservations[0].observation.caseId, "ng1");
+    EXPECT_TRUE(view.probeObservations[0].observation.imageRef.empty());
 }

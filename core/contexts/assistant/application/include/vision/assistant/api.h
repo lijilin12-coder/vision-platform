@@ -99,6 +99,7 @@ struct AssistRequest {
     std::string dataSharing = "no-images";  // no-images / thumbnails / originals
     int maxRounds = 20;
     double maxSeconds = 300;
+    int hardeningRounds = 8;  // 达标之后最多再用几轮扩大余量；0 表示达标就结束
 };
 
 struct SessionView {
@@ -108,6 +109,7 @@ struct SessionView {
     std::string endReason;
     std::string advisor;
     int rounds = 0, kept = 0, rolledBack = 0, rejected = 0;
+    int hardeningRounds = 0;  // 其中加固阶段的轮数
     std::vector<double> roundSeconds;
     double seconds = 0;
     bool tuningMeetsCriteria = false;

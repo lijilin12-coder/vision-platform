@@ -50,6 +50,7 @@ SessionView toView(const AssistSession& session) {
         if (r.decision == RoundDecision::RolledBack) ++v.rolledBack;
         if (r.outcome == RoundOutcome::RejectedByRules || r.outcome == RoundOutcome::RejectedByEditor) ++v.rejected;
     }
+    v.hardeningRounds = s.hardeningRounds;
     if (s.best) v.tuningMeetsCriteria = s.best->meetsCriteria;
     if (s.blind) v.blindMeetsCriteria = s.blind->meetsCriteria;
     v.finalValues = s.bestValues;
@@ -125,6 +126,33 @@ struct Lab {
     }
 };
 
+// 稳健性检查：对调参集的图像逐一做工作流声明的扰动，重新评估
+// wrongCases：顺便收集判错的用例在扰动之后的表现（每种扰动最多 2 个），供顾问在加固阶段参考。
+Result<std::vector<RobustnessResult>> probeRobustness(const Workflow& wf, Lab& lab, const std::vector<std::string>& tuning,
+                                                      std::vector<ProbeObservation>* wrongCases = nullptr) {
+    constexpr int kWrongCasesPerProbe = 2;
+    std::vector<RobustnessResult> results;
+    for (const auto& probe : wf.probes()) {
+        for (const double level : probe.levels) {
+            std::vector<CaseObservation> observations;
+            auto e = lab.evaluate(tuning, Perturbation{toString(probe.kind), level}, &observations);
+            if (!e) return e.error();
+            if (wrongCases != nullptr) {
+                int taken = 0;
+                for (auto& o : observations) {
+                    if (taken >= kWrongCasesPerProbe) break;
+                    if (o.verdict == (o.truthNg ? "NG" : "OK")) continue;
+                    wrongCases->push_back({toString(probe.kind), level, std::move(o)});
+                    ++taken;
+                }
+            }
+            results.push_back({toString(probe.kind), level, e.value().total(), e.value().misses, e.value().falseAlarms,
+                               e.value().errors, e.value().meetsCriteria});
+        }
+    }
+    return results;
+}
+
 // 按工作流搭出候选方案
 Status buildCandidate(const Workflow& wf, Lab& lab) {
     auto recipe = lab.editor.createRecipe("助手候选 - " + wf.name());
@@ -188,7 +216,8 @@ Result<SessionView> AssistService::run(const AssistRequest& request) {
 
     if (auto st = buildCandidate(*workflow, lab); !st) return st.error();
 
-    auto created = AssistSession::start(newUuid(), brief, Budget{request.maxRounds, request.maxSeconds}, *workflow,
+    auto created = AssistSession::start(newUuid(), brief,
+                                        Budget{request.maxRounds, request.maxSeconds, request.hardeningRounds}, *workflow,
                                         advisor_.name(), allCaseIds, lab.recipeId);
     if (!created) return created.error();
     AssistSession session = std::move(created).value();
@@ -203,7 +232,14 @@ Result<SessionView> AssistService::run(const AssistRequest& request) {
     std::vector<CaseObservation> bestObservations;
     auto baseline = lab.evaluate(tuning, std::nullopt, &bestObservations);
     if (!baseline) return baseline.error();
-    if (auto st = session.recordBaseline(baseline.value()); !st) return st.error();
+    std::vector<ProbeObservation> bestProbeObservations;
+    std::optional<std::vector<RobustnessResult>> baselineRobustness;
+    if (session.needsRobustness(baseline.value())) {
+        auto probed = probeRobustness(*workflow, lab, tuning, &bestProbeObservations);
+        if (!probed) return probed.error();
+        baselineRobustness = std::move(probed).value();
+    }
+    if (auto st = session.recordBaseline(baseline.value(), std::move(baselineRobustness)); !st) return st.error();
     if (auto st = save(); !st) return st.error();
 
     // ---- 迭代：循环由这里驱动，顾问每一轮只被问一次（D7-2）----
@@ -211,7 +247,7 @@ Result<SessionView> AssistService::run(const AssistRequest& request) {
         const auto roundStarted = Clock::now();
         if (!session.beginRound(secondsSince(started))) break;  // 预算用尽，会话已经结束（A6）
 
-        auto proposal = advisor_.propose(session.advisorView(bestObservations));
+        auto proposal = advisor_.propose(session.advisorView(bestObservations, bestProbeObservations));
         if (!proposal) {
             (void)session.end(EndReason::Failed);  // 顾问出错（例如网络不通）：交出目前最好的候选方案
             break;
@@ -234,11 +270,26 @@ Result<SessionView> AssistService::run(const AssistRequest& request) {
         std::vector<CaseObservation> observations;
         auto evaluation = lab.evaluate(tuning, std::nullopt, &observations);
         if (!evaluation) return evaluation.error();
-        const bool better = golden_.betterThan(toData(evaluation.value()), toData(*session.state().best));
-        auto rollback = session.recordEvaluation(std::move(evaluation).value(), better, secondsSince(roundStarted));
+        // 和目前最好的比：怎么算“更好”由上线管理的评估规则说了算
+        const EvaluationData now = toData(evaluation.value()), best = toData(*session.state().best);
+        const Comparison tuningComparison = golden_.betterThan(now, best)   ? Comparison::Better
+                                            : golden_.betterThan(best, now) ? Comparison::Worse
+                                                                            : Comparison::Equal;
+        // 调参集达标了才值得做稳健性检查（它要把调参集再跑好几遍）
+        std::optional<std::vector<RobustnessResult>> robustness;
+        std::vector<ProbeObservation> probeObservations;
+        if (session.needsRobustness(evaluation.value())) {
+            auto probed = probeRobustness(*workflow, lab, tuning, &probeObservations);
+            if (!probed) return probed.error();
+            robustness = std::move(probed).value();
+        }
+        const std::size_t roundIndex = session.state().rounds.size() - 1;
+        auto rollback = session.recordEvaluation(std::move(evaluation).value(), tuningComparison, std::move(robustness),
+                                                 secondsSince(roundStarted));
         if (!rollback) return rollback.error();
-        if (better) {
+        if (session.state().rounds[roundIndex].decision == RoundDecision::Kept) {
             bestObservations = std::move(observations);
+            bestProbeObservations = std::move(probeObservations);
         } else if (auto st = lab.apply(rollback.value()); !st) {
             return st.error();
         }
@@ -251,17 +302,11 @@ Result<SessionView> AssistService::run(const AssistRequest& request) {
         if (!blind) return blind.error();
         if (auto st = session.recordBlindEvaluation(std::move(blind).value()); !st) return st.error();
     }
-    if (!workflow->probes().empty()) {
-        std::vector<RobustnessResult> results;
-        for (const auto& probe : workflow->probes()) {
-            for (const double level : probe.levels) {
-                auto e = lab.evaluate(tuning, Perturbation{toString(probe.kind), level}, nullptr);
-                if (!e) return e.error();
-                results.push_back({toString(probe.kind), level, e.value().total(), e.value().misses, e.value().falseAlarms,
-                                   e.value().errors, e.value().meetsCriteria});
-            }
-        }
-        if (auto st = session.recordRobustness(std::move(results)); !st) return st.error();
+    // 达标的候选方案在迭代过程中已经做过稳健性检查；没有达标的在这里补做一次，报告里照样要有
+    if (!workflow->probes().empty() && !session.state().bestRobustness) {
+        auto probed = probeRobustness(*workflow, lab, tuning);
+        if (!probed) return probed.error();
+        if (auto st = session.recordRobustness(std::move(probed).value()); !st) return st.error();
     }
     if (auto st = session.generateReport(secondsSince(started)); !st) return st.error();
     if (auto st = save(); !st) return st.error();
