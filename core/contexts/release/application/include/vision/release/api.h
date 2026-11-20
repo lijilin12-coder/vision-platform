@@ -14,6 +14,7 @@
 namespace vision::release {
 
 class ReleaseRepository;  // 领域层的仓储接口，由组装根传入实现
+class GoldenSetRepository;
 
 // ===== 发布语言：上线包清单（docs/ddd/04-context-map.md，BC-4 → BC-5）=====
 // 工位只认上线包，不关心它是怎么组装出来的。
@@ -57,6 +58,77 @@ private:
     const RecipeVersionSource& recipes_;
     EventPublisher& events_;
     mutable std::mutex mutex_;  // 保护仓储：仓储的实现不要求线程安全
+};
+
+// ===================== 基准图集与评估 =====================
+
+struct GoldenCaseView {
+    std::string id;
+    std::string imageRef;
+    bool truthNg = false;  // 人确认的真实判定：是否不合格
+};
+
+struct CriteriaView {
+    int maxMisses = 0;
+    double maxFalseAlarmRate = 0.0;
+    int maxErrors = 0;
+};
+
+// 创建基准图集时提交的内容
+struct GoldenSetDefinition {
+    std::string name;
+    std::vector<GoldenCaseView> cases;
+    CriteriaView criteria;
+};
+
+struct GoldenSetView {
+    std::string id;
+    std::string name;
+    std::vector<GoldenCaseView> cases;
+    CriteriaView criteria;
+};
+
+// 一个用例上的检测结果。verdict 是检测给出的判定："OK"、"NG"，其他一律按 ERROR 处理。
+struct CaseResultView {
+    std::string caseId;
+    std::string verdict;
+    double durationMs = 0;
+};
+
+// 评估结果（docs/ddd/08-platforms-and-training.md §4：这套规则只有一份，三处共用）
+struct EvaluationView {
+    int total = 0;
+    int truthOk = 0;
+    int truthNg = 0;
+    int misses = 0;       // 漏检
+    int falseAlarms = 0;  // 误报
+    int errors = 0;
+    double falseAlarmRate = 0;
+    double meanMs = 0;
+    double maxMs = 0;
+    bool meetsCriteria = false;  // 是否达到这个基准图集的验收标准
+    std::vector<std::string> wrongCaseIds;
+};
+
+class GoldenSetService {
+public:
+    GoldenSetService(GoldenSetRepository& sets, EventPublisher& events);
+
+    // 创建并冻结一个基准图集，返回它的 ID。冻结之后不能修改。
+    Result<std::string> createGoldenSet(const GoldenSetDefinition& definition);
+    Result<GoldenSetView> getGoldenSet(const std::string& goldenSetId) const;
+    std::vector<std::string> listGoldenSets() const;
+
+    // 对照真实判定评估一组检测结果。results 可以只覆盖图集的一部分。
+    Result<EvaluationView> evaluate(const std::string& goldenSetId, const std::vector<CaseResultView>& results) const;
+
+    // a 是否比 b 好：ERROR 少的好，其次漏检少的好，再其次误报少的好。
+    static bool betterThan(const EvaluationView& a, const EvaluationView& b);
+
+private:
+    GoldenSetRepository& sets_;
+    EventPublisher& events_;
+    mutable std::mutex mutex_;
 };
 
 }  // namespace vision::release

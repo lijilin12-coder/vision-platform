@@ -1,0 +1,23 @@
+{
+  "name": "bright-spot-demo",
+  "comment": "给“按脚本出牌的顾问”用的脚本（POC-11）。第 2~4 份提议是故意写错的，用来验证助手的规则挡得住。",
+  "proposals": [
+    { "rationale": "所有图都判成了不合格，可能是背景被当成了亮斑。先把阈值提高一点。",
+      "changes": [ { "kind": "set-param", "node": "bin", "param": "value", "value": 140 } ] },
+
+    { "rationale": "（故意越界）允许最多 5 个亮斑，误报就没有了。",
+      "changes": [ { "kind": "set-param", "node": "judge", "param": "maxCount", "value": 5 } ] },
+
+    { "rationale": "（故意越界）阈值调到 300。",
+      "changes": [ { "kind": "set-param", "node": "bin", "param": "value", "value": 300 } ] },
+
+    { "rationale": "（故意越界）加一个反相节点。",
+      "changes": [ { "kind": "add-node", "node": "invert" } ] },
+
+    { "rationale": "140 没有改善，说明背景比 140 还亮。阈值提高到 195。",
+      "changes": [ { "kind": "set-param", "node": "bin", "param": "value", "value": 195 } ] },
+
+    { "rationale": "还有几张合格的图被误报，连通域都很小，应该是灰尘。把最小面积提高到 30。",
+      "changes": [ { "kind": "set-param", "node": "blobs", "param": "minArea", "value": 30 } ] }
+  ]
+}

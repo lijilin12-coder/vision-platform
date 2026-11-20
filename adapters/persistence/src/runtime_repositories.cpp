@@ -112,4 +112,45 @@ std::optional<station::Station> JsonStationRepository::find(const station::Stati
 
 std::vector<station::StationId> JsonStationRepository::listIds() { return listJsonStems(dir_); }
 
+// ---------- JsonGoldenSetRepository ----------
+
+JsonGoldenSetRepository::JsonGoldenSetRepository(fs::path root) : dir_(std::move(root) / "golden-sets") {}
+
+Status JsonGoldenSetRepository::save(const release::GoldenSet& s) {
+    if (!safeFileName(s.id())) return Status::failure("persistence.bad_id", "基准图集 ID 不能用作文件名：" + s.id());
+    json cases = json::array();
+    for (const auto& c : s.cases()) {
+        cases.push_back({{"id", c.id}, {"image", c.imageRef}, {"truth", c.truth == release::Truth::Ng ? "NG" : "OK"}});
+    }
+    json j = {{"schema", "vision.golden-set/0.1"},
+              {"id", s.id()},
+              {"name", s.name()},
+              {"frozen", s.frozen()},
+              {"criteria", {{"maxMisses", s.criteria().maxMisses},
+                            {"maxFalseAlarmRate", s.criteria().maxFalseAlarmRate},
+                            {"maxErrors", s.criteria().maxErrors}}},
+              {"cases", cases}};
+    return writeFileAtomically(dir_ / (s.id() + ".json"), j.dump(2));
+}
+
+std::optional<release::GoldenSet> JsonGoldenSetRepository::find(const release::GoldenSetId& id) try {
+    if (!safeFileName(id)) return std::nullopt;
+    auto j = readJson(dir_ / (id + ".json"));
+    if (!j) return std::nullopt;
+    std::vector<release::GoldenCase> cases;
+    for (const auto& c : j->at("cases")) {
+        cases.push_back({c.at("id").get<std::string>(), c.at("image").get<std::string>(),
+                         c.at("truth").get<std::string>() == "NG" ? release::Truth::Ng : release::Truth::Ok});
+    }
+    const json& k = j->at("criteria");
+    return release::GoldenSet::restore(j->at("id").get<std::string>(), j->at("name").get<std::string>(), std::move(cases),
+                                       {k.at("maxMisses").get<int>(), k.at("maxFalseAlarmRate").get<double>(),
+                                        k.at("maxErrors").get<int>()},
+                                       j->at("frozen").get<bool>());
+} catch (const std::exception&) {
+    return std::nullopt;  // POC：文件损坏视为不存在
+}
+
+std::vector<release::GoldenSetId> JsonGoldenSetRepository::listIds() { return listJsonStems(dir_); }
+
 }  // namespace vision::persistence

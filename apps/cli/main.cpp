@@ -70,6 +70,17 @@ constexpr const char* kUsage = R"(用法：vision-cli [--data <目录>] <命令>
                                                热启动工位，对图像逐张检测
   station stress <工位ID> <上线包A> <上线包B> <图像或目录> [--count N] [--deploys N] [--rollbacks N]
                                                一边连续检测，一边在两个上线包之间反复部署和回滚，输出测量结果
+方案助手（方案构建平台）
+  workflow import <工作流.json>                 导入一个工作流（示例见 samples/workflows/）
+  workflow list
+  golden sample <输出目录> [--blind-lighting dim|same]
+                                               生成示例基准图集和一份任务书；dim（默认）表示盲测集的光照比调参集暗
+  golden list | golden show <基准图集ID>
+  assist run <任务书.json> --script <顾问脚本.json> [--report <报告.md>]
+                                               按工作流搭出候选方案并自动调参，输出助手报告
+  assist list | assist show <会话ID>
+  assist adopt <会话ID>                         采纳候选方案（只有人可以做这个决定）
+  assist abandon <会话ID>
 工具
   sample-images <输出目录> [宽 高]              生成示例图像（良品与带亮斑缺陷的产品），默认 640×480
   debug crash <segv|abort|throw>                故意让程序崩溃，用来验证崩溃报告和转储文件能否生成
@@ -421,6 +432,9 @@ int main(int argc, char** argv) {
     }
     if (cmd == "release" && need(2)) return runReleaseCommand(app, args);
     if (cmd == "station" && need(2)) return runStationCommand(app, args);
+    if (cmd == "golden" && need(2)) return runGoldenCommand(app, args);
+    if (cmd == "workflow" && need(2)) return runWorkflowCommand(app, args);
+    if (cmd == "assist" && need(2)) return runAssistCommand(app, args);
     if (cmd == "inspect" && need(3)) return cmdInspect(app, args[1], {args.begin() + 2, args.end()});
     if (cmd == "version" && need(3) && args[1] == "show") {
         auto doc = app.authoring.getVersionDocument(args[2]);

@@ -1,10 +1,12 @@
 # 驱动适配器 + 组装根
-add_executable(vision-cli cli/main.cpp cli/station_commands.cpp)
+add_executable(vision-cli cli/main.cpp cli/station_commands.cpp cli/assist_commands.cpp)
 target_link_libraries(vision-cli PRIVATE
   authoring_application
   execution_application
   release_application
   station_application
+  assistant_application
+  vision_assist_adapters
   catalog_application
   vision_operators
   vision_imaging

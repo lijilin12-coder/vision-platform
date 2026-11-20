@@ -113,6 +113,26 @@ jobs:
           $station = Last (& $cli --data $data station create 工位一); Check
           # 这里是调试版本，数字只用来看趋势；检查项（没有丢失、没有用错上线包）才是重点
           & $cli --data $data station stress $station $a $b $images --count 3000 --deploys 12 --rollbacks 3; Check
+      - name: 方案助手（POC-11：按工作流搭出候选方案并自动调参）
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+          function Check { if ($LASTEXITCODE -ne 0) { throw "命令失败，退出码 $LASTEXITCODE" } }
+          $cli = ".\build\apps\vision-cli.exe"
+          $data = "$env:RUNNER_TEMP\助手数据"
+          $golden = "$env:RUNNER_TEMP\基准图集"
+          & $cli --data $data workflow import samples\workflows\bright-spot.json; Check
+          & $cli --data $data golden sample $golden; Check
+          & $cli --data $data assist run "$golden\brief.json" --script samples\assistant\bright-spot.script.json; Check
+          $session = ((& $cli --data $data assist list) | Select-Object -Last 1).Trim(); Check
+          $stored = Get-Content "$data\assist-sessions\$session.json" -Raw -Encoding utf8 | ConvertFrom-Json
+          # 示例里盲测集的光照比调参集暗：调参集上必须达标，越界的提议必须被拒绝，报告必须指出盲测集上变差了
+          if ($stored.endReason -ne "criteria-met") { throw "候选方案没有在调参集上达标" }
+          if ($stored.report.rejected -ne 3) { throw "脚本里 3 份越界的提议没有全部被拒绝" }
+          if (-not $stored.report.overfitSuspected) { throw "报告没有指出候选方案只适应了调参集" }
+          if ($stored.report.blind.misses -lt 1) { throw "盲测集上应该有漏检" }
+          & $cli --data $data assist abandon $session; Check
       - name: 编译并运行教程示例
         shell: cmd
         run: docs\tutorial\cpp\run_all.bat

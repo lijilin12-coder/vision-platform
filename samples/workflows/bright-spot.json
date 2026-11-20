@@ -1,0 +1,29 @@
+{
+  "id": "bright-spot",
+  "version": 1,
+  "name": "亮斑检测",
+  "description": "在较暗的表面上找出亮的斑点：转灰度 → 固定阈值 → 连通域 → 数量判定。一个亮斑都不允许。",
+  "nodes": [
+    { "key": "input", "operator": "vision.image_input" },
+    { "key": "gray",  "operator": "vision.to_gray" },
+    { "key": "bin",   "operator": "vision.threshold", "params": { "method": "fixed", "invert": false } },
+    { "key": "blobs", "operator": "vision.blob" },
+    { "key": "judge", "operator": "vision.judge_count", "params": { "maxCount": 0, "label": "亮斑" } }
+  ],
+  "edges": [
+    ["input.image", "gray.image"],
+    ["gray.image",  "bin.image"],
+    ["bin.region",  "blobs.region"],
+    ["blobs.blobs", "judge.blobs"]
+  ],
+  "tunables": [
+    { "node": "bin", "param": "value", "min": 0, "max": 255, "initial": 100,
+      "hint": "灰度阈值。比它亮的像素算作亮斑。太低会把背景也算进去，太高会漏掉不够亮的斑点。" },
+    { "node": "blobs", "param": "minArea", "min": 1, "max": 2000, "initial": 1,
+      "hint": "最小面积（像素）。比它小的连通域不算亮斑，用来去掉灰尘和噪点。太大会漏掉小的缺陷。" }
+  ],
+  "robustness": [
+    { "kind": "brightness", "levels": [0.8, 0.9, 1.1] },
+    { "kind": "noise", "levels": [10] }
+  ]
+}
