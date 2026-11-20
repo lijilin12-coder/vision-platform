@@ -5,6 +5,7 @@
 #include <nlohmann/json.hpp>
 #include <sstream>
 
+#include "json_files.h"
 #include "vision/common/path.h"
 
 namespace vision::persistence {
@@ -12,6 +13,8 @@ namespace vision::persistence {
 using nlohmann::json;
 namespace fs = std::filesystem;
 using namespace vision::authoring;
+using detail::readJson;
+using detail::writeFileAtomically;
 
 namespace {
 
@@ -175,32 +178,6 @@ std::vector<NamedRegion> regionsFromJson(const json& a) {
         out.push_back(NamedRegion{r.at("id").get<std::string>(), r.at("name").get<std::string>(), roiFromJson(r.at("roi"))});
     }
     return out;
-}
-
-// ---------- 文件 ----------
-
-Status writeFileAtomically(const fs::path& path, const std::string& content) {
-    std::error_code ec;
-    fs::create_directories(path.parent_path(), ec);
-    fs::path tmp = path;
-    tmp += ".tmp";
-    {
-        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
-        if (!out) return Status::failure("persistence.write", "无法写入 " + pathToUtf8(tmp));
-        out << content;
-        if (!out) return Status::failure("persistence.write", "写入失败 " + pathToUtf8(tmp));
-    }
-    fs::rename(tmp, path, ec);  // 先写临时文件再改名，避免写到一半时程序崩溃留下损坏的文件
-    if (ec) return Status::failure("persistence.write", "无法替换 " + pathToUtf8(path) + "：" + ec.message());
-    return Status::success();
-}
-
-std::optional<json> readJson(const fs::path& path) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) return std::nullopt;
-    std::stringstream ss;
-    ss << in.rdbuf();
-    return json::parse(ss.str());
 }
 
 }  // namespace

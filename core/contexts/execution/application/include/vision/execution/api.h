@@ -61,6 +61,10 @@ public:
                                      RunPurpose purpose = RunPurpose::Production);
     Result<DebugReport> debugRun(const authoring::RecipeVersionDocument& recipe, const Image& frame);
 
+    // 预热：提前把方案版本编译成执行计划并缓存起来，之后第一次检测就不用再花这个时间。
+    // 工位在后台加载上线包时调用（规则 P8、事件 G2）。可以和 inspect 在不同的线程里同时调用。
+    Status prepare(const authoring::RecipeVersionDocument& recipe);
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
