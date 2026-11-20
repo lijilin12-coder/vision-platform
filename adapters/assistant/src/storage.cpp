@@ -81,7 +81,10 @@ std::vector<std::string> jsonStems(const fs::path& dir) {
     std::vector<std::string> ids;
     std::error_code ec;
     for (const auto& entry : fs::directory_iterator(dir, ec)) {
-        if (entry.path().extension() == ".json") ids.push_back(pathToUtf8(entry.path().stem()));
+        // “<会话ID>.llm.json”是和大模型的往来记录，不是会话
+        if (entry.path().extension() == ".json" && entry.path().stem().extension().empty()) {
+            ids.push_back(pathToUtf8(entry.path().stem()));
+        }
     }
     std::sort(ids.begin(), ids.end());
     return ids;

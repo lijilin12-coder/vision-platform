@@ -1,3 +1,8 @@
+#include <sstream>
+#include <iomanip>
+#include <functional>
+#include <array>
+#include <algorithm>
 #include <chrono>
 #include <mutex>
 
@@ -105,6 +110,77 @@ std::string describeValue(const Value& v) {
     return std::visit(V{}, v);
 }
 
+namespace {
+
+// 灰度直方图。彩色图像取三个通道的平均值。
+std::array<std::size_t, 256> histogramOf(const Image& image) {
+    std::array<std::size_t, 256> h{};
+    const int channels = image.channels();
+    const std::uint8_t* p = image.data();
+    const std::size_t pixels = static_cast<std::size_t>(image.width()) * image.height();
+    for (std::size_t i = 0; i < pixels; ++i, p += channels) {
+        const int gray = channels == 1 ? p[0] : (p[0] + p[1] + p[2]) / 3;
+        ++h[static_cast<std::size_t>(gray)];
+    }
+    return h;
+}
+
+}  // namespace
+
+std::string describeStatistics(const Value& v) {
+    struct V {
+        std::string operator()(const Image& image) const {
+            if (image.empty()) return {};
+            const auto h = histogramOf(image);
+            const std::size_t total = static_cast<std::size_t>(image.width()) * image.height();
+            // 分位数：例如 p99 = 180 表示 99% 的像素不比 180 亮
+            const auto percentile = [&](double q) {
+                const auto target = static_cast<std::size_t>(q * static_cast<double>(total - 1));
+                std::size_t seen = 0;
+                for (int g = 0; g < 256; ++g) {
+                    seen += h[static_cast<std::size_t>(g)];
+                    if (seen > target) return g;
+                }
+                return 255;
+            };
+            std::ostringstream os;
+            os << "灰度 最小 " << percentile(0) << "，p1 " << percentile(0.01) << "，p50 " << percentile(0.5) << "，p90 "
+               << percentile(0.9) << "，p99 " << percentile(0.99) << "，p99.9 " << percentile(0.999) << "，最大 "
+               << percentile(1.0);
+            return os.str();
+        }
+        std::string operator()(const Region& r) const {
+            const Image& mask = r.mask();
+            if (mask.empty()) return {};
+            const std::size_t total = static_cast<std::size_t>(mask.width()) * mask.height();
+            std::size_t selected = 0;
+            for (std::size_t i = 0; i < total; ++i) selected += mask.data()[i] != 0;
+            std::ostringstream os;
+            os << "选中 " << selected << " 个像素（" << std::fixed << std::setprecision(2)
+               << 100.0 * static_cast<double>(selected) / static_cast<double>(total) << "%）";
+            return os.str();
+        }
+        std::string operator()(const BlobList& blobs) const {
+            if (blobs.empty()) return {};
+            std::vector<double> areas;
+            for (const auto& b : blobs) areas.push_back(b.area);
+            std::sort(areas.begin(), areas.end(), std::greater<>());
+            const std::size_t shown = std::min<std::size_t>(areas.size(), 10);  // 最多列 10 个，其余只给个数
+            std::ostringstream os;
+            os << "面积从大到小";
+            for (std::size_t i = 0; i < shown; ++i) os << " " << areas[i];
+            if (areas.size() > shown) os << " ……（还有 " << areas.size() - shown << " 个更小的，最小 " << areas.back() << "）";
+            return os.str();
+        }
+        std::string operator()(std::monostate) const { return {}; }
+        std::string operator()(double) const { return {}; }
+        std::string operator()(bool) const { return {}; }
+        std::string operator()(const std::string&) const { return {}; }
+        std::string operator()(const Judgement&) const { return {}; }
+    };
+    return std::visit(V{}, v);
+}
+
 struct ExecutionService::Impl {
     const catalog::OperatorCatalog& catalog;
     EventPublisher& events;
@@ -156,8 +232,13 @@ struct ExecutionService::Impl {
         const auto& steps = plan.value()->steps();
         for (size_t i = 0; i < steps.size(); ++i) {
             const auto& e = inspection.nodeExecutions()[i];
-            NodeReport nr{e.nodeId, steps[i].node.signature.id, toString(e.status), e.durationMs, e.message, {}};
-            for (const auto& [port, value] : outputs.value()[e.nodeId]) nr.outputs[port] = describeValue(value);
+            NodeReport nr{e.nodeId, steps[i].node.signature.id, toString(e.status), e.durationMs, e.message, {}, {}};
+            for (const auto& [port, value] : outputs.value()[e.nodeId]) {
+                nr.outputs[port] = describeValue(value);
+                if (purpose == RunPurpose::Debug) {
+                    if (auto stats = describeStatistics(value); !stats.empty()) nr.statistics[port] = std::move(stats);
+                }
+            }
             r.nodes.push_back(std::move(nr));
         }
         r.totalMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();

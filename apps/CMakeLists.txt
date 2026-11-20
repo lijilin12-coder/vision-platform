@@ -7,6 +7,7 @@ target_link_libraries(vision-cli PRIVATE
   station_application
   assistant_application
   vision_assist_adapters
+  vision_llm
   catalog_application
   vision_operators
   vision_imaging

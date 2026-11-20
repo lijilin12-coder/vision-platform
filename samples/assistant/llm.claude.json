@@ -1,0 +1,8 @@
+{
+  "protocol": "anthropic",
+  "baseUrl": "https://api.anthropic.com",
+  "model": "claude-opus-5-5",
+  "apiKeyEnv": "VISION_LLM_API_KEY",
+  "maxTokens": 16000,
+  "timeoutSeconds": 300
+}

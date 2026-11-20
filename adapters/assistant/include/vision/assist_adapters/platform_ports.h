@@ -36,8 +36,12 @@ private:
 // 试运行 → 取候选方案的当前草稿，交给检测引擎调试运行。
 class EngineTrialRunner final : public assistant::TrialRunner {
 public:
-    EngineTrialRunner(const authoring::AuthoringService& authoring, execution::ExecutionService& execution)
-        : authoring_(authoring), execution_(execution) {}
+    // withStatistics：是否把各节点输出的统计信息（灰度分布、连通域面积……）也附在摘要后面。
+    // 顾问看不到图像，这些数字就是它的“眼睛”；关掉它用来做对比实验（POC-12）。
+    EngineTrialRunner(const authoring::AuthoringService& authoring, execution::ExecutionService& execution,
+                      bool withStatistics = true)
+        : authoring_(authoring), execution_(execution), withStatistics_(withStatistics) {}
+    void setWithStatistics(bool on) { withStatistics_ = on; }
     Result<assistant::TrialResult> run(const std::string& recipeId, const std::string& imageRef,
                                        const std::optional<assistant::Perturbation>& perturbation) override;
 
@@ -46,6 +50,7 @@ private:
 
     const authoring::AuthoringService& authoring_;
     execution::ExecutionService& execution_;
+    bool withStatistics_;
     std::map<std::string, Image> images_;  // 同一幅图每一轮都要用，读一次就够了
 };
 

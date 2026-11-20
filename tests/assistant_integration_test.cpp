@@ -5,6 +5,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <nlohmann/json.hpp>
 #include <opencv2/imgproc.hpp>
 #include <set>
 
@@ -19,6 +20,7 @@
 #include "vision/eventbus/in_memory_event_bus.h"
 #include "vision/execution/api.h"
 #include "vision/imaging/cv_bridge.h"
+#include "vision/llm/llm_advisor.h"
 #include "vision/persistence/json_repositories.h"
 #include "vision/persistence/runtime_repositories.h"
 #include "vision/release/api.h"
@@ -523,4 +525,130 @@ TEST(SearchAdvisor, EveryProposalStaysWithinTheDeclaredRange) {
         history.push_back(round(i + 1, "rolled-back"));
     }
     EXPECT_EQ(proposals, 23);  // 8 + 7 + 8：b 的当前值正好在网格上，少试一个。一趟没有改进就结束，不会没完没了
+}
+
+// ---------------- 大模型顾问接进整个闭环（POC-12）。大模型服务是假的：按顺序给出准备好的回复 ----------------
+
+namespace {
+
+class ScriptedLlmService final : public llm::HttpClient {
+public:
+    // 每一项是大模型“说”的话；用完之后表现为断网
+    explicit ScriptedLlmService(std::vector<std::string> says) : says_(std::move(says)) {}
+    Result<llm::HttpResponse> post(const llm::HttpRequest& request) override {
+        bodies.push_back(request.body);
+        if (next_ >= says_.size()) return Result<llm::HttpResponse>::failure("http.unreachable", "模拟：断网");
+        const std::string body = nlohmann::json{
+            {"model", "fake"},
+            {"choices", nlohmann::json::array({{{"finish_reason", "stop"}, {"message", {{"content", says_[next_++]}}}}})}}
+                                     .dump();
+        return llm::HttpResponse{200, body};
+    }
+    std::vector<std::string> bodies;  // 发给“大模型”的全部内容
+
+private:
+    std::vector<std::string> says_;
+    std::size_t next_ = 0;
+};
+
+llm::LlmAdvisor fakeLlmAdvisor(llm::HttpClient& http, llm::ImageLoader images = {}) {
+    llm::LlmConfig config;
+    config.model = "fake";
+    config.maxRetries = 0;
+    return llm::LlmAdvisor(config, llm::makeOpenAiCompatibleProtocol({"https://llm.example", "fake", "KEY", 1000, ""}), http,
+                           std::move(images));
+}
+
+}  // namespace
+
+// 大模型给出不合法的提议、甚至答非所问时，循环继续，不卡死、不崩溃；之后给出好的提议仍然能调到达标
+TEST_F(AssistantIntegration, LlmAdvisor_BadRepliesDoNotBreakTheLoop) {
+    ScriptedLlmService service({
+        R"({"rationale": "放宽标准", "changes": [{"node": "judge", "param": "maxCount", "value": 9}]})",   // 不是可调项
+        "我觉得这个方案挺好的，不用改。",                                                                   // 不是 JSON
+        R"({"rationale": "调大", "changes": [{"node": "bin", "param": "value", "value": 999}]})",          // 超出范围
+        R"({"rationale": "加滤波", "changes": [{"kind": "add-node", "node": "blur"}]})",                   // 改变结构
+        R"({"rationale": "背景最亮约 150，亮斑约 235", "changes": [{"node": "bin", "param": "value", "value": 195},
+                                                              {"node": "blobs", "param": "minArea", "value": 30}]})",
+    });
+    llm::LlmAdvisor advisor = fakeLlmAdvisor(service);
+    AssistService assist(*workflows, *sessions, advisor, *editor, *runner, *goldenCases, bus);
+    auto result = assist.run(makeRequest(1.0));
+    ASSERT_TRUE(result.ok()) << result.error().message;
+    EXPECT_EQ(result.value().endReason, "criteria-met");
+    EXPECT_EQ(result.value().rounds, 5);
+    EXPECT_EQ(result.value().rejected, 4);
+    EXPECT_EQ(result.value().advisor, "llm:openai:fake");
+
+    // 被拒绝的原因在下一轮告诉了大模型
+    EXPECT_NE(service.bodies[1].find("rejected"), std::string::npos);
+}
+
+// 大模型服务中途不可用：会话以“出错”结束，已有的改进和记录都保留
+TEST_F(AssistantIntegration, LlmAdvisor_ServiceOutageEndsSessionAndKeepsTheRecord) {
+    ScriptedLlmService service({R"({"rationale": "先提高阈值", "changes": [{"node": "bin", "param": "value", "value": 195}]})"});
+    llm::LlmAdvisor advisor = fakeLlmAdvisor(service);
+    AssistService assist(*workflows, *sessions, advisor, *editor, *runner, *goldenCases, bus);
+    auto result = assist.run(makeRequest(1.0));
+    ASSERT_TRUE(result.ok()) << result.error().message;
+    EXPECT_EQ(result.value().endReason, "failed");
+    EXPECT_EQ(result.value().kept, 1);
+    EXPECT_EQ(draftParam(result.value().candidateRecipeId, "vision.threshold", "value"), 195);
+
+    auto stored = sessions->find(result.value().sessionId);
+    ASSERT_TRUE(stored.has_value());
+    EXPECT_TRUE(stored->state().report.has_value());  // 报告照样生成
+    // 方案编排不受影响：照常可以编辑别的方案
+    EXPECT_TRUE(authoring->createRecipe("别的方案").ok());
+}
+
+// A3 + A9，用“记下收到的全部内容”的假服务来验证：
+// 默认策略下，发给大模型的内容里没有盲测集的任何用例，没有图像，也没有图像的路径
+TEST_F(AssistantIntegration, LlmAdvisor_NothingForbiddenLeavesTheMachine) {
+    ScriptedLlmService service({
+        R"({"rationale": "a", "changes": [{"node": "bin", "param": "value", "value": 140}]})",
+        R"({"rationale": "b", "changes": [{"node": "bin", "param": "value", "value": 195}]})",
+        R"({"rationale": "c", "changes": [{"node": "blobs", "param": "minArea", "value": 30}]})",
+    });
+    int imagesLoaded = 0;
+    llm::LlmAdvisor advisor = fakeLlmAdvisor(service, [&imagesLoaded](const std::string&, int) -> Result<llm::ChatImage> {
+        ++imagesLoaded;
+        return llm::ChatImage{"image/jpeg", "QUJD", ""};
+    });
+    AssistService assist(*workflows, *sessions, advisor, *editor, *runner, *goldenCases, bus);
+    auto result = assist.run(makeRequest(0.6));  // 默认 dataSharing = no-images
+    ASSERT_TRUE(result.ok()) << result.error().message;
+    ASSERT_EQ(service.bodies.size(), 3u);
+    for (const auto& body : service.bodies) {
+        EXPECT_EQ(body.find("blind_"), std::string::npos);     // 盲测集的用例 ID
+        EXPECT_EQ(body.find(".png"), std::string::npos);       // 图像的路径
+        EXPECT_EQ(body.find("image_url"), std::string::npos);  // 图像本身
+        EXPECT_EQ(body.find("KEY"), std::string::npos);        // 密钥不在请求体里
+        EXPECT_NE(body.find("ok0"), std::string::npos);        // 调参集的用例是有的
+        EXPECT_NE(body.find("p99"), std::string::npos);        // 统计信息是有的：这是大模型的“眼睛”
+    }
+    EXPECT_EQ(imagesLoaded, 0);
+    // 盲测的结果（4 个漏检）只在报告里，从来没有发给大模型
+    EXPECT_TRUE(result.value().overfitSuspected);
+}
+
+// 策略允许时才外发图像，而且只有调参集的
+TEST_F(AssistantIntegration, LlmAdvisor_ThumbnailPolicySendsOnlyTuningImages) {
+    ScriptedLlmService service({R"({"rationale": "够了", "changes": [], "finish": true})"});
+    std::vector<std::pair<std::string, int>> loaded;
+    llm::LlmAdvisor advisor = fakeLlmAdvisor(service, [&loaded](const std::string& ref, int maxSide) -> Result<llm::ChatImage> {
+        loaded.emplace_back(ref, maxSide);
+        return llm::ChatImage{"image/jpeg", "QUJD", ""};
+    });
+    AssistService assist(*workflows, *sessions, advisor, *editor, *runner, *goldenCases, bus);
+    auto request = makeRequest(1.0);
+    request.dataSharing = "thumbnails";
+    ASSERT_TRUE(assist.run(request).ok());
+    ASSERT_FALSE(loaded.empty());
+    EXPECT_LE(loaded.size(), 6u);  // 一轮最多附 6 幅
+    for (const auto& [ref, maxSide] : loaded) {
+        EXPECT_EQ(ref.find("blind_"), std::string::npos) << ref;
+        EXPECT_EQ(maxSide, 256);  // 只发缩略图
+    }
+    EXPECT_NE(service.bodies[0].find("image_url"), std::string::npos);
 }

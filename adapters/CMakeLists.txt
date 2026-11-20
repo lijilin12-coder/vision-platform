@@ -48,3 +48,17 @@ target_include_directories(vision_assist_adapters
 target_link_libraries(vision_assist_adapters
   PUBLIC assistant_domain assistant_application authoring_application execution_application release_application
   PRIVATE vision_imaging nlohmann_json::nlohmann_json)
+
+# 大模型顾问（只有方案构建平台使用）：方案顾问接口的又一个实现。
+#   - 两种对话协议：Anthropic（Claude）、OpenAI 兼容（DeepSeek、通义千问等）
+#   - HTTP 请求通过系统自带的 curl 命令发出，不增加第三方依赖
+add_library(vision_llm STATIC
+  llm/src/http_client.cpp
+  llm/src/chat_protocol.cpp
+  llm/src/llm_advisor.cpp
+  llm/src/image_loader.cpp)
+target_include_directories(vision_llm PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/llm/include)
+target_link_libraries(vision_llm
+  PUBLIC assistant_domain
+  PRIVATE nlohmann_json::nlohmann_json ${OpenCV_LIBS})
+target_include_directories(vision_llm SYSTEM PRIVATE ${OpenCV_INCLUDE_DIRS})
