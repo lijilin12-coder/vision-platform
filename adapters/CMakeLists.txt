@@ -32,3 +32,18 @@ target_link_libraries(vision_crash PUBLIC vision_common)
 if(WIN32)
   target_link_libraries(vision_crash PRIVATE dbghelp)
 endif()
+
+# 方案助手的适配器（只有方案构建平台使用）：
+#   - 把助手的端口接到方案编排、检测执行、上线管理上
+#   - 按脚本出牌的顾问（不需要大模型）
+#   - 工作流和助手会话的 JSON 文件存储
+add_library(vision_assist_adapters STATIC
+  assistant/src/platform_ports.cpp
+  assistant/src/scripted_advisor.cpp
+  assistant/src/storage.cpp)
+target_include_directories(vision_assist_adapters
+  PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/assistant/include
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/persistence/src)
+target_link_libraries(vision_assist_adapters
+  PUBLIC assistant_domain assistant_application authoring_application execution_application release_application
+  PRIVATE vision_imaging nlohmann_json::nlohmann_json)

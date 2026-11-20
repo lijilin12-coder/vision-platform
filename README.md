@@ -8,7 +8,7 @@
 - **界面**：Web（Vue 3），鸿蒙端为原生 ArkUI 外壳加 ArkWeb
 - **模型工具链**：独立的 Linux 服务（Python + Docker）
 
-> 当前阶段：**POC**。已完成：POC-1（核心骨架，[报告](docs/poc/poc-1-report.md)）、POC-9（热切换，[报告](docs/poc/poc-9-report.md)）。
+> 当前阶段：**POC**。已完成：POC-1（核心骨架，[报告](docs/poc/poc-1-report.md)）、POC-9（热切换，[报告](docs/poc/poc-9-report.md)）、POC-11（方案助手的最小闭环，[报告](docs/poc/poc-11-report.md)）。
 
 ## 快速开始
 
@@ -49,6 +49,7 @@ VID=$(./build/apps/vision-cli recipe publish $RID)
 | [docs/06-open-questions.md](docs/06-open-questions.md) | 待决问题 |
 | [docs/poc/poc-1-report.md](docs/poc/poc-1-report.md) | POC-1 结论报告：核心骨架 |
 | [docs/poc/poc-9-report.md](docs/poc/poc-9-report.md) | POC-9 结论报告：热切换 |
+| [docs/poc/poc-11-report.md](docs/poc/poc-11-report.md) | POC-11 结论报告：方案助手的最小闭环（不用大模型） |
 | [docs/dev/build.md](docs/dev/build.md) | 构建与运行 |
 | [docs/dev/how-to-add-operator.md](docs/dev/how-to-add-operator.md) | 如何新增一个算子 |
 | [docs/dev/logging-and-crash-dumps.md](docs/dev/logging-and-crash-dumps.md) | 日志与崩溃转储：文件在哪里、怎么写日志、怎么分析崩溃 |

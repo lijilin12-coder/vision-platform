@@ -7,6 +7,9 @@
 #include <string>
 #include <vector>
 
+#include "vision/assist_adapters/platform_ports.h"
+#include "vision/assist_adapters/storage.h"
+#include "vision/assistant/api.h"
 #include "vision/authoring/api.h"
 #include "vision/catalog/api.h"
 #include "vision/common/log.h"
@@ -45,6 +48,17 @@ struct App {
     AuthoringRecipeSource recipeSource;
     release::ReleaseService releases;
     station::StationService stations;
+
+    // ---- 以下只属于方案构建平台（ADR-28）：基准图集、工作流、方案助手 ----
+    // 现在两个平台还在同一个程序里；分开之后，产线运行平台的组装根里没有这一段。
+    persistence::JsonGoldenSetRepository goldenSetRepository;
+    release::GoldenSetService goldenSets;
+    assist_adapters::JsonWorkflowRepository workflows;
+    assist_adapters::JsonAssistSessionRepository assistSessions;
+    assist_adapters::AuthoringCandidateEditor candidateEditor;
+    assist_adapters::EngineTrialRunner trialRunner;
+    assist_adapters::ReleaseGoldenCases goldenCases;
+
     bool verboseEvents = false;
 
     explicit App(const std::filesystem::path& data)
@@ -56,7 +70,14 @@ struct App {
           execution(catalog::OperatorCatalog::global(), bus),
           recipeSource(authoring),
           releases(releaseRepository, recipeSource, bus),
-          stations(stationRepository, releases, execution, bus) {
+          stations(stationRepository, releases, execution, bus),
+          goldenSetRepository(data),
+          goldenSets(goldenSetRepository, bus),
+          workflows(data),
+          assistSessions(data),
+          candidateEditor(authoring),
+          trialRunner(authoring, execution),
+          goldenCases(goldenSets) {
         bus.subscribe("*", [this](const EventPtr& e) {
             // 每个领域事件都记入日志：事后可以还原“发生过什么”。
             // 每次检测都有一个“检测已完成”，数量很大，记为 debug，平时不输出。
@@ -79,5 +100,10 @@ std::vector<std::filesystem::path> expandImages(const std::vector<std::string>& 
 // release ... 和 station ... 两组命令。args[0] 是 "release" 或 "station"。
 int runReleaseCommand(App& app, const std::vector<std::string>& args);
 int runStationCommand(App& app, const std::vector<std::string>& args);
+
+// golden ...、workflow ...、assist ... 三组命令（方案助手，见 assist_commands.cpp）。
+int runGoldenCommand(App& app, const std::vector<std::string>& args);
+int runWorkflowCommand(App& app, const std::vector<std::string>& args);
+int runAssistCommand(App& app, const std::vector<std::string>& args);
 
 }  // namespace vision::cli

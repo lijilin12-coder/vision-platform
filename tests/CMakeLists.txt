@@ -59,5 +59,30 @@ endforeach()
 add_library(boundary_violation OBJECT EXCLUDE_FROM_ALL boundary/violation.cpp)
 target_link_libraries(boundary_violation PRIVATE authoring_application)
 add_test(NAME boundary_violation_fails_to_compile
-         COMMAND ${CMAKE_COMMAND} -DBUILD_DIR=${CMAKE_BINARY_DIR}
+         COMMAND ${CMAKE_COMMAND} -DBUILD_DIR=${CMAKE_BINARY_DIR} -DTARGET=boundary_violation
+                 -DEXPECT=vision/execution/domain/inspection.h
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/boundary/check_violation.cmake)
+
+# 产线运行平台用到的库（工位运行、上线管理、检测执行）够不着方案助手（ADR-28，POC-11）
+add_library(boundary_runtime_uses_assistant OBJECT EXCLUDE_FROM_ALL boundary/runtime_uses_assistant.cpp)
+target_link_libraries(boundary_runtime_uses_assistant PRIVATE station_application release_application execution_application)
+add_test(NAME boundary_runtime_cannot_use_assistant
+         COMMAND ${CMAKE_COMMAND} -DBUILD_DIR=${CMAKE_BINARY_DIR} -DTARGET=boundary_runtime_uses_assistant
+                 -DEXPECT=vision/assistant/api.h
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/boundary/check_violation.cmake)
+# 两个边界测试都会调用构建工具，不能同时进行
+set_tests_properties(boundary_violation_fails_to_compile boundary_runtime_cannot_use_assistant
+                     PROPERTIES RESOURCE_LOCK boundary_build)
+
+# ---- 方案助手（POC-11）的领域层：只链接领域库，没有 OpenCV，也没有网络 ----
+add_executable(assistant_domain_tests assistant_domain_test.cpp)
+target_link_libraries(assistant_domain_tests PRIVATE assistant_domain GTest::gtest_main)
+gtest_discover_tests(assistant_domain_tests)
+
+# ---- 方案助手的集成测试：真实算子 + 检测引擎 + JSON 文件存储 + 按脚本出牌的顾问 ----
+add_executable(assistant_integration_tests assistant_integration_test.cpp)
+target_link_libraries(assistant_integration_tests PRIVATE
+  vision_assist_adapters assistant_application authoring_application execution_application release_application
+  catalog_application vision_operators vision_imaging vision_eventbus vision_persistence
+  GTest::gtest_main)
+gtest_discover_tests(assistant_integration_tests)

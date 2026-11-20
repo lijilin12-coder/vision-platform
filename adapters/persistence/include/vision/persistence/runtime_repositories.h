@@ -5,6 +5,7 @@
 
 #include <filesystem>
 
+#include "vision/release/domain/golden_set.h"
 #include "vision/release/domain/release.h"
 #include "vision/station/domain/station.h"
 
@@ -29,6 +30,19 @@ public:
     Status save(const station::Station& station) override;
     std::optional<station::Station> find(const station::StationId& id) override;
     std::vector<station::StationId> listIds() override;
+
+private:
+    std::filesystem::path dir_;
+};
+
+// <root>/golden-sets/<goldenSetId>.json
+// 只保存图像的引用（路径），不复制图像文件。
+class JsonGoldenSetRepository final : public release::GoldenSetRepository {
+public:
+    explicit JsonGoldenSetRepository(std::filesystem::path root);
+    Status save(const release::GoldenSet& set) override;
+    std::optional<release::GoldenSet> find(const release::GoldenSetId& id) override;
+    std::vector<release::GoldenSetId> listIds() override;
 
 private:
     std::filesystem::path dir_;
