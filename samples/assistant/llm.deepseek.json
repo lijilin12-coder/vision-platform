@@ -1,0 +1,8 @@
+{
+  "protocol": "openai",
+  "baseUrl": "https://api.deepseek.com",
+  "model": "deepseek-chat",
+  "apiKeyEnv": "VISION_LLM_API_KEY",
+  "maxTokens": 4000,
+  "timeoutSeconds": 120
+}

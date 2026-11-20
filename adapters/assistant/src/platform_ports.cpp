@@ -56,7 +56,13 @@ Result<assistant::TrialResult> EngineTrialRunner::run(const std::string& recipeI
     for (const auto& r : run.value().report.reasons) t.reasons.push_back(r.text);
     for (const auto& n : run.value().report.nodes) {
         if (n.status == "failed") t.reasons.push_back(n.operatorId + " 运行失败：" + n.message);
-        for (const auto& [port, text] : n.outputs) t.outputs[n.nodeId + "." + port] = text;
+        for (const auto& [port, text] : n.outputs) {
+            std::string summary = text;
+            if (withStatistics_) {
+                if (const auto it = n.statistics.find(port); it != n.statistics.end()) summary += "；" + it->second;
+            }
+            t.outputs[n.nodeId + "." + port] = std::move(summary);
+        }
     }
     return t;
 }

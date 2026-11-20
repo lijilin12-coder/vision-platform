@@ -82,7 +82,12 @@ gtest_discover_tests(assistant_domain_tests)
 # ---- 方案助手的集成测试：真实算子 + 检测引擎 + JSON 文件存储 + 按脚本出牌的顾问 ----
 add_executable(assistant_integration_tests assistant_integration_test.cpp)
 target_link_libraries(assistant_integration_tests PRIVATE
-  vision_assist_adapters assistant_application authoring_application execution_application release_application
+  vision_assist_adapters vision_llm assistant_application authoring_application execution_application release_application
   catalog_application vision_operators vision_imaging vision_eventbus vision_persistence
-  GTest::gtest_main)
+  nlohmann_json::nlohmann_json GTest::gtest_main)
 gtest_discover_tests(assistant_integration_tests)
+
+# ---- 大模型顾问（POC-12）：用假的 HTTP 客户端，不访问网络 ----
+add_executable(llm_advisor_tests llm_advisor_test.cpp)
+target_link_libraries(llm_advisor_tests PRIVATE vision_llm nlohmann_json::nlohmann_json GTest::gtest_main)
+gtest_discover_tests(llm_advisor_tests)

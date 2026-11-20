@@ -73,11 +73,15 @@ constexpr const char* kUsage = R"(用法：vision-cli [--data <目录>] <命令>
 方案助手（方案构建平台）
   workflow import <工作流.json>                 导入一个工作流（示例见 samples/workflows/）
   workflow list
-  golden sample <输出目录> [--blind-lighting dim|same]
-                                               生成示例基准图集和一份任务书；dim（默认）表示盲测集的光照比调参集暗
+  golden sample <输出目录> [--blind-lighting dim|same] [--scenario basic|glare]
+                                               生成示例基准图集和一份任务书；dim（默认）表示盲测集的光照比调参集暗；
+                                               glare：图上还有不算缺陷的大面积反光，要多调一个参数（配 bright-spot-glare 工作流）
   golden list | golden show <基准图集ID>
-  assist run <任务书.json> --script <顾问脚本.json> [--report <报告.md>]
-                                               按工作流搭出候选方案并自动调参，输出助手报告
+  assist run <任务书.json> (--advisor search | --script <顾问脚本.json> | --llm <大模型配置.json>)
+                                               [--no-statistics] [--report <报告.md>]
+                                               按工作流搭出候选方案并自动调参，输出助手报告。
+                                               search：自己搜索参数的顾问；--script：照脚本出牌的顾问；
+                                               --llm：大模型顾问（配置示例见 samples/assistant/llm.*.json，密钥放在环境变量里）
   assist list | assist show <会话ID>
   assist adopt <会话ID>                         采纳候选方案（只有人可以做这个决定）
   assist abandon <会话ID>

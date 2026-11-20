@@ -25,6 +25,8 @@ struct NodeReport {
     double durationMs = 0;
     std::string message;
     std::map<std::string, std::string> outputs;  // 端口 → 文字摘要
+    // 端口 → 统计信息（灰度分布、各连通域的面积……）。只有调试运行才计算：它要把图像扫一遍，产线上不值得花这个时间。
+    std::map<std::string, std::string> statistics;
 };
 
 struct ReasonReport {
@@ -72,5 +74,10 @@ private:
 
 // 输出值的文字摘要，例如 "image 640x480"、"blobs 3"。
 std::string describeValue(const Value& value);
+
+// 输出值的统计信息，给“看不到图像”的人或程序判断参数该怎么调：
+//   图像：灰度的最小值、几个分位数、最大值；区域：选中像素的比例；连通域：按面积从大到小列出。
+// 没有可说的（数字、文字等）返回空字符串。
+std::string describeStatistics(const Value& value);
 
 }  // namespace vision::execution

@@ -35,11 +35,12 @@ endif()
 
 # 方案助手的适配器（只有方案构建平台使用）：
 #   - 把助手的端口接到方案编排、检测执行、上线管理上
-#   - 按脚本出牌的顾问（不需要大模型）
+#   - 两个不需要大模型的顾问：按脚本出牌的、网格搜索的
 #   - 工作流和助手会话的 JSON 文件存储
 add_library(vision_assist_adapters STATIC
   assistant/src/platform_ports.cpp
   assistant/src/scripted_advisor.cpp
+  assistant/src/search_advisor.cpp
   assistant/src/storage.cpp)
 target_include_directories(vision_assist_adapters
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/assistant/include
@@ -47,3 +48,17 @@ target_include_directories(vision_assist_adapters
 target_link_libraries(vision_assist_adapters
   PUBLIC assistant_domain assistant_application authoring_application execution_application release_application
   PRIVATE vision_imaging nlohmann_json::nlohmann_json)
+
+# 大模型顾问（只有方案构建平台使用）：方案顾问接口的又一个实现。
+#   - 两种对话协议：Anthropic（Claude）、OpenAI 兼容（DeepSeek、通义千问等）
+#   - HTTP 请求通过系统自带的 curl 命令发出，不增加第三方依赖
+add_library(vision_llm STATIC
+  llm/src/http_client.cpp
+  llm/src/chat_protocol.cpp
+  llm/src/llm_advisor.cpp
+  llm/src/image_loader.cpp)
+target_include_directories(vision_llm PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/llm/include)
+target_link_libraries(vision_llm
+  PUBLIC assistant_domain
+  PRIVATE nlohmann_json::nlohmann_json ${OpenCV_LIBS})
+target_include_directories(vision_llm SYSTEM PRIVATE ${OpenCV_INCLUDE_DIRS})

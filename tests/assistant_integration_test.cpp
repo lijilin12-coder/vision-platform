@@ -5,11 +5,13 @@
 
 #include <filesystem>
 #include <fstream>
+#include <nlohmann/json.hpp>
 #include <opencv2/imgproc.hpp>
 #include <set>
 
 #include "vision/assist_adapters/platform_ports.h"
 #include "vision/assist_adapters/scripted_advisor.h"
+#include "vision/assist_adapters/search_advisor.h"
 #include "vision/assist_adapters/storage.h"
 #include "vision/assistant/api.h"
 #include "vision/authoring/api.h"
@@ -18,6 +20,7 @@
 #include "vision/eventbus/in_memory_event_bus.h"
 #include "vision/execution/api.h"
 #include "vision/imaging/cv_bridge.h"
+#include "vision/llm/llm_advisor.h"
 #include "vision/persistence/json_repositories.h"
 #include "vision/persistence/runtime_repositories.h"
 #include "vision/release/api.h"
@@ -408,4 +411,244 @@ TEST_F(AssistantIntegration, RejectsUnknownWorkflowOrGoldenSet) {
     bad = request;
     bad.dataSharing = "everything";
     EXPECT_FALSE(run(advisor, bad).ok());
+}
+
+// ---------------- 搜索顾问：不用大模型，也没有人告诉它答案 ----------------
+
+// 从同样很差的初始参数出发，搜索顾问自己把候选方案调到达标
+TEST_F(AssistantIntegration, SearchAdvisorFindsParametersByItself) {
+    assist_adapters::SearchAdvisor advisor;
+    AssistService service(*workflows, *sessions, advisor, *editor, *runner, *goldenCases, bus);
+    auto request = makeRequest(1.0);
+    request.maxRounds = 40;
+    auto result = service.run(request);
+    ASSERT_TRUE(result.ok()) << result.error().message;
+    const SessionView& v = result.value();
+
+    EXPECT_EQ(v.endReason, "criteria-met");
+    EXPECT_TRUE(v.tuningMeetsCriteria);
+    ASSERT_TRUE(v.blindMeetsCriteria.has_value());
+    EXPECT_TRUE(*v.blindMeetsCriteria);  // 没有见过的用例上也达标
+    EXPECT_FALSE(v.overfitSuspected);
+    EXPECT_EQ(v.rejected, 0);            // 它的提议全部合法
+    EXPECT_LE(v.rounds, 20);
+    const double threshold = draftParam(v.candidateRecipeId, "vision.threshold", "value");
+    EXPECT_GT(threshold, 150);  // 高于背景
+    EXPECT_LT(threshold, 235);  // 低于亮斑
+    std::cout << "[测量] 搜索顾问用了 " << v.rounds << " 轮（保留 " << v.kept << "），阈值 " << threshold << "，最小面积 "
+              << draftParam(v.candidateRecipeId, "vision.blob", "minArea") << "\n";
+}
+
+namespace {
+
+// 只测搜索顾问自己的逻辑：手工构造助手给它的内容，不运行任何检测
+AdvisorView viewOf(std::vector<TunableState> tunables, std::vector<RoundSummary> history = {}) {
+    AdvisorView v;
+    v.tunables = std::move(tunables);
+    v.history = std::move(history);
+    return v;
+}
+
+TunableState tunable(const std::string& param, double min, double max, double value) {
+    return {{"n", param, min, max, value, ""}, value, value};
+}
+
+RoundSummary round(int index, const std::string& decision) {
+    RoundSummary r;
+    r.index = index;
+    r.outcome = "applied";
+    r.decision = decision;
+    return r;
+}
+
+}  // namespace
+
+TEST(SearchAdvisor, TriesEvenlySpacedValuesAndSkipsTheCurrentBest) {
+    assist_adapters::SearchAdvisor advisor(5, 1);
+    const auto view = viewOf({tunable("p", 0, 100, 50)});
+    std::vector<double> tried;
+    std::vector<RoundSummary> history;
+    for (int i = 0; i < 10; ++i) {
+        auto p = advisor.propose(viewOf(view.tunables, history));
+        ASSERT_TRUE(p.ok());
+        if (p.value().finish) break;
+        ASSERT_EQ(p.value().changes.size(), 1u);
+        tried.push_back(p.value().changes[0].value);
+        history.push_back(round(i + 1, "rolled-back"));
+    }
+    EXPECT_EQ(tried, (std::vector<double>{0, 25, 75, 100}));  // 50 是当前值，已经评估过，不再试
+}
+
+TEST(SearchAdvisor, UsesLogScaleForWideRanges) {
+    assist_adapters::SearchAdvisor advisor(4, 1);
+    auto p = advisor.propose(viewOf({tunable("area", 1, 1000, 1)}));
+    ASSERT_TRUE(p.ok());
+    EXPECT_DOUBLE_EQ(p.value().changes[0].value, 10);  // 1、10、100、1000；1 是当前值
+}
+
+TEST(SearchAdvisor, RefinesAroundTheBestValueAndStopsWhenNothingImproves) {
+    assist_adapters::SearchAdvisor advisor(5, 3);
+    std::vector<RoundSummary> history;
+    std::vector<double> tried;
+    double best = 50;
+    for (int i = 0; i < 40; ++i) {
+        auto p = advisor.propose(viewOf({tunable("p", 0, 100, best)}, history));
+        ASSERT_TRUE(p.ok());
+        if (p.value().finish) break;
+        const double v = p.value().changes[0].value;
+        tried.push_back(v);
+        const bool keep = (v == 75);  // 假装只有 75 比原来好
+        if (keep) best = v;
+        history.push_back(round(i + 1, keep ? "kept" : "rolled-back"));
+    }
+    // 第 1 趟：0、25、75、100；第 2 趟在 75 左右各一格（50～100）里取 5 个点，75 本身不再试；没有改进，结束
+    EXPECT_EQ(tried, (std::vector<double>{0, 25, 75, 100, 50, 62.5, 87.5, 100}));
+}
+
+TEST(SearchAdvisor, EveryProposalStaysWithinTheDeclaredRange) {
+    assist_adapters::SearchAdvisor advisor(8, 3);
+    const std::vector<TunableState> tunables = {tunable("a", 0, 255, 100), tunable("b", 1, 2000, 1), tunable("c", -5, 5, 0)};
+    std::vector<RoundSummary> history;
+    int proposals = 0;
+    for (int i = 0; i < 200; ++i) {
+        auto p = advisor.propose(viewOf(tunables, history));
+        ASSERT_TRUE(p.ok());
+        if (p.value().finish) break;
+        ++proposals;
+        const auto& c = p.value().changes[0];
+        for (const auto& t : tunables) {
+            if (t.tunable.param == c.param) {
+                EXPECT_GE(c.value, t.tunable.min);
+                EXPECT_LE(c.value, t.tunable.max);
+            }
+        }
+        history.push_back(round(i + 1, "rolled-back"));
+    }
+    EXPECT_EQ(proposals, 23);  // 8 + 7 + 8：b 的当前值正好在网格上，少试一个。一趟没有改进就结束，不会没完没了
+}
+
+// ---------------- 大模型顾问接进整个闭环（POC-12）。大模型服务是假的：按顺序给出准备好的回复 ----------------
+
+namespace {
+
+class ScriptedLlmService final : public llm::HttpClient {
+public:
+    // 每一项是大模型“说”的话；用完之后表现为断网
+    explicit ScriptedLlmService(std::vector<std::string> says) : says_(std::move(says)) {}
+    Result<llm::HttpResponse> post(const llm::HttpRequest& request) override {
+        bodies.push_back(request.body);
+        if (next_ >= says_.size()) return Result<llm::HttpResponse>::failure("http.unreachable", "模拟：断网");
+        const std::string body = nlohmann::json{
+            {"model", "fake"},
+            {"choices", nlohmann::json::array({{{"finish_reason", "stop"}, {"message", {{"content", says_[next_++]}}}}})}}
+                                     .dump();
+        return llm::HttpResponse{200, body};
+    }
+    std::vector<std::string> bodies;  // 发给“大模型”的全部内容
+
+private:
+    std::vector<std::string> says_;
+    std::size_t next_ = 0;
+};
+
+llm::LlmAdvisor fakeLlmAdvisor(llm::HttpClient& http, llm::ImageLoader images = {}) {
+    llm::LlmConfig config;
+    config.model = "fake";
+    config.maxRetries = 0;
+    return llm::LlmAdvisor(config, llm::makeOpenAiCompatibleProtocol({"https://llm.example", "fake", "KEY", 1000, ""}), http,
+                           std::move(images));
+}
+
+}  // namespace
+
+// 大模型给出不合法的提议、甚至答非所问时，循环继续，不卡死、不崩溃；之后给出好的提议仍然能调到达标
+TEST_F(AssistantIntegration, LlmAdvisor_BadRepliesDoNotBreakTheLoop) {
+    ScriptedLlmService service({
+        R"({"rationale": "放宽标准", "changes": [{"node": "judge", "param": "maxCount", "value": 9}]})",   // 不是可调项
+        "我觉得这个方案挺好的，不用改。",                                                                   // 不是 JSON
+        R"({"rationale": "调大", "changes": [{"node": "bin", "param": "value", "value": 999}]})",          // 超出范围
+        R"({"rationale": "加滤波", "changes": [{"kind": "add-node", "node": "blur"}]})",                   // 改变结构
+        R"({"rationale": "背景最亮约 150，亮斑约 235", "changes": [{"node": "bin", "param": "value", "value": 195},
+                                                              {"node": "blobs", "param": "minArea", "value": 30}]})",
+    });
+    llm::LlmAdvisor advisor = fakeLlmAdvisor(service);
+    AssistService assist(*workflows, *sessions, advisor, *editor, *runner, *goldenCases, bus);
+    auto result = assist.run(makeRequest(1.0));
+    ASSERT_TRUE(result.ok()) << result.error().message;
+    EXPECT_EQ(result.value().endReason, "criteria-met");
+    EXPECT_EQ(result.value().rounds, 5);
+    EXPECT_EQ(result.value().rejected, 4);
+    EXPECT_EQ(result.value().advisor, "llm:openai:fake");
+
+    // 被拒绝的原因在下一轮告诉了大模型
+    EXPECT_NE(service.bodies[1].find("rejected"), std::string::npos);
+}
+
+// 大模型服务中途不可用：会话以“出错”结束，已有的改进和记录都保留
+TEST_F(AssistantIntegration, LlmAdvisor_ServiceOutageEndsSessionAndKeepsTheRecord) {
+    ScriptedLlmService service({R"({"rationale": "先提高阈值", "changes": [{"node": "bin", "param": "value", "value": 195}]})"});
+    llm::LlmAdvisor advisor = fakeLlmAdvisor(service);
+    AssistService assist(*workflows, *sessions, advisor, *editor, *runner, *goldenCases, bus);
+    auto result = assist.run(makeRequest(1.0));
+    ASSERT_TRUE(result.ok()) << result.error().message;
+    EXPECT_EQ(result.value().endReason, "failed");
+    EXPECT_EQ(result.value().kept, 1);
+    EXPECT_EQ(draftParam(result.value().candidateRecipeId, "vision.threshold", "value"), 195);
+
+    auto stored = sessions->find(result.value().sessionId);
+    ASSERT_TRUE(stored.has_value());
+    EXPECT_TRUE(stored->state().report.has_value());  // 报告照样生成
+    // 方案编排不受影响：照常可以编辑别的方案
+    EXPECT_TRUE(authoring->createRecipe("别的方案").ok());
+}
+
+// A3 + A9，用“记下收到的全部内容”的假服务来验证：
+// 默认策略下，发给大模型的内容里没有盲测集的任何用例，没有图像，也没有图像的路径
+TEST_F(AssistantIntegration, LlmAdvisor_NothingForbiddenLeavesTheMachine) {
+    ScriptedLlmService service({
+        R"({"rationale": "a", "changes": [{"node": "bin", "param": "value", "value": 140}]})",
+        R"({"rationale": "b", "changes": [{"node": "bin", "param": "value", "value": 195}]})",
+        R"({"rationale": "c", "changes": [{"node": "blobs", "param": "minArea", "value": 30}]})",
+    });
+    int imagesLoaded = 0;
+    llm::LlmAdvisor advisor = fakeLlmAdvisor(service, [&imagesLoaded](const std::string&, int) -> Result<llm::ChatImage> {
+        ++imagesLoaded;
+        return llm::ChatImage{"image/jpeg", "QUJD", ""};
+    });
+    AssistService assist(*workflows, *sessions, advisor, *editor, *runner, *goldenCases, bus);
+    auto result = assist.run(makeRequest(0.6));  // 默认 dataSharing = no-images
+    ASSERT_TRUE(result.ok()) << result.error().message;
+    ASSERT_EQ(service.bodies.size(), 3u);
+    for (const auto& body : service.bodies) {
+        EXPECT_EQ(body.find("blind_"), std::string::npos);     // 盲测集的用例 ID
+        EXPECT_EQ(body.find(".png"), std::string::npos);       // 图像的路径
+        EXPECT_EQ(body.find("image_url"), std::string::npos);  // 图像本身
+        EXPECT_EQ(body.find("KEY"), std::string::npos);        // 密钥不在请求体里
+        EXPECT_NE(body.find("ok0"), std::string::npos);        // 调参集的用例是有的
+        EXPECT_NE(body.find("p99"), std::string::npos);        // 统计信息是有的：这是大模型的“眼睛”
+    }
+    EXPECT_EQ(imagesLoaded, 0);
+    // 盲测的结果（4 个漏检）只在报告里，从来没有发给大模型
+    EXPECT_TRUE(result.value().overfitSuspected);
+}
+
+// 策略允许时才外发图像，而且只有调参集的
+TEST_F(AssistantIntegration, LlmAdvisor_ThumbnailPolicySendsOnlyTuningImages) {
+    ScriptedLlmService service({R"({"rationale": "够了", "changes": [], "finish": true})"});
+    std::vector<std::pair<std::string, int>> loaded;
+    llm::LlmAdvisor advisor = fakeLlmAdvisor(service, [&loaded](const std::string& ref, int maxSide) -> Result<llm::ChatImage> {
+        loaded.emplace_back(ref, maxSide);
+        return llm::ChatImage{"image/jpeg", "QUJD", ""};
+    });
+    AssistService assist(*workflows, *sessions, advisor, *editor, *runner, *goldenCases, bus);
+    auto request = makeRequest(1.0);
+    request.dataSharing = "thumbnails";
+    ASSERT_TRUE(assist.run(request).ok());
+    ASSERT_FALSE(loaded.empty());
+    EXPECT_LE(loaded.size(), 6u);  // 一轮最多附 6 幅
+    for (const auto& [ref, maxSide] : loaded) {
+        EXPECT_EQ(ref.find("blind_"), std::string::npos) << ref;
+        EXPECT_EQ(maxSide, 256);  // 只发缩略图
+    }
+    EXPECT_NE(service.bodies[0].find("image_url"), std::string::npos);
 }
