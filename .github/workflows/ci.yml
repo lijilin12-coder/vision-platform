@@ -133,6 +133,12 @@ jobs:
           if (-not $stored.report.overfitSuspected) { throw "报告没有指出候选方案只适应了调参集" }
           if ($stored.report.blind.misses -lt 1) { throw "盲测集上应该有漏检" }
           & $cli --data $data assist abandon $session; Check
+          # 搜索顾问：没有人告诉它答案，它必须自己把调参集调到达标
+          & $cli --data $data assist run "$golden\brief.json" --advisor search; Check
+          $latest = Get-ChildItem "$data\assist-sessions" -Filter *.json | Sort-Object LastWriteTime | Select-Object -Last 1
+          $found = Get-Content $latest.FullName -Raw -Encoding utf8 | ConvertFrom-Json
+          if ($found.advisor -notlike "search:*") { throw "最新的会话不是搜索顾问的" }
+          if ($found.endReason -ne "criteria-met") { throw "搜索顾问没有把候选方案调到达标" }
       - name: 编译并运行教程示例
         shell: cmd
         run: docs\tutorial\cpp\run_all.bat

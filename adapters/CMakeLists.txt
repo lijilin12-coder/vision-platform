@@ -35,11 +35,12 @@ endif()
 
 # 方案助手的适配器（只有方案构建平台使用）：
 #   - 把助手的端口接到方案编排、检测执行、上线管理上
-#   - 按脚本出牌的顾问（不需要大模型）
+#   - 两个不需要大模型的顾问：按脚本出牌的、网格搜索的
 #   - 工作流和助手会话的 JSON 文件存储
 add_library(vision_assist_adapters STATIC
   assistant/src/platform_ports.cpp
   assistant/src/scripted_advisor.cpp
+  assistant/src/search_advisor.cpp
   assistant/src/storage.cpp)
 target_include_directories(vision_assist_adapters
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/assistant/include

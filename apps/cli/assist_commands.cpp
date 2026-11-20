@@ -2,12 +2,14 @@
 // 这三组命令属于方案构建平台；产线运行平台的程序里不会有它们。
 
 #include <fstream>
+#include <memory>
 #include <nlohmann/json.hpp>
 #include <opencv2/imgproc.hpp>
 #include <sstream>
 
 #include "cli_app.h"
 #include "vision/assist_adapters/scripted_advisor.h"
+#include "vision/assist_adapters/search_advisor.h"
 #include "vision/common/path.h"
 #include "vision/imaging/cv_bridge.h"
 
@@ -148,27 +150,37 @@ void printSummary(const assistant::SessionView& v) {
 }
 
 int cmdAssistRun(App& app, const std::vector<std::string>& args) {
-    std::string briefFile, scriptFile, reportFile;
+    std::string briefFile, scriptFile, reportFile, advisorKind;
     for (std::size_t i = 2; i < args.size(); ++i) {
         if (args[i] == "--script" && i + 1 < args.size()) scriptFile = args[++i];
+        else if (args[i] == "--advisor" && i + 1 < args.size()) advisorKind = args[++i];
         else if (args[i] == "--report" && i + 1 < args.size()) reportFile = args[++i];
         else briefFile = args[i];
     }
-    if (briefFile.empty() || scriptFile.empty()) {
-        std::cerr << "用法：assist run <任务书.json> --script <顾问脚本.json> [--report <报告.md>]\n";
+    if (advisorKind.empty() && !scriptFile.empty()) advisorKind = "script";
+    if (briefFile.empty() || (advisorKind != "search" && advisorKind != "script") || (advisorKind == "script" && scriptFile.empty())) {
+        std::cerr << "用法：assist run <任务书.json> (--advisor search | --script <顾问脚本.json>) [--report <报告.md>]\n";
         return 1;
     }
     auto briefText = readText(briefFile);
     if (!briefText) return fail(briefText.error());
     auto request = parseBrief(briefText.value());
     if (!request) return fail(request.error());
-    auto scriptText = readText(scriptFile);
-    if (!scriptText) return fail(scriptText.error());
-    // 现在只有“按脚本出牌的顾问”。大模型顾问是同一个接口的另一个实现（POC-12），换它只需要改这一处。
-    auto advisor = assist_adapters::ScriptedAdvisor::fromJson(scriptText.value());
-    if (!advisor) return fail(advisor.error());
 
-    assistant::AssistService service(app.workflows, app.assistSessions, advisor.value(), app.candidateEditor, app.trialRunner,
+    // 选一个顾问。它们都是 RecipeAdvisor 的实现，助手的其余部分不知道也不关心用的是哪一个；
+    // 大模型顾问（POC-12）会是这里的第三个分支。
+    std::unique_ptr<assistant::RecipeAdvisor> advisor;
+    if (advisorKind == "search") {
+        advisor = std::make_unique<assist_adapters::SearchAdvisor>();
+    } else {
+        auto scriptText = readText(scriptFile);
+        if (!scriptText) return fail(scriptText.error());
+        auto scripted = assist_adapters::ScriptedAdvisor::fromJson(scriptText.value());
+        if (!scripted) return fail(scripted.error());
+        advisor = std::make_unique<assist_adapters::ScriptedAdvisor>(std::move(scripted).value());
+    }
+
+    assistant::AssistService service(app.workflows, app.assistSessions, *advisor, app.candidateEditor, app.trialRunner,
                                      app.goldenCases, app.bus);
     auto view = service.run(request.value());
     if (!view) return fail(view.error());

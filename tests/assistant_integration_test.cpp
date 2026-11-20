@@ -10,6 +10,7 @@
 
 #include "vision/assist_adapters/platform_ports.h"
 #include "vision/assist_adapters/scripted_advisor.h"
+#include "vision/assist_adapters/search_advisor.h"
 #include "vision/assist_adapters/storage.h"
 #include "vision/assistant/api.h"
 #include "vision/authoring/api.h"
@@ -408,4 +409,118 @@ TEST_F(AssistantIntegration, RejectsUnknownWorkflowOrGoldenSet) {
     bad = request;
     bad.dataSharing = "everything";
     EXPECT_FALSE(run(advisor, bad).ok());
+}
+
+// ---------------- 搜索顾问：不用大模型，也没有人告诉它答案 ----------------
+
+// 从同样很差的初始参数出发，搜索顾问自己把候选方案调到达标
+TEST_F(AssistantIntegration, SearchAdvisorFindsParametersByItself) {
+    assist_adapters::SearchAdvisor advisor;
+    AssistService service(*workflows, *sessions, advisor, *editor, *runner, *goldenCases, bus);
+    auto request = makeRequest(1.0);
+    request.maxRounds = 40;
+    auto result = service.run(request);
+    ASSERT_TRUE(result.ok()) << result.error().message;
+    const SessionView& v = result.value();
+
+    EXPECT_EQ(v.endReason, "criteria-met");
+    EXPECT_TRUE(v.tuningMeetsCriteria);
+    ASSERT_TRUE(v.blindMeetsCriteria.has_value());
+    EXPECT_TRUE(*v.blindMeetsCriteria);  // 没有见过的用例上也达标
+    EXPECT_FALSE(v.overfitSuspected);
+    EXPECT_EQ(v.rejected, 0);            // 它的提议全部合法
+    EXPECT_LE(v.rounds, 20);
+    const double threshold = draftParam(v.candidateRecipeId, "vision.threshold", "value");
+    EXPECT_GT(threshold, 150);  // 高于背景
+    EXPECT_LT(threshold, 235);  // 低于亮斑
+    std::cout << "[测量] 搜索顾问用了 " << v.rounds << " 轮（保留 " << v.kept << "），阈值 " << threshold << "，最小面积 "
+              << draftParam(v.candidateRecipeId, "vision.blob", "minArea") << "\n";
+}
+
+namespace {
+
+// 只测搜索顾问自己的逻辑：手工构造助手给它的内容，不运行任何检测
+AdvisorView viewOf(std::vector<TunableState> tunables, std::vector<RoundSummary> history = {}) {
+    AdvisorView v;
+    v.tunables = std::move(tunables);
+    v.history = std::move(history);
+    return v;
+}
+
+TunableState tunable(const std::string& param, double min, double max, double value) {
+    return {{"n", param, min, max, value, ""}, value, value};
+}
+
+RoundSummary round(int index, const std::string& decision) {
+    RoundSummary r;
+    r.index = index;
+    r.outcome = "applied";
+    r.decision = decision;
+    return r;
+}
+
+}  // namespace
+
+TEST(SearchAdvisor, TriesEvenlySpacedValuesAndSkipsTheCurrentBest) {
+    assist_adapters::SearchAdvisor advisor(5, 1);
+    const auto view = viewOf({tunable("p", 0, 100, 50)});
+    std::vector<double> tried;
+    std::vector<RoundSummary> history;
+    for (int i = 0; i < 10; ++i) {
+        auto p = advisor.propose(viewOf(view.tunables, history));
+        ASSERT_TRUE(p.ok());
+        if (p.value().finish) break;
+        ASSERT_EQ(p.value().changes.size(), 1u);
+        tried.push_back(p.value().changes[0].value);
+        history.push_back(round(i + 1, "rolled-back"));
+    }
+    EXPECT_EQ(tried, (std::vector<double>{0, 25, 75, 100}));  // 50 是当前值，已经评估过，不再试
+}
+
+TEST(SearchAdvisor, UsesLogScaleForWideRanges) {
+    assist_adapters::SearchAdvisor advisor(4, 1);
+    auto p = advisor.propose(viewOf({tunable("area", 1, 1000, 1)}));
+    ASSERT_TRUE(p.ok());
+    EXPECT_DOUBLE_EQ(p.value().changes[0].value, 10);  // 1、10、100、1000；1 是当前值
+}
+
+TEST(SearchAdvisor, RefinesAroundTheBestValueAndStopsWhenNothingImproves) {
+    assist_adapters::SearchAdvisor advisor(5, 3);
+    std::vector<RoundSummary> history;
+    std::vector<double> tried;
+    double best = 50;
+    for (int i = 0; i < 40; ++i) {
+        auto p = advisor.propose(viewOf({tunable("p", 0, 100, best)}, history));
+        ASSERT_TRUE(p.ok());
+        if (p.value().finish) break;
+        const double v = p.value().changes[0].value;
+        tried.push_back(v);
+        const bool keep = (v == 75);  // 假装只有 75 比原来好
+        if (keep) best = v;
+        history.push_back(round(i + 1, keep ? "kept" : "rolled-back"));
+    }
+    // 第 1 趟：0、25、75、100；第 2 趟在 75 左右各一格（50～100）里取 5 个点，75 本身不再试；没有改进，结束
+    EXPECT_EQ(tried, (std::vector<double>{0, 25, 75, 100, 50, 62.5, 87.5, 100}));
+}
+
+TEST(SearchAdvisor, EveryProposalStaysWithinTheDeclaredRange) {
+    assist_adapters::SearchAdvisor advisor(8, 3);
+    const std::vector<TunableState> tunables = {tunable("a", 0, 255, 100), tunable("b", 1, 2000, 1), tunable("c", -5, 5, 0)};
+    std::vector<RoundSummary> history;
+    int proposals = 0;
+    for (int i = 0; i < 200; ++i) {
+        auto p = advisor.propose(viewOf(tunables, history));
+        ASSERT_TRUE(p.ok());
+        if (p.value().finish) break;
+        ++proposals;
+        const auto& c = p.value().changes[0];
+        for (const auto& t : tunables) {
+            if (t.tunable.param == c.param) {
+                EXPECT_GE(c.value, t.tunable.min);
+                EXPECT_LE(c.value, t.tunable.max);
+            }
+        }
+        history.push_back(round(i + 1, "rolled-back"));
+    }
+    EXPECT_EQ(proposals, 23);  // 8 + 7 + 8：b 的当前值正好在网格上，少试一个。一趟没有改进就结束，不会没完没了
 }
