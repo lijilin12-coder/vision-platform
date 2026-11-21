@@ -738,3 +738,65 @@ TEST_F(AssistantIntegration, Hardening_LlmAdvisorIsToldThePhaseAndWhatFails) {
     EXPECT_EQ(service.bodies[1].find(".png"), std::string::npos);
     EXPECT_EQ(result.value().endReason, "criteria-met");
 }
+
+// ---------------- 示例工作流 ----------------
+
+// samples/workflows/ 下的每一个工作流都必须能导入、能搭出候选方案、能在图像上跑起来。
+// （工作流里写错了算子名、端口名、参数名或者参数越界，会在这里暴露。）
+TEST_F(AssistantIntegration, EverySampleWorkflowBuildsAndRuns) {
+    int count = 0;
+    for (const auto& entry : fs::directory_iterator(fs::path(VISION_SOURCE_DIR) / "samples" / "workflows")) {
+        if (entry.path().extension() != ".json") continue;
+        ++count;
+        auto id = workflows->importFile(entry.path());
+        ASSERT_TRUE(id.ok()) << entry.path() << "：" << id.error().message;
+
+        ScriptedAdvisor advisor("scripted:none", {});  // 不提任何修改：只检查工作流本身
+        auto request = makeRequest(1.0);
+        request.workflowId = id.value();
+        auto result = run(advisor, request);
+        ASSERT_TRUE(result.ok()) << id.value() << "：" << result.error().message;
+
+        auto stored = sessions->find(result.value().sessionId);
+        ASSERT_TRUE(stored.has_value());
+        EXPECT_EQ(stored->state().baseline->errors, 0) << id.value() << "：有用例运行出错";
+        // 候选方案是一份合法的、可以发布的方案（有判定依据、没有悬空的输入）
+        EXPECT_TRUE(authoring->publish(result.value().candidateRecipeId).ok()) << id.value();
+    }
+    EXPECT_GE(count, 4);
+}
+
+// 宽度测量：卡尺 + 范围判定走完整个引擎，判定依据是操作员看得懂的话
+TEST_F(AssistantIntegration, WidthMeasurementRecipeEndToEnd) {
+    const auto recipe = authoring->createRecipe("宽度").value();
+    const auto input = authoring->addNode(recipe, "vision.image_input").value();
+    const auto toGray = authoring->addNode(recipe, "vision.to_gray").value();
+    const auto caliper = authoring->addNode(recipe, "vision.caliper_width").value();
+    const auto judge = authoring->addNode(recipe, "vision.judge_range").value();
+    ASSERT_TRUE(authoring->connect(recipe, input + ".image", toGray + ".image").ok());
+    ASSERT_TRUE(authoring->connect(recipe, toGray + ".image", caliper + ".image").ok());
+    ASSERT_TRUE(authoring->connect(recipe, caliper + ".width", judge + ".value").ok());
+    ASSERT_TRUE(authoring->setParam(recipe, judge, "min", 95.0).ok());
+    ASSERT_TRUE(authoring->setParam(recipe, judge, "max", 105.0).ok());
+    ASSERT_TRUE(authoring->setParam(recipe, judge, "label", std::string("宽度")).ok());
+    // 连线的类型检查仍然有效：数值不能接到要图像的端口上
+    EXPECT_FALSE(authoring->connect(recipe, caliper + ".width", toGray + ".image").ok());
+    const auto version = authoring->publish(recipe);
+    ASSERT_TRUE(version.ok()) << version.error().message;
+    const auto doc = authoring->getVersionDocument(version.value()).value();
+
+    const auto part = [](int width) {
+        cv::Mat m(120, 300, CV_8UC3, cv::Scalar(150, 150, 150));
+        cv::rectangle(m, cv::Rect(80, 20, width, 80), cv::Scalar(70, 70, 70), cv::FILLED);
+        return imaging::fromMat(m).value();
+    };
+    const auto good = execution->inspect(doc, part(100)).value();
+    EXPECT_EQ(good.verdict, "OK");
+    ASSERT_EQ(good.reasons.size(), 1u);
+    EXPECT_EQ(good.reasons[0].text, "宽度 100，允许 95 ~ 105");
+    EXPECT_EQ(execution->inspect(doc, part(110)).value().verdict, "NG");
+    // 画面里没有零件：量不到宽度，判不合格而不是出错
+    cv::Mat empty(120, 300, CV_8UC3, cv::Scalar(150, 150, 150));
+    const auto none = execution->inspect(doc, imaging::fromMat(empty).value()).value();
+    EXPECT_EQ(none.verdict, "NG");
+}

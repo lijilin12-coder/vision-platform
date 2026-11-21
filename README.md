@@ -53,6 +53,7 @@ VID=$(./build/apps/vision-cli recipe publish $RID)
 | [docs/poc/poc-12-report.md](docs/poc/poc-12-report.md) | POC-12 结论报告：大模型顾问（DeepSeek 实测） |
 | [docs/poc/hardening-report.md](docs/poc/hardening-report.md) | 方案助手的加固阶段：解决“达标的参数贴着边界” |
 | [docs/dev/build.md](docs/dev/build.md) | 构建与运行 |
+| [docs/dev/operators.md](docs/dev/operators.md) | 算子一览：15 个算子各自解决什么问题、怎么搭配 |
 | [docs/dev/how-to-add-operator.md](docs/dev/how-to-add-operator.md) | 如何新增一个算子 |
 | [docs/dev/logging-and-crash-dumps.md](docs/dev/logging-and-crash-dumps.md) | 日志与崩溃转储：文件在哪里、怎么写日志、怎么分析崩溃 |
 | [docs/tutorial/cpp/](docs/tutorial/cpp/README.md) | 现代工程 C++ 教程（从竞赛写法到工程写法） |

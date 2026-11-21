@@ -60,11 +60,37 @@ cv::Mat drawSample(int spots, bool dust, double lighting, unsigned seed, bool gl
     return m;
 }
 
-int cmdGoldenSample(App& app, const std::string& dir, const std::string& blindLighting, const std::string& scenario) {
-    if (scenario != "basic" && scenario != "glare") {
-        std::cerr << "--scenario 只能是 basic 或 glare\n";
+// 宽度测量的示例图像：浅灰背景（约 150）上一块深色零件（约 75），宽度是 width 像素（名义值 400）。
+// scratch 为真时背景上有一条竖直的浅划痕（比背景暗 15）：它不是零件的边缘，量宽度时必须忽略。
+cv::Mat drawWidthSample(double width, bool scratch, double lighting, unsigned seed) {
+    cv::RNG rng(seed);
+    cv::Mat m(480, 640, CV_8UC3, cv::Scalar(150, 150, 150));
+    if (scratch) cv::rectangle(m, cv::Rect(rng.uniform(20, 60), 0, 3, 480), cv::Scalar(135, 135, 135), cv::FILLED);
+    // 零件的左右边缘可以落在像素中间：边缘上的那一列按被盖住的比例取灰度
+    const double left = 320.0 - width / 2 + rng.uniform(-10.0, 10.0), right = left + width;
+    for (int x = 0; x < m.cols; ++x) {
+        const double covered = std::max(0.0, std::min(x + 1.0, right) - std::max<double>(x, left));
+        if (covered <= 0) continue;
+        const double g = 150 - 75 * covered;
+        cv::rectangle(m, cv::Rect(x, 90, 1, 300), cv::Scalar(g, g, g), cv::FILLED);
+    }
+    m.convertTo(m, -1, lighting, 0);
+    cv::Mat noise(m.size(), CV_16SC3);
+    rng.fill(noise, cv::RNG::NORMAL, 0.0, 4.0);
+    cv::Mat wide;
+    m.convertTo(wide, CV_16S);
+    wide += noise;
+    wide.convertTo(m, CV_8U);
+    return m;
+}
+
+int cmdGoldenSample(App& app, const std::string& dir, const std::string& blindLighting, const std::string& scenario,
+                    const std::string& workflowOverride) {
+    if (scenario != "basic" && scenario != "glare" && scenario != "width") {
+        std::cerr << "--scenario 只能是 basic、glare 或 width\n";
         return 1;
     }
+    const bool widthScenario = scenario == "width";
     const bool withGlare = scenario == "glare";
     if (blindLighting != "dim" && blindLighting != "same") {
         std::cerr << "--blind-lighting 只能是 dim 或 same\n";
@@ -74,7 +100,7 @@ int cmdGoldenSample(App& app, const std::string& dir, const std::string& blindLi
     fs::create_directories(outDir);
 
     release::GoldenSetDefinition def;
-    def.name = blindLighting == "dim" ? "亮斑示例（盲测集的光照更暗）" : "亮斑示例";
+    def.name = std::string(widthScenario ? "宽度示例" : "亮斑示例") + (blindLighting == "dim" ? "（盲测集的光照更暗）" : "");
     def.criteria = {0, 0.0, 0};  // 不允许漏检、误报、出错
     std::vector<std::string> blind;
     unsigned seed = 100;
@@ -82,7 +108,17 @@ int cmdGoldenSample(App& app, const std::string& dir, const std::string& blindLi
     const auto add = [&](const std::string& id, int spots, bool dust, double lighting) -> Status {
         // 反光场景：大约三分之二的图上有反光，合格和不合格的图上都有
         const bool glare = withGlare && (index++ % 3 != 2);
-        auto image = imaging::fromMat(drawSample(spots, dust, lighting, ++seed, glare));
+        cv::Mat drawn;
+        if (widthScenario) {
+            // 宽度场景借用同样的参数：spots > 0 表示不合格（宽度超出 395～405），dust 表示有划痕
+            static const double okWidths[] = {400.0, 397.3, 402.6, 396.2, 403.8, 399.1, 401.4, 398.5};
+            static const double ngWidths[] = {388.0, 412.5, 391.2, 409.4, 385.6, 414.0, 392.3, 408.7};
+            const double width = (spots > 0 ? ngWidths : okWidths)[seed % 8];
+            drawn = drawWidthSample(width, dust, lighting, ++seed);
+        } else {
+            drawn = drawSample(spots, dust, lighting, ++seed, glare);
+        }
+        auto image = imaging::fromMat(drawn);
         if (!image) return image.error();
         const std::string file = pathToUtf8(outDir / (id + ".png"));
         if (auto st = imaging::saveImage(file, image.value()); !st) return st;
@@ -110,10 +146,15 @@ int cmdGoldenSample(App& app, const std::string& dir, const std::string& blindLi
     if (!id) return fail(id.error());
 
     // 顺手写一份任务书，方便直接试
-    const json brief = {{"goal", withGlare ? "检出零件表面的亮斑，一个都不允许；灰尘和大面积的反光不算缺陷"
-                                           : "检出零件表面的亮斑，一个都不允许；灰尘不算缺陷"},
+    const std::string workflow = !workflowOverride.empty() ? workflowOverride
+                                 : widthScenario           ? "width-measure"
+                                 : withGlare               ? "bright-spot-glare"
+                                                           : "bright-spot";
+    const json brief = {{"goal", widthScenario ? "测量零件的宽度，395 到 405 像素之间为合格；背景上的划痕不是零件的边缘"
+                                 : withGlare   ? "检出零件表面的亮斑，一个都不允许；灰尘和大面积的反光不算缺陷"
+                                               : "检出零件表面的亮斑，一个都不允许；灰尘不算缺陷"},
                         {"goldenSet", id.value()},
-                        {"workflow", withGlare ? "bright-spot-glare" : "bright-spot"},
+                        {"workflow", workflow},
                         {"blindCases", blind},
                         {"dataSharing", "no-images"},
                         {"maxRounds", 30},
@@ -263,12 +304,13 @@ assistant::AssistService decisionService(App& app, assistant::RecipeAdvisor& nob
 int runGoldenCommand(App& app, const std::vector<std::string>& args) {
     const std::string& sub = args[1];
     if (sub == "sample" && args.size() >= 3) {
-        std::string lighting = "dim", scenario = "basic";
+        std::string lighting = "dim", scenario = "basic", workflow;
         for (std::size_t i = 3; i + 1 < args.size(); ++i) {
             if (args[i] == "--blind-lighting") lighting = args[i + 1];
             if (args[i] == "--scenario") scenario = args[i + 1];
+            if (args[i] == "--workflow") workflow = args[i + 1];
         }
-        return cmdGoldenSample(app, args[2], lighting, scenario);
+        return cmdGoldenSample(app, args[2], lighting, scenario, workflow);
     }
     if (sub == "list") {
         for (const auto& id : app.goldenSets.listGoldenSets()) std::cout << id << "\n";

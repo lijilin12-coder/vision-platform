@@ -161,10 +161,16 @@ struct StationService::Impl {
                                {{"station", e->station.id()}, {"release", releaseId}, {"reason", loaded.error().message}});
                 }
                 pulled = persist(*e);
+            }
+            // 顺序很重要：先发布事件，再宣布“加载结束”。
+            // 反过来的话，waitForLoading() 的调用者可能在“上线包已就绪 / 加载失败”事件发布之前就被唤醒，
+            // 看到的是“加载结束了，却没有任何事件”。（事件要在锁外发布：订阅者可能回头调用本服务。）
+            publish(pulled);
+            {
+                std::lock_guard<std::mutex> lock(e->stateMutex);
                 --e->loadsInFlight;
             }
             e->loadingChanged.notify_all();
-            publish(pulled);
         });
         std::lock_guard<std::mutex> lock(loadersMutex);
         // 顺手清理已经结束的后台任务

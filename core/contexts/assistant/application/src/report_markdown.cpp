@@ -74,8 +74,8 @@ std::string renderReport(const SessionState& s, const Workflow& workflow) {
 
     os << "## 结论\n\n";
     if (r.overfitSuspected) {
-        os << "**不建议直接采纳。** 候选方案在调参集上" << (r.tuning.meetsCriteria ? "达标" : "不达标")
-           << "，但在它没有见过的盲测集上明显变差。\n\n";
+        os << "**不建议直接采纳。** 候选方案在调参集上" << (r.tuning.meetsCriteria ? "达标，但" : "没有达标，")
+           << "在它没有见过的盲测集上" << (r.tuning.meetsCriteria ? "明显变差" : "更差") << "。\n\n";
     } else if (r.tuning.meetsCriteria && (!r.blind || r.blind->meetsCriteria)) {
         os << "候选方案在调参集" << (r.blind ? "和盲测集上都" : "上") << "达到了验收标准。是否采纳由你决定。\n\n";
     } else {
