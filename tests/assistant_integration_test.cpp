@@ -120,6 +120,7 @@ protected:
         }
         auto id = golden->createGoldenSet(def);
         EXPECT_TRUE(id.ok());
+        request.hardeningRounds = 0;  // 这些测试关心的是调参：达标就结束。加固另有专门的测试
         request.goal = "检出亮斑";
         request.goldenSetId = id.value();
         request.workflowId = "bright-spot";
@@ -651,4 +652,89 @@ TEST_F(AssistantIntegration, LlmAdvisor_ThumbnailPolicySendsOnlyTuningImages) {
         EXPECT_EQ(maxSide, 256);  // 只发缩略图
     }
     EXPECT_NE(service.bodies[0].find("image_url"), std::string::npos);
+}
+
+// ---------------- 加固阶段（真实算子）----------------
+// 工作流声明的稳健性检查：亮度 ×0.8、×1.1，噪声 σ=8。
+
+// 脚本顾问先调到达标（阈值 195：亮度 ×0.8 时亮斑只有 188，全部漏检），再把阈值降到 175（两头都留有余地）
+TEST_F(AssistantIntegration, Hardening_KeepsTheMoreRobustCandidateAfterCriteriaMet) {
+    std::vector<Proposal> script = goodScript();                              // 达标：阈值 195，最小面积 30
+    script.push_back(setParam("bin", "value", 210, "试试更高"));              // 更不稳 → 回退
+    script.push_back(setParam("bin", "value", 175, "离背景和亮斑都远一些"));  // 更稳 → 保留
+    ScriptedAdvisor advisor("scripted:test", script);
+    auto request = makeRequest(1.0);
+    request.hardeningRounds = 4;
+    auto result = run(advisor, request);
+    ASSERT_TRUE(result.ok()) << result.error().message;
+    const SessionView& v = result.value();
+
+    EXPECT_EQ(v.endReason, "criteria-met");
+    EXPECT_TRUE(v.tuningMeetsCriteria);
+    EXPECT_EQ(v.hardeningRounds, 2);
+    EXPECT_EQ(draftParam(v.candidateRecipeId, "vision.threshold", "value"), 175);  // 候选方案停在更稳的参数上
+
+    auto stored = sessions->find(v.sessionId);
+    ASSERT_TRUE(stored.has_value());
+    const AssistReport& r = *stored->state().report;
+    EXPECT_EQ(r.valuesWhenFirstMet.at("bin.value"), 195);
+    EXPECT_EQ(r.finalValues.at("bin.value"), 175);
+    const auto failed = [](const std::vector<RobustnessResult>& rs) {
+        return std::count_if(rs.begin(), rs.end(), [](const RobustnessResult& x) { return !x.meetsCriteria; });
+    };
+    EXPECT_GT(failed(r.robustnessWhenFirstMet), 0);
+    EXPECT_EQ(failed(r.robustness), 0);  // 加固之后声明的扰动全部通过
+    EXPECT_NE(v.reportMarkdown.find("加固之后"), std::string::npos);
+
+    // 顾问在加固阶段被告知了阶段和稳健性检查的结果，以及判错的用例在扰动之后的表现
+    const auto& hardeningView = advisor.seen()[3];
+    EXPECT_TRUE(hardeningView.hardening);
+    EXPECT_FALSE(hardeningView.robustness.empty());
+    ASSERT_FALSE(hardeningView.probeObservations.empty());
+    for (const auto& p : hardeningView.probeObservations) {
+        EXPECT_EQ(p.observation.caseId.find("blind_"), std::string::npos);  // A3
+    }
+    EXPECT_FALSE(advisor.seen()[0].hardening);
+}
+
+// 搜索顾问不知道什么是“加固”，但只要它继续试，助手就会留下更稳的那个
+TEST_F(AssistantIntegration, Hardening_SearchAdvisorEndsUpMoreRobust) {
+    assist_adapters::SearchAdvisor advisor;
+    AssistService service(*workflows, *sessions, advisor, *editor, *runner, *goldenCases, bus);
+    auto request = makeRequest(1.0);
+    request.maxRounds = 40;
+    request.hardeningRounds = 12;
+    auto result = service.run(request);
+    ASSERT_TRUE(result.ok()) << result.error().message;
+    EXPECT_TRUE(result.value().tuningMeetsCriteria);
+    ASSERT_TRUE(result.value().blindMeetsCriteria.has_value());
+    EXPECT_TRUE(*result.value().blindMeetsCriteria);
+
+    auto stored = sessions->find(result.value().sessionId);
+    ASSERT_TRUE(stored.has_value());
+    const AssistReport& r = *stored->state().report;
+    // 加固不会让方案变得更不稳：最终的不比刚达标时的差
+    EXPECT_FALSE(moreRobust(r.robustnessWhenFirstMet, r.robustness));
+    std::cout << "[测量] 搜索顾问：共 " << r.rounds << " 轮，其中加固 " << r.hardeningRounds << " 轮\n";
+}
+
+// 加固阶段的内容也到了大模型那里，而且同样不含盲测集
+TEST_F(AssistantIntegration, Hardening_LlmAdvisorIsToldThePhaseAndWhatFails) {
+    ScriptedLlmService service({
+        R"({"rationale": "a", "changes": [{"node": "bin", "param": "value", "value": 195}, {"node": "blobs", "param": "minArea", "value": 30}]})",
+        R"({"rationale": "b", "changes": [{"node": "bin", "param": "value", "value": 175}]})",
+    });
+    llm::LlmAdvisor advisor = fakeLlmAdvisor(service);
+    AssistService assist(*workflows, *sessions, advisor, *editor, *runner, *goldenCases, bus);
+    auto request = makeRequest(1.0);
+    request.hardeningRounds = 4;
+    auto result = assist.run(request);
+    ASSERT_TRUE(result.ok()) << result.error().message;
+    ASSERT_EQ(service.bodies.size(), 2u);
+    EXPECT_NE(service.bodies[0].find("tuning"), std::string::npos);
+    EXPECT_NE(service.bodies[1].find("hardening"), std::string::npos);
+    EXPECT_NE(service.bodies[1].find("robustness_wrong_cases"), std::string::npos);
+    EXPECT_EQ(service.bodies[1].find("blind_"), std::string::npos);
+    EXPECT_EQ(service.bodies[1].find(".png"), std::string::npos);
+    EXPECT_EQ(result.value().endReason, "criteria-met");
 }

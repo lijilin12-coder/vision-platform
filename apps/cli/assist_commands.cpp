@@ -116,7 +116,8 @@ int cmdGoldenSample(App& app, const std::string& dir, const std::string& blindLi
                         {"workflow", withGlare ? "bright-spot-glare" : "bright-spot"},
                         {"blindCases", blind},
                         {"dataSharing", "no-images"},
-                        {"maxRounds", 20},
+                        {"maxRounds", 30},
+                        {"hardeningRounds", 8},
                         {"maxSeconds", 300}};
     const fs::path briefFile = outDir / "brief.json";
     std::ofstream(briefFile, std::ios::binary) << brief.dump(2) << "\n";
@@ -151,6 +152,7 @@ Result<assistant::AssistRequest> parseBrief(const std::string& text) try {
     r.dataSharing = j.value("dataSharing", "no-images");
     r.maxRounds = j.value("maxRounds", 20);
     r.maxSeconds = j.value("maxSeconds", 300.0);
+    r.hardeningRounds = j.value("hardeningRounds", 8);
     return r;
 } catch (const std::exception& e) {
     return Result<assistant::AssistRequest>::failure("cli.bad_brief", std::string("任务书格式不对：") + e.what());

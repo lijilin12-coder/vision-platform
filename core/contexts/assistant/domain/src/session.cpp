@@ -1,6 +1,7 @@
 #include "vision/assistant/domain/session.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <set>
 
@@ -51,6 +52,7 @@ RoundSummary summarize(const Round& r) {
         case RoundOutcome::Applied: s.outcome = "applied"; break;
         case RoundOutcome::AdvisorFinished: s.outcome = "finished"; break;
         case RoundOutcome::Pending: s.outcome = "pending"; break;
+        case RoundOutcome::Abandoned: s.outcome = "abandoned"; break;
         default: s.outcome = "rejected"; break;
     }
     s.rejectReason = r.rejectReason;
@@ -60,10 +62,31 @@ RoundSummary summarize(const Round& r) {
         s.falseAlarms = r.evaluation->falseAlarms;
         s.errors = r.evaluation->errors;
     }
+    if (!r.robustness.empty()) {
+        s.robustnessWrong = 0;
+        s.robustnessFailed = 0;
+        for (const auto& x : r.robustness) {
+            s.robustnessWrong += x.wrong();
+            s.robustnessFailed += x.meetsCriteria ? 0 : 1;
+        }
+    }
     return s;
 }
 
 }  // namespace
+
+bool moreRobust(const std::vector<RobustnessResult>& a, const std::vector<RobustnessResult>& b) {
+    const auto key = [](const std::vector<RobustnessResult>& rs) {
+        int failed = 0, wrong = 0, misses = 0;
+        for (const auto& r : rs) {
+            failed += r.meetsCriteria ? 0 : 1;
+            wrong += r.wrong();
+            misses += r.misses;
+        }
+        return std::array<int, 3>{failed, wrong, misses};
+    };
+    return key(a) < key(b);
+}
 
 // ---------------- 创建与恢复 ----------------
 
@@ -74,6 +97,7 @@ Result<AssistSession> AssistSession::start(SessionId id, InspectionBrief brief, 
     if (id.empty()) return R::failure("assistant.empty_id", "会话 ID 不能为空");
     if (candidateRecipeId.empty()) return R::failure("assistant.no_candidate", "没有候选方案");
     if (budget.maxRounds < 1 || budget.maxSeconds <= 0) return R::failure("assistant.bad_budget", "预算必须大于 0");
+    if (budget.hardeningRounds < 0) return R::failure("assistant.bad_budget", "加固的轮数不能是负数");
     if (brief.mode != WorkMode::TuneWithinWorkflow) {
         return R::failure("assistant.mode_unsupported", "目前只支持“工作流内调参”，还不支持自由搭建");
     }
@@ -139,6 +163,54 @@ Status AssistSession::requireCoverage(const Evaluation& e, const std::vector<std
     return Status::success();
 }
 
+bool AssistSession::hardeningEnabled() const { return !workflow_.probes().empty() && s_.budget.hardeningRounds > 0; }
+
+bool AssistSession::hardening() const {
+    return s_.status == SessionStatus::InProgress && s_.best && s_.best->meetsCriteria;
+}
+
+bool AssistSession::needsRobustness(const Evaluation& evaluation) const {
+    return evaluation.meetsCriteria && hardeningEnabled();
+}
+
+// A4 对稳健性检查同样适用：结果必须正好对应工作流声明的每一种扰动、每一个程度，并且每一项都覆盖了整个调参集。
+Status AssistSession::requireRobustness(const Evaluation& e,
+                                        const std::optional<std::vector<RobustnessResult>>& robustness) const {
+    if (!needsRobustness(e)) {
+        if (robustness) return Status::failure("assistant.robustness_unexpected", "这次评估不需要稳健性检查的结果");
+        return Status::success();
+    }
+    if (!robustness) return Status::failure("assistant.robustness_missing", "调参集已经达标，必须同时给出稳健性检查的结果");
+    std::size_t i = 0;
+    for (const auto& probe : workflow_.probes()) {
+        for (const double level : probe.levels) {
+            if (i >= robustness->size()) return Status::failure("assistant.robustness_coverage", "稳健性检查的结果不全");
+            const RobustnessResult& r = (*robustness)[i++];
+            if (r.kind != toString(probe.kind) || r.level != level || r.total != static_cast<int>(s_.tuningCaseIds.size())) {
+                return Status::failure("assistant.robustness_coverage", "稳健性检查的结果和工作流声明的不一致");
+            }
+        }
+    }
+    if (i != robustness->size()) return Status::failure("assistant.robustness_coverage", "稳健性检查的结果多于工作流声明的");
+    return Status::success();
+}
+
+// 有了新的“最好”之后：记下第一次达标时的状态；没有可加固的余地了就结束。
+void AssistSession::afterNewBest() {
+    if (!s_.best->meetsCriteria) return;
+    if (!s_.bestRobustness) {  // 没有加固这回事：达标就结束
+        finish(EndReason::CriteriaMet);
+        return;
+    }
+    if (s_.valuesWhenFirstMet.empty()) {
+        s_.valuesWhenFirstMet = s_.bestValues;
+        s_.robustnessWhenFirstMet = *s_.bestRobustness;
+    }
+    const bool allPass = std::all_of(s_.bestRobustness->begin(), s_.bestRobustness->end(),
+                                     [](const RobustnessResult& r) { return r.meetsCriteria; });
+    if (allPass) finish(EndReason::CriteriaMet);  // 声明的扰动全部通过：没有什么可以再加固的了
+}
+
 std::vector<TunableEdit> AssistSession::editsToReach(const std::map<std::string, double>& target) const {
     std::vector<TunableEdit> edits;
     for (const auto& t : workflow_.tunables()) {
@@ -156,13 +228,15 @@ void AssistSession::finish(EndReason reason) {
 
 // ---------------- 迭代 ----------------
 
-Status AssistSession::recordBaseline(Evaluation evaluation) {
+Status AssistSession::recordBaseline(Evaluation evaluation, std::optional<std::vector<RobustnessResult>> robustness) {
     if (s_.status != SessionStatus::InProgress) return Status::failure("assistant.not_in_progress", "会话已经结束");
     if (s_.baseline) return Status::failure("assistant.baseline_exists", "初始评估已经记录过了");
     if (auto st = requireCoverage(evaluation, s_.tuningCaseIds, "调参集"); !st) return st;
+    if (auto st = requireRobustness(evaluation, robustness); !st) return st;
     s_.baseline = evaluation;
     s_.best = std::move(evaluation);
-    if (s_.best->meetsCriteria) finish(EndReason::CriteriaMet);  // 初始参数就已经达标，不需要调
+    s_.bestRobustness = std::move(robustness);
+    afterNewBest();  // 初始参数就已经达标：没有可加固的余地则直接结束，否则直接进入加固阶段
     return Status::success();
 }
 
@@ -174,10 +248,21 @@ Result<int> AssistSession::beginRound(double elapsedSeconds) {
     if (openRound() != nullptr) return R::failure("assistant.round_open", "上一轮还没有结束");      // A5
     // A6：超出预算立即结束
     if (static_cast<int>(s_.rounds.size()) >= s_.budget.maxRounds || elapsedSeconds >= s_.budget.maxSeconds) {
-        finish(EndReason::BudgetExhausted);
+        // 已经达标、只是在加固时预算用尽：结果仍然是“达标”
+        finish(hardening() ? EndReason::CriteriaMet : EndReason::BudgetExhausted);
         return R::failure("assistant.budget_exhausted", "预算已经用尽");
     }
+    const bool inHardening = hardening();
+    if (inHardening) {
+        // 加固有自己的预算：用完了就以“达标”结束，交出目前最稳的候选方案
+        if (s_.hardeningRounds >= s_.budget.hardeningRounds) {
+            finish(EndReason::CriteriaMet);
+            return R::failure("assistant.hardening_done", "加固的轮数已经用完");
+        }
+        ++s_.hardeningRounds;
+    }
     Round r;
+    r.hardening = inHardening;
     r.index = static_cast<int>(s_.rounds.size()) + 1;
     s_.rounds.push_back(std::move(r));
     return s_.rounds.back().index;
@@ -191,7 +276,8 @@ Result<std::vector<TunableEdit>> AssistSession::submitProposal(Proposal proposal
 
     if (proposal.finish) {
         r->outcome = RoundOutcome::AdvisorFinished;
-        finish(EndReason::AdvisorFinished);
+        // 顾问在加固阶段说“不必再改了”：方案是达标的，结束原因仍然是“达标”
+        finish(hardening() ? EndReason::CriteriaMet : EndReason::AdvisorFinished);
         return std::vector<TunableEdit>{};
     }
 
@@ -225,30 +311,40 @@ std::vector<TunableEdit> AssistSession::editorRejected(const std::string& reason
     return editsToReach(s_.currentValues);
 }
 
-Result<std::vector<TunableEdit>> AssistSession::recordEvaluation(Evaluation evaluation, bool betterThanBest,
+Result<std::vector<TunableEdit>> AssistSession::recordEvaluation(Evaluation evaluation, Comparison tuning,
+                                                                 std::optional<std::vector<RobustnessResult>> robustness,
                                                                  double roundSeconds) {
     using R = Result<std::vector<TunableEdit>>;
     Round* r = open();
     if (r == nullptr || r->outcome != RoundOutcome::Applied) return R::failure("assistant.no_round", "没有等待评估的一轮");
     if (auto st = requireCoverage(evaluation, s_.tuningCaseIds, "调参集"); !st) return st.error();  // A4
+    if (auto st = requireRobustness(evaluation, robustness); !st) return st.error();
+
+    // 保留的条件：调参集的评估更好；或者一样好，并且两边都有稳健性检查的结果、这次的更好（A11）。
+    // 调参集一样好而稳健性没有更好，不保留：避免参数无意义地漂移。
+    const bool keep = tuning == Comparison::Better ||
+                      (tuning == Comparison::Equal && robustness && s_.bestRobustness &&
+                       moreRobust(*robustness, *s_.bestRobustness));
 
     r->evaluation = evaluation;
+    if (robustness) r->robustness = *robustness;
     r->seconds = roundSeconds;
     s_.currentValues = pendingValues_;
     pendingValues_.clear();
 
     std::vector<TunableEdit> rollback;
-    if (betterThanBest) {
+    if (keep) {
         r->decision = RoundDecision::Kept;
         s_.best = std::move(evaluation);
+        s_.bestRobustness = std::move(robustness);
         s_.bestValues = s_.currentValues;
     } else {
         r->decision = RoundDecision::RolledBack;  // 没有变好：退回到目前最好的状态
         rollback = editsToReach(s_.bestValues);
         s_.currentValues = s_.bestValues;
     }
-    record(std::make_shared<ExperimentCompleted>(s_.id, r->index, betterThanBest));
-    if (betterThanBest && s_.best->meetsCriteria) finish(EndReason::CriteriaMet);
+    record(std::make_shared<ExperimentCompleted>(s_.id, r->index, keep));
+    if (keep) afterNewBest();
     return rollback;
 }
 
@@ -259,7 +355,7 @@ Status AssistSession::end(EndReason reason) {
     }
     // 结束时如果有一轮做到一半，把它记为没有完成
     if (Round* r = open(); r != nullptr) {
-        r->outcome = RoundOutcome::RejectedByEditor;
+        r->outcome = RoundOutcome::Abandoned;
         r->rejectReason = "会话在这一轮进行中结束";
         pendingValues_.clear();
     }
@@ -297,7 +393,11 @@ Status AssistSession::generateReport(double totalSeconds) {
     rep.baseline = *s_.baseline;
     rep.tuning = *s_.best;
     rep.blind = s_.blind;
-    rep.robustness = s_.robustness;
+    // 达标的候选方案在迭代过程中已经做过稳健性检查，直接用那份结果
+    rep.robustness = s_.robustnessRecorded ? s_.robustness : (s_.bestRobustness ? *s_.bestRobustness : std::vector<RobustnessResult>{});
+    rep.valuesWhenFirstMet = s_.valuesWhenFirstMet;
+    rep.robustnessWhenFirstMet = s_.robustnessWhenFirstMet;
+    rep.hardeningRounds = s_.hardeningRounds;
     rep.initialValues = s_.initialValues;
     rep.finalValues = s_.bestValues;
     rep.rounds = static_cast<int>(s_.rounds.size());
@@ -334,7 +434,15 @@ Status AssistSession::generateReport(double totalSeconds) {
     if (rep.tuning.truthOk == 0) rep.notes.push_back("调参集里没有合格的用例，调出来的参数不能保证不误报。");
     const int totalCases = rep.tuning.total() + (rep.blind ? rep.blind->total() : 0);
     if (totalCases < 20) rep.notes.push_back("基准图集一共只有 " + std::to_string(totalCases) + " 个用例，偏少。");
-    if (s_.robustnessRecorded) {
+    if (rep.hardeningRounds > 0) {
+        const auto failed = [](const std::vector<RobustnessResult>& rs) {
+            return std::count_if(rs.begin(), rs.end(), [](const RobustnessResult& r) { return !r.meetsCriteria; });
+        };
+        rep.notes.push_back("达标之后又用了 " + std::to_string(rep.hardeningRounds) + " 轮加固：稳健性检查里通不过的从 " +
+                            std::to_string(failed(rep.robustnessWhenFirstMet)) + " 项变为 " +
+                            std::to_string(failed(rep.robustness)) + " 项（共 " + std::to_string(rep.robustness.size()) + " 项）。");
+    }
+    if (s_.robustnessRecorded || s_.bestRobustness) {
         for (const auto& r : rep.robustness) {
             if (!r.meetsCriteria) {
                 rep.notes.push_back("稳健性检查中有不达标的情况（见报告里的表格），说明方案对这类变化比较敏感。");
@@ -373,7 +481,25 @@ Status AssistSession::abandon() {
 
 // ---------------- 交给顾问的内容 ----------------
 
-AdvisorView AssistSession::advisorView(const std::vector<CaseObservation>& observations) const {
+// 一个用例的表现能不能、以什么形式交给顾问（A3、A9）。不能给则返回空。
+std::optional<CaseObservation> AssistSession::forAdvisor(const CaseObservation& o) const {
+    // A3：盲测集的用例不交给顾问。即使调用的人传了进来，这里也去掉。
+    if (isBlind(o.caseId) || !contains(s_.tuningCaseIds, o.caseId)) return std::nullopt;
+    CaseObservation copy = o;
+    // A9：按数据外发策略处理图像
+    switch (s_.brief.dataSharing) {
+        case DataSharing::NoImages:
+            copy.imageRef.clear();
+            copy.thumbnailOnly = false;
+            break;
+        case DataSharing::Thumbnails: copy.thumbnailOnly = true; break;
+        case DataSharing::Originals: copy.thumbnailOnly = false; break;
+    }
+    return copy;
+}
+
+AdvisorView AssistSession::advisorView(const std::vector<CaseObservation>& observations,
+                                       const std::vector<ProbeObservation>& probeObservations) const {
     AdvisorView v;
     v.goal = s_.brief.goal;
     v.workflowName = workflow_.name();
@@ -387,22 +513,21 @@ AdvisorView AssistSession::advisorView(const std::vector<CaseObservation>& obser
         if (r.outcome != RoundOutcome::Pending) v.history.push_back(summarize(r));
     }
     v.roundsLeft = std::max(0, s_.budget.maxRounds - static_cast<int>(s_.rounds.size()));
+    v.hardening = hardening();
+    if (v.hardening) v.roundsLeft = std::min(v.roundsLeft, std::max(0, s_.budget.hardeningRounds - s_.hardeningRounds));
+    if (s_.bestRobustness) v.robustness = *s_.bestRobustness;
     v.dataSharing = s_.brief.dataSharing;
 
     for (const auto& o : observations) {
-        // A3：盲测集的用例不交给顾问。即使调用的人传了进来，这里也去掉。
-        if (isBlind(o.caseId) || !contains(s_.tuningCaseIds, o.caseId)) continue;
-        CaseObservation copy = o;
-        // A9：按数据外发策略处理图像
-        switch (s_.brief.dataSharing) {
-            case DataSharing::NoImages:
-                copy.imageRef.clear();
-                copy.thumbnailOnly = false;
-                break;
-            case DataSharing::Thumbnails: copy.thumbnailOnly = true; break;
-            case DataSharing::Originals: copy.thumbnailOnly = false; break;
+        if (auto allowed = forAdvisor(o)) v.observations.push_back(std::move(*allowed));
+    }
+    if (v.hardening) {
+        for (const auto& p : probeObservations) {
+            if (auto allowed = forAdvisor(p.observation)) {
+                allowed->imageRef.clear();  // 扰动之后的图像并不存在于磁盘上，没有可以给的
+                v.probeObservations.push_back({p.kind, p.level, std::move(*allowed)});
+            }
         }
-        v.observations.push_back(std::move(copy));
     }
     return v;
 }

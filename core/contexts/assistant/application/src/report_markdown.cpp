@@ -67,7 +67,8 @@ std::string renderReport(const SessionState& s, const Workflow& workflow) {
         return os.str();
     }
     const AssistReport& r = *s.report;
-    os << "- 用了 " << r.rounds << " 轮（保留 " << r.kept << "，回退 " << r.rolledBack << "，被拒绝 " << r.rejected << "），共 "
+    os << "- 用了 " << r.rounds << " 轮（保留 " << r.kept << "，回退 " << r.rolledBack << "，被拒绝 " << r.rejected
+       << (r.hardeningRounds > 0 ? "；其中加固 " + std::to_string(r.hardeningRounds) + " 轮" : "") << "），共 "
        << std::fixed << std::setprecision(2) << r.seconds << " 秒\n\n";
     os.unsetf(std::ios::fixed);
 
@@ -98,21 +99,41 @@ std::string renderReport(const SessionState& s, const Workflow& workflow) {
         os << "\n\n";
     }
 
-    os << "## 参数\n\n| 可调项 | 范围 | 初始值 | 最终值 |\n|---|---|---|---|\n";
+    const bool showFirstMet = r.hardeningRounds > 0 && !r.valuesWhenFirstMet.empty();
+    os << "## 参数\n\n| 可调项 | 范围 | 初始值 | " << (showFirstMet ? "刚达标时 | " : "") << "最终值 |\n|---|---|---|"
+       << (showFirstMet ? "---|" : "") << "---|\n";
+    const auto valueIn = [](const std::map<std::string, double>& m, const std::string& name) {
+        const auto it = m.find(name);
+        return it == m.end() ? std::string("-") : num(it->second);
+    };
     for (const auto& t : workflow.tunables()) {
-        const auto i = r.initialValues.find(t.name());
-        const auto f = r.finalValues.find(t.name());
-        os << "| " << t.name() << " | " << num(t.min) << " ~ " << num(t.max) << " | "
-           << (i == r.initialValues.end() ? "-" : num(i->second)) << " | "
-           << (f == r.finalValues.end() ? "-" : num(f->second)) << " |\n";
+        os << "| " << t.name() << " | " << num(t.min) << " ~ " << num(t.max) << " | " << valueIn(r.initialValues, t.name()) << " | ";
+        if (showFirstMet) os << valueIn(r.valuesWhenFirstMet, t.name()) << " | ";
+        os << valueIn(r.finalValues, t.name()) << " |\n";
     }
 
     if (!r.robustness.empty()) {
         os << "\n## 稳健性检查\n\n对调参集的图像做已知的扰动之后重新评估。\n\n";
-        os << "| 扰动 | 程度 | 漏检 | 误报 | 出错 | 验收标准 |\n|---|---|---|---|---|---|\n";
-        for (const auto& x : r.robustness) {
-            os << "| " << (x.kind == "brightness" ? "亮度 ×" : x.kind == "noise" ? "噪声 σ" : x.kind) << " | " << num(x.level)
-               << " | " << x.misses << " | " << x.falseAlarms << " | " << x.errors << " | " << yesNo(x.meetsCriteria) << " |\n";
+        const bool hardened = r.hardeningRounds > 0 && r.robustnessWhenFirstMet.size() == r.robustness.size();
+        const auto label = [](const RobustnessResult& x) {
+            return std::string(x.kind == "brightness" ? "亮度 ×" : x.kind == "noise" ? "噪声 σ" : x.kind);
+        };
+        if (hardened) {
+            // 加固过：把“刚达标时”和“加固之后”并排列出来
+            os << "| 扰动 | 程度 | 刚达标时 漏检 / 误报 / 出错 | 加固之后 漏检 / 误报 / 出错 | 验收标准 |\n|---|---|---|---|---|\n";
+            for (std::size_t i = 0; i < r.robustness.size(); ++i) {
+                const auto& before = r.robustnessWhenFirstMet[i];
+                const auto& x = r.robustness[i];
+                os << "| " << label(x) << " | " << num(x.level) << " | " << before.misses << " / " << before.falseAlarms << " / "
+                   << before.errors << " | " << x.misses << " / " << x.falseAlarms << " / " << x.errors << " | "
+                   << yesNo(x.meetsCriteria) << " |\n";
+            }
+        } else {
+            os << "| 扰动 | 程度 | 漏检 / 误报 / 出错 | 验收标准 |\n|---|---|---|---|\n";
+            for (const auto& x : r.robustness) {
+                os << "| " << label(x) << " | " << num(x.level) << " | " << x.misses << " / " << x.falseAlarms << " / " << x.errors
+                   << " | " << yesNo(x.meetsCriteria) << " |\n";
+            }
         }
     }
 
@@ -124,14 +145,24 @@ std::string renderReport(const SessionState& s, const Workflow& workflow) {
             case RoundOutcome::RejectedByEditor: result = "被方案编排拒绝：" + round.rejectReason; break;
             case RoundOutcome::AdvisorFinished: result = "顾问建议结束"; break;
             case RoundOutcome::Pending: result = "未完成"; break;
+            case RoundOutcome::Abandoned: result = "未完成：" + round.rejectReason; break;
             case RoundOutcome::Applied:
                 result = round.decision == RoundDecision::Kept ? "保留" : round.decision == RoundDecision::RolledBack ? "回退" : "未评估";
                 break;
         }
+        if (round.hardening) result = "（加固）" + result;
         os << "| " << round.index << " | " << describeChanges(round.proposal) << " | " << round.proposal.rationale << " | " << result
            << " | ";
         if (round.evaluation) {
             os << round.evaluation->misses << " / " << round.evaluation->falseAlarms << " / " << round.evaluation->errors;
+            if (!round.robustness.empty()) {
+                int wrong = 0, failed = 0;
+                for (const auto& x : round.robustness) {
+                    wrong += x.wrong();
+                    failed += x.meetsCriteria ? 0 : 1;
+                }
+                os << "；稳健性 " << failed << " 项不过（判错 " << wrong << "）";
+            }
         } else {
             os << "-";
         }
