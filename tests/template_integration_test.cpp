@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <opencv2/imgproc.hpp>
+#include <tuple>
 
 #include "vision/authoring/api.h"
 #include "vision/catalog/api.h"
@@ -457,4 +458,111 @@ TEST_F(TemplateMechanism, DeploysToAStationAndABrokenTemplateDoesNotAffectProduc
     EXPECT_FALSE(still.swapped);
     EXPECT_EQ(still.report.verdict, "OK");
     EXPECT_EQ(stations.getStation(id).value().state, "running");
+}
+
+// ---------------- 定位 + 对齐 + 测量：真正用到模板的方案，走完整个引擎 ----------------
+
+namespace {
+
+// 浅色背景上一块深色零件（宽 width），上面有一个亮的圆和一个小方块。整体平移 (dx, dy)、顺时针转 angle 度
+Image locatingImage(double width, double dx, double dy, double angle) {
+    cv::Mat m(240, 320, CV_8UC3, cv::Scalar(150, 150, 150));
+    cv::rectangle(m, cv::Rect(90, 80, static_cast<int>(width), 90), cv::Scalar(70, 70, 70), cv::FILLED);
+    cv::circle(m, cv::Point(125, 110), 10, cv::Scalar(225, 225, 225), cv::FILLED, cv::LINE_AA);
+    cv::rectangle(m, cv::Rect(145, 118, 12, 8), cv::Scalar(30, 30, 30), cv::FILLED);
+    const double radians = angle * CV_PI / 180.0, c = std::cos(radians), s = std::sin(radians);
+    const cv::Mat move = (cv::Mat_<double>(2, 3) << c, -s, 160 - (c * 160 - s * 120) + dx, s, c, 120 - (s * 160 + c * 120) + dy);
+    cv::Mat out;
+    cv::warpAffine(m, out, move, m.size(), cv::INTER_LINEAR, cv::BORDER_CONSTANT, cv::Scalar(150, 150, 150));
+    return imaging::fromMat(out).value();
+}
+
+Image toGray(const Image& color) {
+    cv::Mat g;
+    cv::cvtColor(imaging::view(color), g, cv::COLOR_BGR2GRAY);
+    return imaging::fromMat(g).value();
+}
+
+}  // namespace
+
+// 输入 → 灰度 ─┬→ 模板匹配 ─(score)→ 范围判定「定位」
+//              └────(pose)────→ 按位姿对齐 → 卡尺测宽 → 范围判定「宽度」
+TEST_F(TemplateMechanism, LocateAlignAndMeasureEndToEnd) {
+    auto& a = p->authoring;
+    const auto recipe = a.createRecipe("定位后测宽").value();
+    const auto input = a.addNode(recipe, "vision.image_input").value();
+    const auto gray = a.addNode(recipe, "vision.to_gray").value();
+    const auto match = a.addNode(recipe, "vision.template_match").value();
+    const auto located = a.addNode(recipe, "vision.judge_range").value();
+    const auto align = a.addNode(recipe, "vision.align_to_pose").value();
+    const auto caliper = a.addNode(recipe, "vision.caliper_width").value();
+    const auto widthOk = a.addNode(recipe, "vision.judge_range").value();
+    ASSERT_TRUE(a.connect(recipe, input + ".image", gray + ".image").ok());
+    ASSERT_TRUE(a.connect(recipe, gray + ".image", match + ".image").ok());
+    ASSERT_TRUE(a.connect(recipe, match + ".score", located + ".value").ok());
+    ASSERT_TRUE(a.connect(recipe, gray + ".image", align + ".image").ok());
+    ASSERT_TRUE(a.connect(recipe, match + ".pose", align + ".pose").ok());
+    ASSERT_TRUE(a.connect(recipe, align + ".image", caliper + ".image").ok());
+    ASSERT_TRUE(a.connect(recipe, caliper + ".width", widthOk + ".value").ok());
+    // 类型检查对位姿同样有效：位姿不能接到要图像的端口上，数值也不能接到要位姿的端口上
+    EXPECT_FALSE(a.connect(recipe, match + ".pose", caliper + ".image").ok());
+    EXPECT_FALSE(a.connect(recipe, match + ".score", align + ".pose").ok());
+
+    ASSERT_TRUE(a.setParam(recipe, located, "min", 0.7).ok());
+    ASSERT_TRUE(a.setParam(recipe, located, "max", 1.0).ok());
+    ASSERT_TRUE(a.setParam(recipe, located, "label", std::string("定位得分")).ok());
+    ASSERT_TRUE(a.setParam(recipe, widthOk, "min", 137.0).ok());
+    ASSERT_TRUE(a.setParam(recipe, widthOk, "max", 143.0).ok());
+    ASSERT_TRUE(a.setParam(recipe, widthOk, "label", std::string("宽度")).ok());
+    ASSERT_TRUE(a.setParam(recipe, align, "fill", 150.0).ok());
+    // 卡尺只量零件的下半截：ROI 是在“零件在标准位置”的图上画的，对齐之后才框得准
+    ASSERT_TRUE(a.setRoi(recipe, caliper, Roi::rect(60, 140, 220, 24).value()).ok());
+
+    // 模板要从灰度的样图上框：模板匹配算子处理的是灰度图像
+    const auto sample = toGray(locatingImage(140, 0, 0, 0));
+    const auto t = a.createMatchTemplate(recipe, "圆和方块", sample, 106, 92, 60, 44);
+    ASSERT_TRUE(t.ok()) << t.error().message;
+    ASSERT_TRUE(a.setParam(recipe, match, "template", t.value()).ok());
+    const auto version = a.publish(recipe);
+    ASSERT_TRUE(version.ok()) << version.error().message;
+    const auto doc = a.getVersionDocument(version.value()).value();
+
+    // 零件在标准位置、偏了、转了：都合格
+    for (const auto& [dx, dy, angle] : std::vector<std::tuple<double, double, double>>{{0, 0, 0}, {14, -9, 0}, {-10, 7, 6}, {6, 5, -9}}) {
+        const auto r = p->execution.inspect(doc, locatingImage(140, dx, dy, angle)).value();
+        EXPECT_EQ(r.verdict, "OK") << "dx " << dx << " dy " << dy << " 角度 " << angle;
+    }
+    // 宽度超差的零件：即使转了，量出来的仍然是它真实的宽度，判不合格
+    const auto wide = p->execution.inspect(doc, locatingImage(150, -10, 7, 6)).value();
+    EXPECT_EQ(wide.verdict, "NG");
+    bool widthReason = false;
+    for (const auto& reason : wide.reasons) widthReason |= !reason.pass && reason.text.find("宽度") != std::string::npos;
+    EXPECT_TRUE(widthReason);
+
+    // 画面里没有零件：定位这一条判不合格，操作员看得到原因；不是程序出错
+    cv::Mat blank(240, 320, CV_8UC3, cv::Scalar(150, 150, 150));
+    const auto none = p->execution.inspect(doc, imaging::fromMat(blank).value()).value();
+    EXPECT_EQ(none.verdict, "NG");
+    bool locatingReason = false;
+    for (const auto& reason : none.reasons) locatingReason |= !reason.pass && reason.text.find("定位得分") != std::string::npos;
+    EXPECT_TRUE(locatingReason);
+
+    // 换了分辨率的相机：明确报错（模板是按像素定义的），而不是给一个“没找到”
+    cv::Mat bigger(480, 640, CV_8UC3, cv::Scalar(150, 150, 150));
+    const auto mismatch = p->execution.inspect(doc, imaging::fromMat(bigger).value()).value();
+    EXPECT_EQ(mismatch.verdict, "ERROR");
+
+    // 调试运行能看到位姿
+    const auto debug = p->execution.debugRun(doc, locatingImage(140, 14, -9, 0)).value();
+    bool sawPose = false;
+    for (const auto& n : debug.report.nodes) {
+        const auto it = n.outputs.find("pose");
+        if (it != n.outputs.end()) sawPose = it->second.rfind("pose (", 0) == 0;
+    }
+    EXPECT_TRUE(sawPose);
+
+    // 存盘再读回来：位姿这种端口类型在方案文件里保存和恢复都没有问题
+    p = std::make_unique<Platform>(dir);
+    const auto again = p->authoring.getVersionDocument(version.value()).value();
+    EXPECT_EQ(p->execution.inspect(again, locatingImage(140, -10, 7, 6)).value().verdict, "OK");
 }

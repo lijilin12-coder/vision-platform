@@ -49,6 +49,23 @@ struct Blob {
 };
 using BlobList = std::vector<Blob>;
 
+// 位姿：定位的结果——零件上的一个基准点现在在哪里、零件转了多少度（docs/ddd/09）。
+//
+//   基准点   框模板时模板的中心。它在样图上的位置是 (referenceX, referenceY)。
+//   x, y     基准点在这一幅图像里的位置（像素，可以是小数）。
+//   angle    零件相对于样图转过的角度。单位：度；在屏幕上看，顺时针为正；范围 (-180, 180]。
+//            和 OpenCV 教程大作业的约定相同。
+//
+// 位姿自己带着基准点原来的位置，所以拿到一个位姿就能把图像对齐回去，不需要再去找模板。
+// 位姿里没有匹配分数：分数说的是“这次匹配有多可信”，不是位置的一部分。
+struct Pose {
+    double x = 0;
+    double y = 0;
+    double angle = 0;
+    double referenceX = 0;
+    double referenceY = 0;
+};
+
 // 判定依据的原始形式：某个节点对“合不合格”的结论和原因（术语表 §6 判定依据）。
 struct Judgement {
     bool pass = true;

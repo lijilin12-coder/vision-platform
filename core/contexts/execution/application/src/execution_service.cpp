@@ -137,6 +137,11 @@ std::string describeValue(const Value& v) {
         std::string operator()(bool b) const { return b ? "true" : "false"; }
         std::string operator()(const std::string& s) const { return "text " + s; }
         std::string operator()(const Judgement& j) const { return std::string(j.pass ? "合格：" : "不合格：") + j.reason; }
+        std::string operator()(const Pose& p) const {
+            std::ostringstream os;
+            os << std::fixed << std::setprecision(2) << "pose (" << p.x << ", " << p.y << ") 旋转 " << p.angle << "°";
+            return os.str();
+        }
     };
     return std::visit(V{}, v);
 }
@@ -208,6 +213,11 @@ std::string describeStatistics(const Value& v) {
         std::string operator()(bool) const { return {}; }
         std::string operator()(const std::string&) const { return {}; }
         std::string operator()(const Judgement&) const { return {}; }
+        std::string operator()(const Pose& p) const {
+            std::ostringstream os;
+            os << std::fixed << std::setprecision(2) << "相对基准位置平移 (" << p.x - p.referenceX << ", " << p.y - p.referenceY << ")";
+            return os.str();
+        }
     };
     return std::visit(V{}, v);
 }
