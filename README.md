@@ -37,7 +37,7 @@ VID=$(./build/apps/vision-cli recipe publish $RID)
 | [docs/ddd/06-scenario-walkthrough.md](docs/ddd/06-scenario-walkthrough.md) | 关键场景走查与发现的问题 |
 | [docs/ddd/07-recipe-assistant.md](docs/ddd/07-recipe-assistant.md) | 方案助手：循环、顾问、工作流、加固阶段 |
 | [docs/ddd/08-platforms-and-training.md](docs/ddd/08-platforms-and-training.md) | 平台划分、模型训练与数据的划分 |
-| [docs/ddd/09-match-template-and-locating.md](docs/ddd/09-match-template-and-locating.md) | 匹配模板与定位（**草案，待确认**） |
+| [docs/ddd/09-match-template-and-locating.md](docs/ddd/09-match-template-and-locating.md) | 匹配模板与定位 |
 
 ### 工程文档
 
@@ -55,8 +55,9 @@ VID=$(./build/apps/vision-cli recipe publish $RID)
 | [docs/poc/poc-11-report.md](docs/poc/poc-11-report.md) | POC-11 结论报告：方案助手的最小闭环（不用大模型） |
 | [docs/poc/poc-12-report.md](docs/poc/poc-12-report.md) | POC-12 结论报告：大模型顾问（DeepSeek 实测） |
 | [docs/poc/hardening-report.md](docs/poc/hardening-report.md) | 方案助手的加固阶段：解决“达标的参数贴着边界” |
+| [docs/poc/locating-report.md](docs/poc/locating-report.md) | 定位算子实测：模板匹配的精度和耗时、对齐对测量精度的影响 |
 | [docs/dev/build.md](docs/dev/build.md) | 构建与运行 |
-| [docs/dev/operators.md](docs/dev/operators.md) | 算子一览：15 个算子各自解决什么问题、怎么搭配 |
+| [docs/dev/operators.md](docs/dev/operators.md) | 算子一览：17 个算子各自解决什么问题、怎么搭配 |
 | [docs/dev/how-to-add-operator.md](docs/dev/how-to-add-operator.md) | 如何新增一个算子 |
 | [docs/dev/logging-and-crash-dumps.md](docs/dev/logging-and-crash-dumps.md) | 日志与崩溃转储：文件在哪里、怎么写日志、怎么分析崩溃 |
 | [docs/tutorial/cpp/](docs/tutorial/cpp/README.md) | 现代工程 C++ 教程（从竞赛写法到工程写法） |

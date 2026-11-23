@@ -10,7 +10,7 @@
 namespace vision {
 
 // 端口类型（术语表 §2）。连线两端的端口类型必须兼容（不变量 R2）。
-enum class PortType { Image, Region, Blobs, Number, Bool, Text, Judgement };
+enum class PortType { Image, Region, Blobs, Number, Bool, Text, Judgement, Pose };
 
 const char* toString(PortType type);
 std::optional<PortType> parsePortType(const std::string& text);
@@ -19,7 +19,7 @@ std::optional<PortType> parsePortType(const std::string& text);
 bool isCompatible(PortType from, PortType to);
 
 // 端口上流动的数据。
-using Value = std::variant<std::monostate, Image, Region, BlobList, double, bool, std::string, Judgement>;
+using Value = std::variant<std::monostate, Image, Region, BlobList, double, bool, std::string, Judgement, Pose>;
 
 // 值的实际类型；monostate 返回空。
 std::optional<PortType> typeOf(const Value& value);

@@ -24,6 +24,7 @@
 | `Bool` | `bool` | 布尔值 |
 | `Text` | `std::string` | 文本 |
 | `Judgement` | `vision::Judgement` | 判定依据：合格与否 + 原因 |
+| `Pose` | `vision::Pose` | 位姿：定位的结果（位置 + 角度） |
 
 ## 2. 三步写一个算子
 

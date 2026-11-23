@@ -52,3 +52,13 @@ TEST(ParamDef, TemplateTypeAcceptsOnlyText) {
     EXPECT_FALSE(t.validate(1.0).ok());
     EXPECT_FALSE(t.validate(true).ok());
 }
+
+// 位姿是一种端口类型：只能连到位姿
+TEST(PortType, PoseIsItsOwnType) {
+    EXPECT_STREQ(toString(PortType::Pose), "pose");
+    EXPECT_EQ(parsePortType("pose"), PortType::Pose);
+    EXPECT_TRUE(isCompatible(PortType::Pose, PortType::Pose));
+    EXPECT_FALSE(isCompatible(PortType::Pose, PortType::Number));
+    EXPECT_FALSE(isCompatible(PortType::Image, PortType::Pose));
+    EXPECT_EQ(typeOf(Value(Pose{})), PortType::Pose);
+}

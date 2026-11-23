@@ -57,13 +57,14 @@ const char* toString(PortType type) {
         case PortType::Bool: return "bool";
         case PortType::Text: return "text";
         case PortType::Judgement: return "judgement";
+        case PortType::Pose: return "pose";
     }
     return "unknown";
 }
 
 std::optional<PortType> parsePortType(const std::string& text) {
     for (auto t : {PortType::Image, PortType::Region, PortType::Blobs, PortType::Number, PortType::Bool,
-                   PortType::Text, PortType::Judgement}) {
+                   PortType::Text, PortType::Judgement, PortType::Pose}) {
         if (text == toString(t)) return t;
     }
     return std::nullopt;
@@ -80,6 +81,7 @@ std::optional<PortType> typeOf(const Value& value) {
         case 5: return PortType::Bool;
         case 6: return PortType::Text;
         case 7: return PortType::Judgement;
+        case 8: return PortType::Pose;
         default: return std::nullopt;
     }
 }
