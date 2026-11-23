@@ -92,6 +92,22 @@ bool inv = ctx.flag("invert");
 const std::string& method = ctx.text("method");   // Choice 和 Text 都用 text()
 ```
 
+**模板参数**：算子需要一幅事先框好的模板图像时（例如定位），加一个“模板”类型的参数，默认值是空文本：
+
+```cpp
+{"template", ParamType::Template, std::string(""), std::nullopt, std::nullopt, {}, "匹配模板"},
+```
+
+在 `execute()` 里取模板。拿到的是解码好的图像和它在样图上的位置，不用关心它存在哪里：
+
+```cpp
+auto t = ctx.matchTemplate("template");
+if (!t) return t.error();                    // 还没有设置
+cv::Mat templ = imaging::view(t.value().image);
+double x0 = t.value().referenceX;            // 模板左上角在样图上的位置
+int w = t.value().sourceWidth;               // 样图的尺寸：模板只适用于同样尺寸的图像
+```
+
 > ⚠️ 文本默认值要写成 `std::string("...")`，不能直接写 `"..."`。直接写字符串字面量时，C++ 会把它当成 `bool`。
 
 ## 4. 常用工具

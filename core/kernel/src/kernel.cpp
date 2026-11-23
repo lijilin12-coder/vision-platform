@@ -101,6 +101,8 @@ Status ParamDef::validate(const ParamValue& value) const {
         }
         case ParamType::Bool:
             return std::holds_alternative<bool>(value) ? Status::success() : fail("必须是布尔值");
+        case ParamType::Template:
+            return std::holds_alternative<std::string>(value) ? Status::success() : fail("必须是匹配模板的 ID");
         case ParamType::Text:
             return std::holds_alternative<std::string>(value) ? Status::success() : fail("必须是文本");
         case ParamType::Choice: {

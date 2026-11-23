@@ -24,13 +24,15 @@ Result<RecipeVersionId> RecipeVersionId::parse(const std::string& text) {
 }
 
 RecipeVersion::RecipeVersion(RecipeVersionId id, std::string recipeName, std::vector<Node> nodes,
-                             std::vector<Edge> edges, std::vector<NamedRegion> regions, VersionStatus status)
+                             std::vector<Edge> edges, std::vector<NamedRegion> regions, VersionStatus status,
+                             std::vector<MatchTemplate> templates)
     : id_(std::move(id)),
       recipeName_(std::move(recipeName)),
       nodes_(std::move(nodes)),
       edges_(std::move(edges)),
       regions_(std::move(regions)),
-      status_(status) {}
+      status_(status),
+      templates_(std::move(templates)) {}
 
 Status RecipeVersion::deprecate() {
     if (status_ == VersionStatus::Deprecated) {

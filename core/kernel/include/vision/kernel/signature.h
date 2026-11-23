@@ -15,7 +15,9 @@ namespace vision {
 using ParamValue = std::variant<double, bool, std::string>;
 using ParamMap = std::map<std::string, ParamValue>;
 
-enum class ParamType { Number, Bool, Text, Choice };
+// Template：值是方案里某个匹配模板的 ID（文本）；空文本表示还没有设置。
+// 这个 ID 是否真的存在，由方案编排检查（不变量 R7）；这里只检查它是文本。
+enum class ParamType { Number, Bool, Text, Choice, Template };
 
 // 参数定义（术语表 §2）：名称、类型、默认值、取值范围。
 struct ParamDef {

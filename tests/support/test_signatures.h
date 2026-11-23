@@ -31,6 +31,16 @@ inline OperatorSignature threshold() {
     return s;
 }
 
+// 带一个模板参数的算子：图像 → 位置是否找到（这里只关心签名）
+inline OperatorSignature locate() {
+    OperatorSignature s;
+    s.id = "test.locate";
+    s.inputs = {{"image", PortType::Image, false}};
+    s.outputs = {{"image", PortType::Image, false}};
+    s.params = {{"template", ParamType::Template, std::string(""), std::nullopt, std::nullopt, {}, "匹配模板"}};
+    return s;
+}
+
 inline OperatorSignature blob() {
     OperatorSignature s;
     s.id = "test.blob";

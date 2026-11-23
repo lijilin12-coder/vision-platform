@@ -13,6 +13,7 @@
 #include "vision/authoring/api.h"
 #include "vision/catalog/api.h"
 #include "vision/common/log.h"
+#include "vision/content/content_store.h"
 #include "vision/eventbus/in_memory_event_bus.h"
 #include "vision/execution/api.h"
 #include "vision/persistence/json_repositories.h"
@@ -43,6 +44,8 @@ struct App {
     persistence::JsonRecipeVersionRepository versions;
     persistence::JsonReleaseRepository releaseRepository;
     persistence::JsonStationRepository stationRepository;
+    content::FileContentStore contentStore;  // 按内容哈希存放的二进制内容（现在只有匹配模板）
+    content::TemplateContent templates;
     authoring::AuthoringService authoring;
     execution::ExecutionService execution;
     AuthoringRecipeSource recipeSource;
@@ -66,6 +69,8 @@ struct App {
           versions(data),
           releaseRepository(data),
           stationRepository(data),
+          contentStore(data),
+          templates(contentStore),
           authoring(recipes, versions, catalog::OperatorCatalog::global(), bus),
           execution(catalog::OperatorCatalog::global(), bus),
           recipeSource(authoring),
@@ -78,6 +83,9 @@ struct App {
           candidateEditor(authoring),
           trialRunner(authoring, execution),
           goldenCases(goldenSets) {
+        // 匹配模板：方案编排往内容仓库里存，检测引擎从内容仓库里取
+        authoring.useTemplateStore(templates);
+        execution.useTemplateSource(templates);
         bus.subscribe("*", [this](const EventPtr& e) {
             // 每个领域事件都记入日志：事后可以还原“发生过什么”。
             // 每次检测都有一个“检测已完成”，数量很大，记为 debug，平时不输出。

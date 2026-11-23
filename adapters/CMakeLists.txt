@@ -62,3 +62,11 @@ target_link_libraries(vision_llm
   PUBLIC assistant_domain
   PRIVATE nlohmann_json::nlohmann_json ${OpenCV_LIBS})
 target_include_directories(vision_llm SYSTEM PRIVATE ${OpenCV_INCLUDE_DIRS})
+
+# 内容寻址存储（ADR-20）和匹配模板的存取。
+# 方案构建平台用它保存模板；两个平台都用它在加载方案时读取模板。
+add_library(vision_content STATIC content/src/content_store.cpp)
+target_include_directories(vision_content PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/content/include)
+target_link_libraries(vision_content
+  PUBLIC authoring_application execution_application
+  PRIVATE vision_imaging)

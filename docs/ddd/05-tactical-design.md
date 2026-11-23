@@ -56,7 +56,7 @@ Recipe（聚合根）
     ├─ NamedRegion（实体）× N           regionId, name, roi: Roi
     ├─ ModelDependency（值对象）× N     slot, modelId, compatibleMajor
     ├─ CalibrationRequirement（值对象）? unit
-    └─ TemplateRef（值对象）× N         匹配模板图像的内容哈希
+    └─ MatchTemplate（实体）× N         templateId, name, 内容哈希, 尺寸, 基准位置, 样图尺寸（见 09）
 ```
 
 `RoiSpec` 是三选一的值对象：`Absolute(Roi)` | `Relative(Roi，相对于输入的位姿)` | `Named(regionId)`。
@@ -71,6 +71,8 @@ Recipe（聚合根）
 | R4 | 参数值满足算子快照里的参数定义（类型、范围） |
 | R5 | `Named` ROI 引用的具名区域存在；被引用的具名区域不能删除 |
 | R6 | 删除节点时，相连的连线一并删除 |
+| R7 | 模板参数的值必须是本方案里存在的匹配模板（或者为空）；仍被节点引用的匹配模板不能删除 |
+| R8 | 匹配模板的名字在方案内唯一；尺寸至少 8×8，并且完全落在样图之内 |
 
 **发布时才检查的规则**
 
@@ -81,6 +83,7 @@ Recipe（聚合根）
 | P3 | 每个需要模型的节点，都声明了模型依赖 |
 | P4 | 有节点输出毫米单位的测量值时，必须声明标定需求 |
 | P5 | 至少有一个节点为判定提供判定依据 |
+| P6 | 每个模板参数都已设置 |
 
 **命令 → 事件**
 

@@ -35,7 +35,9 @@ OpRun run(const std::string& id, const std::map<std::string, Value>& inputs, con
     for (const auto& [k, v] : overrides) {
         const ParamDef* def = meta->signature.findParam(k);
         EXPECT_NE(def, nullptr) << id << " 没有参数 " << k;
-        if (def != nullptr) EXPECT_TRUE(def->validate(v).ok()) << id << "." << k;
+        if (def != nullptr) {
+            EXPECT_TRUE(def->validate(v).ok()) << id << "." << k;
+        }
         params[k] = v;
     }
     auto op = catalog.create(id, meta->signature.majorVersion);

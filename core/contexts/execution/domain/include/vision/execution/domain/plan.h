@@ -12,6 +12,7 @@
 
 #include "vision/common/result.h"
 #include "vision/kernel/geometry.h"
+#include "vision/kernel/match_template.h"
 #include "vision/kernel/signature.h"
 #include "vision/kernel/value.h"
 
@@ -24,6 +25,8 @@ struct PlanNode {
     OperatorSignature signature;
     ParamMap params;
     std::optional<Roi> roi;
+    // 模板参数名 → 已经解码好的匹配模板。编译执行计划之前就准备好，之后每次检测不再读取、解码
+    std::map<std::string, MatchTemplateData> templates;
 };
 
 struct PlanEdge {
@@ -50,7 +53,8 @@ public:
 class NodeRunnerFactory {
 public:
     virtual ~NodeRunnerFactory() = default;
-    virtual Result<std::shared_ptr<NodeRunner>> create(const OperatorSignature& signature) = 0;
+    // 运行器在创建时就拿到整个节点的定义（包括它的匹配模板），之后每次 run 只需要这一次检测的数据
+    virtual Result<std::shared_ptr<NodeRunner>> create(const PlanNode& node) = 0;
 };
 
 // ---- 值对象：执行计划 ----

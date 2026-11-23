@@ -148,6 +148,28 @@ jobs:
           if ($width.workflow.id -ne "width-measure") { throw "最新的会话不是宽度测量的" }
           if ($width.endReason -ne "criteria-met") { throw "宽度测量没有调到达标" }
           if (-not $width.report.blind.meetsCriteria) { throw "宽度测量在盲测集上没有达标" }
+      - name: 匹配模板（中文数据目录下的内容仓库）
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+          function Check { if ($LASTEXITCODE -ne 0) { throw "命令失败，退出码 $LASTEXITCODE" } }
+          function Last($lines) { return ($lines | Select-Object -Last 1).Trim() }
+          $cli = ".\build\apps\vision-cli.exe"
+          $data = "$env:RUNNER_TEMP\模板数据"
+          $images = "$env:RUNNER_TEMP\模板样图"
+          & $cli --data $data sample-images $images; Check
+          $recipe = Last (& $cli --data $data recipe new 模板试用); Check
+          $template = Last (& $cli --data $data recipe template add $recipe 零件一角 "$images\ok_01.png" 120 90 64 64); Check
+          if ($template -ne "t1") { throw "模板 ID 应该是 t1，实际是 $template" }
+          # 内容按哈希存成了一个文件；同一块再框一次，不会多出文件
+          & $cli --data $data recipe template add $recipe 同一块 "$images\ok_01.png" 120 90 64 64; Check
+          $files = @(Get-ChildItem "$data\content" -Recurse -File)
+          if ($files.Count -ne 1) { throw "内容仓库里应该只有 1 个文件，实际有 $($files.Count) 个" }
+          # 伸出样图的框必须被拒绝
+          & $cli --data $data recipe template add $recipe 出界 "$images\ok_01.png" 600 90 64 64
+          if ($LASTEXITCODE -eq 0) { throw "伸出样图的模板没有被拒绝" }
+          & $cli --data $data recipe show $recipe; Check
       - name: 编译并运行教程示例
         shell: cmd
         run: docs\tutorial\cpp\run_all.bat
