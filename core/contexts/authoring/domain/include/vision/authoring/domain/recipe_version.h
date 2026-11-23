@@ -30,7 +30,8 @@ enum class VersionStatus { Active, Deprecated };
 class RecipeVersion : public EventRecorder {
 public:
     RecipeVersion(RecipeVersionId id, std::string recipeName, std::vector<Node> nodes, std::vector<Edge> edges,
-                  std::vector<NamedRegion> regions, VersionStatus status = VersionStatus::Active);
+                  std::vector<NamedRegion> regions, VersionStatus status = VersionStatus::Active,
+                  std::vector<MatchTemplate> templates = {});
 
     Status deprecate();
 
@@ -39,6 +40,8 @@ public:
     const std::vector<Node>& nodes() const { return nodes_; }
     const std::vector<Edge>& edges() const { return edges_; }
     const std::vector<NamedRegion>& regions() const { return regions_; }
+    // 匹配模板随方案版本一起冻结：和参数一样，是这个版本的一部分
+    const std::vector<MatchTemplate>& templates() const { return templates_; }
     VersionStatus status() const { return status_; }
 
     // 用到的算子 ID 和主版本号（D5-1：部署和导入时检查本平台是否具备）。
@@ -54,6 +57,7 @@ private:
     std::vector<Edge> edges_;
     std::vector<NamedRegion> regions_;
     VersionStatus status_;
+    std::vector<MatchTemplate> templates_;
 };
 
 }  // namespace vision::authoring

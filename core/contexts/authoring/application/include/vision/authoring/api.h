@@ -11,6 +11,7 @@
 #include "vision/common/domain_event.h"
 #include "vision/common/result.h"
 #include "vision/kernel/geometry.h"
+#include "vision/kernel/image.h"
 #include "vision/kernel/signature.h"
 
 namespace vision::catalog {
@@ -27,7 +28,9 @@ class RecipeVersionRepository;
 // 下游上下文只认这个格式。编排内部怎么变都不影响它，只要格式不变。
 // 注意：这里已经没有画布布局，具名区域也已展开成节点自己的 ROI。
 
-inline constexpr const char* kRecipeDocumentSchemaVersion = "0.1";
+// 0.2：新增 templates（匹配模板）。0.1 的文档没有这一段，照样能读。
+inline constexpr const char* kRecipeDocumentSchemaVersion = "0.2";
+inline bool isSupportedRecipeDocumentSchema(const std::string& version) { return version == "0.1" || version == "0.2"; }
 
 struct RecipeDocumentNode {
     std::string id;
@@ -42,12 +45,37 @@ struct RecipeDocumentEdge {
     std::string to;
 };
 
+// 匹配模板：对内容的引用（哈希）+ 它在样图上的位置。图像内容本身不在文档里，按哈希到内容仓库取。
+struct RecipeDocumentTemplate {
+    std::string id;       // 节点的模板参数里写的就是它
+    std::string name;
+    std::string sha256;
+    long long bytes = 0;
+    int width = 0, height = 0;
+    double referenceX = 0, referenceY = 0;
+    int sourceWidth = 0, sourceHeight = 0;
+};
+
 struct RecipeVersionDocument {
     std::string schemaVersion = kRecipeDocumentSchemaVersion;
     std::string versionId;
     std::string recipeName;
     std::vector<RecipeDocumentNode> nodes;
     std::vector<RecipeDocumentEdge> edges;
+    std::vector<RecipeDocumentTemplate> templates;
+};
+
+// ===== 端口：保存匹配模板的图像内容 =====
+// 从样图上裁出一块、保存起来，返回内容的哈希。同样的内容保存多少次，结果都一样（内容寻址，ADR-20）。
+struct StoredContent {
+    std::string sha256;
+    long long bytes = 0;
+};
+
+class TemplateStore {
+public:
+    virtual ~TemplateStore() = default;
+    virtual Result<StoredContent> storeCrop(const Image& source, int x, int y, int width, int height) = 0;
 };
 
 // ===== 查询用 DTO =====
@@ -64,6 +92,7 @@ struct DraftView {
     std::string name;
     std::vector<DraftNodeView> nodes;
     std::vector<RecipeDocumentEdge> edges;
+    std::vector<RecipeDocumentTemplate> templates;
 };
 
 // ===== 应用服务 =====
@@ -87,6 +116,15 @@ public:
     Status useNamedRegion(const std::string& recipeId, const std::string& nodeId, const std::string& regionId);
     Status removeNamedRegion(const std::string& recipeId, const std::string& regionId);
 
+    // 匹配模板（docs/ddd/09-match-template-and-locating.md）。
+    // 要创建模板，组装根必须先用 useTemplateStore 接上保存图像内容的地方。
+    void useTemplateStore(TemplateStore& store) { templateStore_ = &store; }
+    // 从样图 source 上框出 (x, y, width, height) 这一块作为模板，返回模板 ID
+    Result<std::string> createMatchTemplate(const std::string& recipeId, const std::string& name, const Image& source,
+                                            int x, int y, int width, int height);
+    Status renameMatchTemplate(const std::string& recipeId, const std::string& templateId, const std::string& name);
+    Status removeMatchTemplate(const std::string& recipeId, const std::string& templateId);
+
     // 发布，返回方案版本 ID
     Result<std::string> publish(const std::string& recipeId);
     Status deprecateVersion(const std::string& versionId);
@@ -105,6 +143,7 @@ private:
     RecipeVersionRepository& versions_;
     const catalog::OperatorCatalog& catalog_;
     EventPublisher& events_;
+    TemplateStore* templateStore_ = nullptr;
 };
 
 }  // namespace vision::authoring

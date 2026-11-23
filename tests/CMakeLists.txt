@@ -97,3 +97,11 @@ gtest_discover_tests(llm_advisor_tests)
 add_executable(operators_tests operators_test.cpp)
 target_link_libraries(operators_tests PRIVATE catalog_application vision_operators vision_imaging GTest::gtest_main)
 gtest_discover_tests(operators_tests)
+
+# ---- 匹配模板机制：内容寻址存储、模板随方案版本冻结、从方案一路传到算子、随上线包部署 ----
+add_executable(template_integration_tests template_integration_test.cpp)
+target_link_libraries(template_integration_tests PRIVATE
+  station_application release_application authoring_application execution_application catalog_application
+  vision_operators vision_imaging vision_eventbus vision_persistence vision_content
+  GTest::gtest_main)
+gtest_discover_tests(template_integration_tests)

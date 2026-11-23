@@ -11,6 +11,7 @@
 
 #include "vision/common/result.h"
 #include "vision/kernel/geometry.h"
+#include "vision/kernel/match_template.h"
 #include "vision/kernel/signature.h"
 #include "vision/kernel/value.h"
 
@@ -27,8 +28,10 @@ struct OperatorMeta {
 // 算子执行时的上下文：读取输入、参数、ROI，写入输出。
 class OpContext {
 public:
-    OpContext(const std::map<std::string, Value>& inputs, const ParamMap& params, std::optional<Roi> roi)
-        : inputs_(inputs), params_(params), roi_(std::move(roi)) {}
+    // templates：参数名 → 已经解码好的匹配模板。没有模板参数的算子不用管它。
+    OpContext(const std::map<std::string, Value>& inputs, const ParamMap& params, std::optional<Roi> roi,
+              const std::map<std::string, MatchTemplateData>* templates = nullptr)
+        : inputs_(inputs), params_(params), roi_(std::move(roi)), templates_(templates) {}
 
     // 读取某个输入；类型不对时返回错误。
     template <typename T>
@@ -45,6 +48,14 @@ public:
     const std::string& text(const std::string& name) const { return std::get<std::string>(params_.at(name)); }
     const std::optional<Roi>& roi() const { return roi_; }
 
+    // 取模板参数对应的匹配模板。算子拿到的是图像，不用关心它存在哪里。
+    Result<MatchTemplateData> matchTemplate(const std::string& param) const {
+        if (templates_ != nullptr) {
+            if (const auto it = templates_->find(param); it != templates_->end()) return it->second;
+        }
+        return Result<MatchTemplateData>::failure("operator.template", "模板参数 " + param + " 还没有设置");
+    }
+
     void setOutput(const std::string& name, Value value) { outputs_[name] = std::move(value); }
     std::map<std::string, Value>& outputs() { return outputs_; }
 
@@ -52,6 +63,7 @@ private:
     const std::map<std::string, Value>& inputs_;
     const ParamMap& params_;
     std::optional<Roi> roi_;
+    const std::map<std::string, MatchTemplateData>* templates_;
     std::map<std::string, Value> outputs_;
 };
 

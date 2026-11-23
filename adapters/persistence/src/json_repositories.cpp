@@ -61,6 +61,7 @@ const char* paramTypeName(ParamType t) {
         case ParamType::Bool: return "bool";
         case ParamType::Text: return "text";
         case ParamType::Choice: return "choice";
+        case ParamType::Template: return "template";
     }
     return "number";
 }
@@ -69,6 +70,7 @@ ParamType paramTypeFrom(const std::string& s) {
     if (s == "bool") return ParamType::Bool;
     if (s == "text") return ParamType::Text;
     if (s == "choice") return ParamType::Choice;
+    if (s == "template") return ParamType::Template;
     return ParamType::Number;
 }
 
@@ -180,6 +182,39 @@ std::vector<NamedRegion> regionsFromJson(const json& a) {
     return out;
 }
 
+// 匹配模板（方案草稿和方案版本里存的格式相同）
+json templatesToJson(const std::vector<MatchTemplate>& templates) {
+    json a = json::array();
+    for (const auto& t : templates) {
+        a.push_back({{"id", t.id}, {"name", t.spec.name}, {"sha256", t.spec.sha256}, {"bytes", t.spec.bytes},
+                     {"width", t.spec.width}, {"height", t.spec.height},
+                     {"reference", {{"x", t.spec.referenceX}, {"y", t.spec.referenceY}}},
+                     {"source", {{"width", t.spec.sourceWidth}, {"height", t.spec.sourceHeight}}}});
+    }
+    return a;
+}
+
+// 旧文件里没有 templates 这一段：就是没有模板
+std::vector<MatchTemplate> templatesFromJson(const json& parent) {
+    std::vector<MatchTemplate> out;
+    if (!parent.contains("templates")) return out;
+    for (const auto& j : parent.at("templates")) {
+        MatchTemplate t;
+        t.id = j.at("id").get<std::string>();
+        t.spec.name = j.at("name").get<std::string>();
+        t.spec.sha256 = j.at("sha256").get<std::string>();
+        t.spec.bytes = j.at("bytes").get<long long>();
+        t.spec.width = j.at("width").get<int>();
+        t.spec.height = j.at("height").get<int>();
+        t.spec.referenceX = j.at("reference").at("x").get<double>();
+        t.spec.referenceY = j.at("reference").at("y").get<double>();
+        t.spec.sourceWidth = j.at("source").at("width").get<int>();
+        t.spec.sourceHeight = j.at("source").at("height").get<int>();
+        out.push_back(std::move(t));
+    }
+    return out;
+}
+
 }  // namespace
 
 // ---------- JsonRecipeRepository ----------
@@ -192,7 +227,8 @@ Status JsonRecipeRepository::save(const Recipe& r) {
     json j = {{"schema", "vision.recipe/0.1"},   {"id", r.id()},
               {"name", r.name()},                {"nextNodeNumber", r.nextNodeNumber()},
               {"nextVersionNumber", r.nextVersionNumber()}, {"nodes", nodes},
-              {"edges", edgesToJson(r.edges())}, {"regions", regionsToJson(r.regions())}};
+              {"edges", edgesToJson(r.edges())}, {"regions", regionsToJson(r.regions())},
+              {"templates", templatesToJson(r.templates())}};
     return writeFileAtomically(dir_ / (r.id() + ".json"), j.dump(2));
 }
 
@@ -204,7 +240,7 @@ std::optional<Recipe> JsonRecipeRepository::find(const RecipeId& id) try {
     for (const auto& n : j->at("nodes")) nodes.push_back(nodeFromJson(n));
     return Recipe::restore(j->at("id").get<std::string>(), j->at("name").get<std::string>(),
                            j->at("nextNodeNumber").get<int>(), j->at("nextVersionNumber").get<int>(), std::move(nodes),
-                           edgesFromJson(j->at("edges")), regionsFromJson(j->at("regions")));
+                           edgesFromJson(j->at("edges")), regionsFromJson(j->at("regions")), templatesFromJson(*j));
 } catch (const std::exception&) {
     return std::nullopt;  // POC：文件损坏视为不存在。正式版应返回错误并记录日志
 }
@@ -233,7 +269,8 @@ Status JsonRecipeVersionRepository::save(const RecipeVersion& v) {
               {"status", v.status() == VersionStatus::Active ? "active" : "deprecated"},
               {"nodes", nodes},
               {"edges", edgesToJson(v.edges())},
-              {"regions", regionsToJson(v.regions())}};
+              {"regions", regionsToJson(v.regions())},
+              {"templates", templatesToJson(v.templates())}};
     return writeFileAtomically(dir_ / v.id().recipe / ("v" + std::to_string(v.id().number) + ".json"), j.dump(2));
 }
 
@@ -246,7 +283,7 @@ std::optional<RecipeVersion> JsonRecipeVersionRepository::find(const RecipeVersi
     const auto status = j->at("status").get<std::string>() == "deprecated" ? VersionStatus::Deprecated
                                                                             : VersionStatus::Active;
     return RecipeVersion(id, j->at("recipeName").get<std::string>(), std::move(nodes), edgesFromJson(j->at("edges")),
-                         regionsFromJson(j->at("regions")), status);
+                         regionsFromJson(j->at("regions")), status, templatesFromJson(*j));
 } catch (const std::exception&) {
     return std::nullopt;
 }
@@ -263,8 +300,15 @@ std::string toJson(const RecipeVersionDocument& doc, int indent) {
     }
     json edges = json::array();
     for (const auto& e : doc.edges) edges.push_back({{"from", e.from}, {"to", e.to}});
+    json templates = json::array();
+    for (const auto& t : doc.templates) {
+        templates.push_back({{"id", t.id}, {"name", t.name}, {"sha256", t.sha256}, {"bytes", t.bytes},
+                             {"width", t.width}, {"height", t.height},
+                             {"reference", {{"x", t.referenceX}, {"y", t.referenceY}}},
+                             {"source", {{"width", t.sourceWidth}, {"height", t.sourceHeight}}}});
+    }
     json j = {{"schemaVersion", doc.schemaVersion}, {"versionId", doc.versionId}, {"recipeName", doc.recipeName},
-              {"nodes", nodes}, {"edges", edges}};
+              {"nodes", nodes}, {"edges", edges}, {"templates", templates}};
     return j.dump(indent);
 }
 
@@ -285,6 +329,22 @@ Result<RecipeVersionDocument> recipeDocumentFromJson(const std::string& text) {
             doc.nodes.push_back(std::move(n));
         }
         for (const auto& je : j.at("edges")) doc.edges.push_back({je.at("from").get<std::string>(), je.at("to").get<std::string>()});
+        if (j.contains("templates")) {  // 0.1 的文档没有这一段
+            for (const auto& jt : j.at("templates")) {
+                RecipeDocumentTemplate t;
+                t.id = jt.at("id").get<std::string>();
+                t.name = jt.at("name").get<std::string>();
+                t.sha256 = jt.at("sha256").get<std::string>();
+                t.bytes = jt.at("bytes").get<long long>();
+                t.width = jt.at("width").get<int>();
+                t.height = jt.at("height").get<int>();
+                t.referenceX = jt.at("reference").at("x").get<double>();
+                t.referenceY = jt.at("reference").at("y").get<double>();
+                t.sourceWidth = jt.at("source").at("width").get<int>();
+                t.sourceHeight = jt.at("source").at("height").get<int>();
+                doc.templates.push_back(std::move(t));
+            }
+        }
         return doc;
     } catch (const std::exception& e) {
         return Result<RecipeVersionDocument>::failure("persistence.parse", std::string("方案文档解析失败：") + e.what());

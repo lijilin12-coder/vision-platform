@@ -49,6 +49,11 @@ constexpr const char* kUsage = R"(用法：vision-cli [--data <目录>] <命令>
   recipe set-param <方案ID> <节点> <参数> <值>
   recipe set-roi <方案ID> <节点> <x> <y> <宽> <高>
   recipe show <方案ID>
+  recipe template add <方案ID> <名称> <样图> <x> <y> <宽> <高>
+                                               从样图上框一块作为匹配模板，输出模板 ID；
+                                               再用 recipe set-param <方案ID> <节点> <参数> <模板ID> 交给节点使用
+  recipe template rename <方案ID> <模板ID> <新名称>
+  recipe template remove <方案ID> <模板ID>     仍被节点使用的模板不能删除
   recipe list
   recipe debug <方案ID> <图像>                  调试运行草稿，显示每个节点的输出
   recipe publish <方案ID>                       发布，输出方案版本 ID
@@ -237,7 +242,28 @@ int cmdRecipeShow(App& app, const std::string& rid) {
         std::cout << "\n";
     }
     for (const auto& e : d.value().edges) std::cout << "  " << e.from << " → " << e.to << "\n";
+    for (const auto& t : d.value().templates) {
+        std::cout << "  匹配模板 " << t.id << "  " << t.name << "  " << t.width << "×" << t.height << "  基准位置 ("
+                  << t.referenceX << ", " << t.referenceY << ")  样图 " << t.sourceWidth << "×" << t.sourceHeight << "  "
+                  << t.sha256.substr(0, 12) << "…\n";
+    }
     return 0;
+}
+
+// recipe template add <方案ID> <名称> <样图> <x> <y> <宽> <高>：从样图上框一块作为匹配模板
+int cmdTemplateAdd(App& app, const std::vector<std::string>& args) {
+    auto source = imaging::loadImage(args[5]);
+    if (!source) return fail(source.error());
+    try {
+        auto id = app.authoring.createMatchTemplate(args[3], args[4], source.value(), std::stoi(args[6]), std::stoi(args[7]),
+                                                    std::stoi(args[8]), std::stoi(args[9]));
+        if (!id) return fail(id.error());
+        std::cout << id.value() << "\n";
+        return 0;
+    } catch (const std::exception&) {
+        std::cerr << "x、y、宽、高必须是整数\n";
+        return 1;
+    }
 }
 
 int cmdInspect(App& app, const std::string& versionId, const std::vector<std::string>& inputs) {
@@ -482,6 +508,18 @@ int main(int argc, char** argv) {
             return st ? 0 : fail(st.error());
         }
         if (sub == "show" && need(3)) return cmdRecipeShow(app, args[2]);
+        if (sub == "template" && need(3)) {
+            const auto& action = args[2];
+            if (action == "add" && need(10)) return cmdTemplateAdd(app, args);
+            if (action == "remove" && need(5)) {
+                auto st = app.authoring.removeMatchTemplate(args[3], args[4]);
+                return st ? 0 : fail(st.error());
+            }
+            if (action == "rename" && need(6)) {
+                auto st = app.authoring.renameMatchTemplate(args[3], args[4], args[5]);
+                return st ? 0 : fail(st.error());
+            }
+        }
         if (sub == "debug" && need(4)) return cmdDebug(app, args[2], args[3]);
         if (sub == "publish" && need(3)) {
             auto v = app.authoring.publish(args[2]);

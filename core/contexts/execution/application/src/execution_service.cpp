@@ -19,11 +19,12 @@ namespace {
 // 适配器：把算子目录里的 Operator 适配成本上下文的 NodeRunner 端口。
 class CatalogNodeRunner final : public NodeRunner {
 public:
-    CatalogNodeRunner(std::unique_ptr<catalog::Operator> op, OperatorSignature sig)
-        : op_(std::move(op)), sig_(std::move(sig)) {}
+    CatalogNodeRunner(std::unique_ptr<catalog::Operator> op, OperatorSignature sig,
+                      std::map<std::string, MatchTemplateData> templates)
+        : op_(std::move(op)), sig_(std::move(sig)), templates_(std::move(templates)) {}
 
     Result<PortValues> run(const PortValues& inputs, const ParamMap& params, const std::optional<Roi>& roi) override {
-        catalog::OpContext ctx(inputs, params, roi);
+        catalog::OpContext ctx(inputs, params, roi, &templates_);
         try {
             if (auto st = op_->execute(ctx); !st) return st.error();
         } catch (const std::exception& e) {
@@ -40,15 +41,17 @@ public:
 private:
     std::unique_ptr<catalog::Operator> op_;
     OperatorSignature sig_;
+    std::map<std::string, MatchTemplateData> templates_;
 };
 
 class CatalogRunnerFactory final : public NodeRunnerFactory {
 public:
     explicit CatalogRunnerFactory(const catalog::OperatorCatalog& c) : catalog_(c) {}
-    Result<std::shared_ptr<NodeRunner>> create(const OperatorSignature& sig) override {
+    Result<std::shared_ptr<NodeRunner>> create(const PlanNode& node) override {
+        const OperatorSignature& sig = node.signature;
         auto op = catalog_.create(sig.id, sig.majorVersion);
         if (!op) return op.error();
-        return std::shared_ptr<NodeRunner>(std::make_shared<CatalogNodeRunner>(std::move(op).value(), sig));
+        return std::shared_ptr<NodeRunner>(std::make_shared<CatalogNodeRunner>(std::move(op).value(), sig, node.templates));
     }
 
 private:
@@ -56,8 +59,9 @@ private:
 };
 
 // 发布语言 → 本上下文的模型（防止上游模型渗透进来）
-Result<PlanSpec> toPlanSpec(const authoring::RecipeVersionDocument& doc, const catalog::OperatorCatalog& catalog) {
-    if (doc.schemaVersion != authoring::kRecipeDocumentSchemaVersion) {
+Result<PlanSpec> toPlanSpec(const authoring::RecipeVersionDocument& doc, const catalog::OperatorCatalog& catalog,
+                            TemplateSource* templateSource) {
+    if (!authoring::isSupportedRecipeDocumentSchema(doc.schemaVersion)) {
         return Result<PlanSpec>::failure("execution.schema", "不支持的方案文档版本：" + doc.schemaVersion);
     }
     PlanSpec spec;
@@ -69,7 +73,34 @@ Result<PlanSpec> toPlanSpec(const authoring::RecipeVersionDocument& doc, const c
             return Result<PlanSpec>::failure("execution.operator_major",
                                              "算子 " + n.operatorId + " 主版本号不匹配（D5-1）");
         }
-        spec.nodes.push_back(PlanNode{n.id, meta->signature, n.params, n.roi});
+        PlanNode node{n.id, meta->signature, n.params, n.roi, {}};
+        // 匹配模板：现在就取出来、解码好。出了问题在这里（加载方案时）暴露，而不是等到产线上第一次检测
+        for (const auto& def : meta->signature.params) {
+            if (def.type != ParamType::Template) continue;
+            const auto value = n.params.find(def.name);
+            const std::string templateId =
+                value != n.params.end() && std::holds_alternative<std::string>(value->second) ? std::get<std::string>(value->second) : "";
+            const std::string where = "节点 " + n.id + " 的模板参数 " + def.name;
+            if (templateId.empty()) return Result<PlanSpec>::failure("execution.template_unset", where + " 还没有设置");
+            const auto ref = std::find_if(doc.templates.begin(), doc.templates.end(),
+                                          [&](const authoring::RecipeDocumentTemplate& t) { return t.id == templateId; });
+            if (ref == doc.templates.end()) {
+                return Result<PlanSpec>::failure("execution.template_missing", where + " 指向的匹配模板 " + templateId + " 不在方案里");
+            }
+            if (templateSource == nullptr) {
+                return Result<PlanSpec>::failure("execution.no_template_source", "这个程序没有配置读取匹配模板的地方");
+            }
+            auto image = templateSource->load(*ref);
+            if (!image) {
+                return Result<PlanSpec>::failure(image.error().code, "匹配模板“" + ref->name + "”读取失败：" + image.error().message);
+            }
+            if (image.value().width() != ref->width || image.value().height() != ref->height) {
+                return Result<PlanSpec>::failure("execution.template_corrupt", "匹配模板“" + ref->name + "”的尺寸和方案里记录的不一致");
+            }
+            node.templates[def.name] = MatchTemplateData{std::move(image).value(), ref->referenceX, ref->referenceY,
+                                                         ref->sourceWidth, ref->sourceHeight};
+        }
+        spec.nodes.push_back(std::move(node));
     }
     for (const auto& e : doc.edges) {
         const auto a = e.from.find('.'), b = e.to.find('.');
@@ -187,6 +218,7 @@ struct ExecutionService::Impl {
     CatalogRunnerFactory factory;
     ExecutionPlanner planner;
     Executor executor;
+    TemplateSource* templateSource = nullptr;
     std::mutex cacheMutex;
     std::map<std::string, std::shared_ptr<const ExecutionPlan>> planCache;  // 按方案版本缓存（02-architecture §6.4）
 
@@ -198,7 +230,7 @@ struct ExecutionService::Impl {
             std::lock_guard<std::mutex> lock(cacheMutex);
             if (auto it = planCache.find(doc.versionId); it != planCache.end()) return it->second;
         }
-        auto spec = toPlanSpec(doc, catalog);
+        auto spec = toPlanSpec(doc, catalog, templateSource);
         if (!spec) return spec.error();
         auto plan = planner.plan(spec.value());
         if (!plan) return plan.error();
@@ -263,6 +295,8 @@ ExecutionService::ExecutionService(const catalog::OperatorCatalog& catalog, Even
     : impl_(std::make_unique<Impl>(catalog, events)) {}
 
 ExecutionService::~ExecutionService() = default;
+
+void ExecutionService::useTemplateSource(TemplateSource& source) { impl_->templateSource = &source; }
 
 Result<InspectionReport> ExecutionService::inspect(const authoring::RecipeVersionDocument& recipe, const Image& frame,
                                                    RunPurpose purpose) {

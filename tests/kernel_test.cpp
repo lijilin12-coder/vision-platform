@@ -43,3 +43,12 @@ TEST(PortType, CompatibilityIsStrictForNow) {
     EXPECT_TRUE(isCompatible(PortType::Image, PortType::Image));
     EXPECT_FALSE(isCompatible(PortType::Image, PortType::Region));
 }
+
+// 模板参数的值是匹配模板的 ID（文本）；空文本表示还没有设置。ID 是否存在由方案编排检查（R7）
+TEST(ParamDef, TemplateTypeAcceptsOnlyText) {
+    const ParamDef t{"template", ParamType::Template, std::string(""), std::nullopt, std::nullopt, {}, ""};
+    EXPECT_TRUE(t.validate(std::string("t1")).ok());
+    EXPECT_TRUE(t.validate(std::string("")).ok());
+    EXPECT_FALSE(t.validate(1.0).ok());
+    EXPECT_FALSE(t.validate(true).ok());
+}

@@ -43,7 +43,8 @@ class FakeFactory final : public NodeRunnerFactory {
 public:
     int blobs = 0;
     std::string failOperator;
-    Result<std::shared_ptr<NodeRunner>> create(const OperatorSignature& sig) override {
+    Result<std::shared_ptr<NodeRunner>> create(const PlanNode& node) override {
+        const OperatorSignature& sig = node.signature;
         return std::shared_ptr<NodeRunner>(std::make_shared<FakeRunner>(sig, blobs, sig.id == failOperator));
     }
 };
@@ -52,11 +53,11 @@ public:
 PlanSpec pipelineSpec() {
     PlanSpec s;
     s.recipeVersionId = "r@v1";
-    s.nodes = {{"n5", test::judge(), {}, std::nullopt},
-               {"n3", test::threshold(), test::threshold().defaultParams(), std::nullopt},
-               {"n1", test::imageInput(), {}, std::nullopt},
-               {"n4", test::blob(), {}, std::nullopt},
-               {"n2", test::gray(), {}, std::nullopt}};
+    s.nodes = {{"n5", test::judge(), {}, std::nullopt, {}},
+               {"n3", test::threshold(), test::threshold().defaultParams(), std::nullopt, {}},
+               {"n1", test::imageInput(), {}, std::nullopt, {}},
+               {"n4", test::blob(), {}, std::nullopt, {}},
+               {"n2", test::gray(), {}, std::nullopt, {}}};
     s.edges = {{"n1", "image", "n2", "image"},
                {"n2", "image", "n3", "image"},
                {"n3", "region", "n4", "region"},

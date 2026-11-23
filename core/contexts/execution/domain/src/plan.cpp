@@ -75,7 +75,7 @@ Result<ExecutionPlan> ExecutionPlanner::plan(const PlanSpec& spec) const {
             }
         }
         if (!step.isImageInput) {
-            auto runner = factory_.create(node.signature);
+            auto runner = factory_.create(node);
             if (!runner) return runner.error();
             step.runner = runner.value();
         }

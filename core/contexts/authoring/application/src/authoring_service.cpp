@@ -24,6 +24,15 @@ std::string describeRoi(const RoiSpec& roi) {
     return "";
 }
 
+std::vector<RecipeDocumentTemplate> toDocument(const std::vector<MatchTemplate>& templates) {
+    std::vector<RecipeDocumentTemplate> out;
+    for (const auto& t : templates) {
+        out.push_back({t.id, t.spec.name, t.spec.sha256, t.spec.bytes, t.spec.width, t.spec.height, t.spec.referenceX,
+                       t.spec.referenceY, t.spec.sourceWidth, t.spec.sourceHeight});
+    }
+    return out;
+}
+
 }  // namespace
 
 AuthoringService::AuthoringService(RecipeRepository& recipes, RecipeVersionRepository& versions,
@@ -118,6 +127,46 @@ Status AuthoringService::removeNamedRegion(const std::string& recipeId, const st
     return modify(recipeId, [&](Recipe& r) { return r.removeNamedRegion(regionId); });
 }
 
+Result<std::string> AuthoringService::createMatchTemplate(const std::string& recipeId, const std::string& name,
+                                                          const Image& source, int x, int y, int width, int height) {
+    using R = Result<std::string>;
+    if (templateStore_ == nullptr) return R::failure("authoring.no_template_store", "这个程序没有配置保存模板的地方");
+    if (source.empty()) return R::failure("authoring.template_size", "样图是空的");
+    auto recipe = recipes_.find(recipeId);
+    if (!recipe) return notFound(recipeId).error();
+
+    TemplateSpec spec;
+    spec.name = name;
+    spec.width = width;
+    spec.height = height;
+    spec.referenceX = x;
+    spec.referenceY = y;
+    spec.sourceWidth = source.width();
+    spec.sourceHeight = source.height();
+    // 先让聚合检查（R8），通过了再保存图像内容：不把注定被拒绝的图像写进内容仓库
+    if (auto st = recipe->checkNewMatchTemplate(spec); !st) return st.error();
+    auto stored = templateStore_->storeCrop(source, x, y, width, height);
+    if (!stored) return stored.error();
+    spec.sha256 = stored.value().sha256;
+    spec.bytes = stored.value().bytes;
+
+    auto id = recipe->addMatchTemplate(std::move(spec));
+    if (!id) return id.error();
+    if (auto st = recipes_.save(*recipe); !st) return st.error();
+    events_.publishAll(recipe->pullEvents());
+    return id.value();
+}
+
+Status AuthoringService::renameMatchTemplate(const std::string& recipeId, const std::string& templateId,
+                                             const std::string& name) {
+    return modify(recipeId, [&](Recipe& r) { return r.renameMatchTemplate(templateId, name); });
+}
+
+Status AuthoringService::removeMatchTemplate(const std::string& recipeId, const std::string& templateId) {
+    // 只删引用，不删内容：已发布的方案版本可能还在用同一份内容
+    return modify(recipeId, [&](Recipe& r) { return r.removeMatchTemplate(templateId); });
+}
+
 Result<std::string> AuthoringService::publish(const std::string& recipeId) {
     auto recipe = recipes_.find(recipeId);
     if (!recipe) return notFound(recipeId).error();
@@ -145,11 +194,12 @@ Status AuthoringService::deprecateVersion(const std::string& versionId) {
 Result<DraftView> AuthoringService::getDraft(const std::string& recipeId) const {
     auto recipe = recipes_.find(recipeId);
     if (!recipe) return notFound(recipeId).error();
-    DraftView view{recipe->id(), recipe->name(), {}, {}};
+    DraftView view{recipe->id(), recipe->name(), {}, {}, {}};
     for (const auto& n : recipe->nodes()) {
         view.nodes.push_back(DraftNodeView{n.id, n.op.id, n.params, describeRoi(n.roi)});
     }
     for (const auto& e : recipe->edges()) view.edges.push_back({e.from.str(), e.to.str()});
+    view.templates = toDocument(recipe->templates());
     return view;
 }
 
@@ -168,6 +218,7 @@ Result<RecipeVersionDocument> AuthoringService::getVersionDocument(const std::st
         doc.nodes.push_back(RecipeDocumentNode{n.id, n.op.id, n.op.majorVersion, n.params, version->resolveRoi(n)});
     }
     for (const auto& e : version->edges()) doc.edges.push_back({e.from.str(), e.to.str()});
+    doc.templates = toDocument(version->templates());
     return doc;
 }
 
@@ -184,6 +235,7 @@ Result<RecipeVersionDocument> AuthoringService::getDraftDocument(const std::stri
         doc.nodes.push_back(RecipeDocumentNode{n.id, n.op.id, n.op.majorVersion, n.params, draft.resolveRoi(n)});
     }
     for (const auto& e : draft.edges()) doc.edges.push_back({e.from.str(), e.to.str()});
+    doc.templates = toDocument(recipe->templates());
     return doc;
 }
 
