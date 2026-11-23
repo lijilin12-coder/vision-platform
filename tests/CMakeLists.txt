@@ -85,9 +85,15 @@ target_link_libraries(assistant_integration_tests PRIVATE
   vision_assist_adapters vision_llm assistant_application authoring_application execution_application release_application
   catalog_application vision_operators vision_imaging vision_eventbus vision_persistence
   nlohmann_json::nlohmann_json GTest::gtest_main)
+target_compile_definitions(assistant_integration_tests PRIVATE VISION_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 gtest_discover_tests(assistant_integration_tests)
 
 # ---- 大模型顾问（POC-12）：用假的 HTTP 客户端，不访问网络 ----
 add_executable(llm_advisor_tests llm_advisor_test.cpp)
 target_link_libraries(llm_advisor_tests PRIVATE vision_llm nlohmann_json::nlohmann_json GTest::gtest_main)
 gtest_discover_tests(llm_advisor_tests)
+
+# ---- 算子：直接创建算子、喂给它合成的图像、检查输出 ----
+add_executable(operators_tests operators_test.cpp)
+target_link_libraries(operators_tests PRIVATE catalog_application vision_operators vision_imaging GTest::gtest_main)
+gtest_discover_tests(operators_tests)

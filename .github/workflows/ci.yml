@@ -139,6 +139,15 @@ jobs:
           $found = Get-Content $latest.FullName -Raw -Encoding utf8 | ConvertFrom-Json
           if ($found.advisor -notlike "search:*") { throw "最新的会话不是搜索顾问的" }
           if ($found.endReason -ne "criteria-met") { throw "搜索顾问没有把候选方案调到达标" }
+          # 另一类任务：宽度测量（卡尺 + 范围判定）。搜索顾问必须把它调到调参集和盲测集都达标
+          & $cli --data $data workflow import samples\workflows\width-measure.json; Check
+          & $cli --data $data golden sample "$env:RUNNER_TEMP\宽度图集" --scenario width --blind-lighting same; Check
+          & $cli --data $data assist run "$env:RUNNER_TEMP\宽度图集\brief.json" --advisor search; Check
+          $latest = Get-ChildItem "$data\assist-sessions" -Filter *.json | Where-Object { $_.Name -notlike "*.llm.json" } | Sort-Object LastWriteTime | Select-Object -Last 1
+          $width = Get-Content $latest.FullName -Raw -Encoding utf8 | ConvertFrom-Json
+          if ($width.workflow.id -ne "width-measure") { throw "最新的会话不是宽度测量的" }
+          if ($width.endReason -ne "criteria-met") { throw "宽度测量没有调到达标" }
+          if (-not $width.report.blind.meetsCriteria) { throw "宽度测量在盲测集上没有达标" }
       - name: 编译并运行教程示例
         shell: cmd
         run: docs\tutorial\cpp\run_all.bat

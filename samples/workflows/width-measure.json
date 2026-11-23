@@ -1,0 +1,85 @@
+{
+  "id": "width-measure",
+  "version": 1,
+  "name": "宽度测量",
+  "description": "测量零件的宽度并判断是否在公差之内：转灰度 → 卡尺测宽（找左右两条外边缘）→ 范围判定。公差写在工作流里，不可调。",
+  "nodes": [
+    {
+      "key": "input",
+      "operator": "vision.image_input"
+    },
+    {
+      "key": "gray",
+      "operator": "vision.to_gray"
+    },
+    {
+      "key": "caliper",
+      "operator": "vision.caliper_width",
+      "params": {
+        "direction": "horizontal"
+      }
+    },
+    {
+      "key": "judge",
+      "operator": "vision.judge_range",
+      "params": {
+        "min": 395,
+        "max": 405,
+        "label": "宽度",
+        "unit": "像素"
+      }
+    }
+  ],
+  "edges": [
+    [
+      "input.image",
+      "gray.image"
+    ],
+    [
+      "gray.image",
+      "caliper.image"
+    ],
+    [
+      "caliper.width",
+      "judge.value"
+    ]
+  ],
+  "tunables": [
+    {
+      "node": "caliper",
+      "param": "edgeThreshold",
+      "min": 0.5,
+      "max": 100,
+      "initial": 3,
+      "hint": "边缘两侧的平均灰度至少相差多少才算一条边缘。太低会把划痕、污渍当成零件的边缘，量出来偏大；太高会找不到零件的边缘。"
+    },
+    {
+      "node": "caliper",
+      "param": "smooth",
+      "min": 1,
+      "max": 21,
+      "initial": 3,
+      "hint": "求导之前对灰度曲线做平滑的宽度（像素）。大一些更抗噪声，但会让边缘的位置不那么准。"
+    }
+  ],
+  "robustness": [
+    {
+      "kind": "brightness",
+      "levels": [
+        0.7,
+        0.8,
+        0.9,
+        1.1,
+        1.2
+      ]
+    },
+    {
+      "kind": "noise",
+      "levels": [
+        5,
+        10,
+        15
+      ]
+    }
+  ]
+}

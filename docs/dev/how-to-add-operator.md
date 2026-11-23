@@ -102,6 +102,9 @@ const std::string& method = ctx.text("method");   // Choice 和 Text 都用 text
 | 把 OpenCV 结果变回 `Image` | `auto img = imaging::fromMat(mat);` |
 | 生成区域 | `auto region = Region::fromMask(maskImage);`（掩码必须是单通道） |
 | 读 ROI（用户可能没设置） | `if (const auto& roi = ctx.roi()) { roi->x(); ... }` |
+| 取“ROI 和图像的交集”（没设置就是整幅图） | `auto area = workArea(ctx, mat, "operator.xxx");`（在 `operators/src/op_util.h` 里） |
+| 取灰度图像输入，不是灰度就报错 | `auto in = grayInput(ctx, "image", "operator.xxx", "算子的中文名");`（同上） |
+| 把参数变成奇数（很多 OpenCV 函数要求核的大小是奇数） | `int size = oddSize(ctx.number("size"));`（同上） |
 | 输出判定依据 | `ctx.setOutput("judgement", Judgement{pass, "原因说明"});` |
 
 **判定依据很重要**：方案至少要有一个节点输出 `Judgement`，否则不能发布（发布规则 P5）。原因说明要让操作员看得懂，比如“亮斑 2 处，上限 0 处”，而不是“count=2”。
@@ -129,7 +132,9 @@ cmake --build build                       # 新文件会被自动发现
 ./build/apps/vision-cli recipe debug <方案ID> 某张图.png    # 看每个节点的输出
 ```
 
-建议给算子写一个测试，放在 `tests/integration_test.cpp` 里，参考已有的测试。
+给算子写测试，放在 `tests/operators_test.cpp` 里，参考已有的测试。那里有一个 `run(算子ID, 输入, 参数, ROI)` 可以直接运行一个算子，不用搭方案。每个算子至少测三件事：正常情况下算得对；参数起作用；输入不合适时返回看得懂的错误而不是崩溃。
+
+已有的算子和它们的搭配见 [operators.md](operators.md)。
 
 ## 7. 检查清单
 
