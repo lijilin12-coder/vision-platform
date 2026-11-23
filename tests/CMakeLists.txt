@@ -116,3 +116,15 @@ target_link_libraries(data_integration_tests PRIVATE
   data_application release_application vision_content vision_imaging vision_eventbus vision_persistence
   GTest::gtest_main)
 gtest_discover_tests(data_integration_tests)
+
+# ---- 训练闭环（POC-13 第 2 步）：训练任务、模型仓库 ----
+add_executable(training_domain_tests training_domain_test.cpp)
+target_link_libraries(training_domain_tests PRIVATE training_domain models_domain GTest::gtest_main)
+gtest_discover_tests(training_domain_tests)
+
+add_executable(training_integration_tests training_integration_test.cpp)
+target_link_libraries(training_integration_tests PRIVATE
+  training_application training_domain models_application data_application release_application
+  vision_content vision_imaging vision_eventbus vision_persistence
+  GTest::gtest_main)
+gtest_discover_tests(training_integration_tests)

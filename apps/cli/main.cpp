@@ -101,6 +101,12 @@ constexpr const char* kUsage = R"(用法：vision-cli [--data <目录>] <命令>
   dataset freeze <数据集ID>                     冻结成一个数据集版本（用于训练），输出版本 ID。
                                                含有已经留作基准的样本时拒绝；反过来，用于训练的图像也不能再放进基准图集
   dataset show <数据集版本ID>
+训练和模型仓库（方案构建平台）
+  train submit <数据集版本ID> --name <模型名> [--epochs N] [--seed N]
+                                               提交训练任务，输出任务的情况。训练完成后模型自动进入模型仓库（未发布）
+  train status <任务ID>                         向训练后端查询一次进度并显示
+  train list | train cancel <任务ID>
+  model list | model show <模型版本ID> | model publish <模型版本ID>
 工具
   sample-images <输出目录> [宽 高]              生成示例图像（良品与带亮斑缺陷的产品），默认 640×480
   debug crash <segv|abort|throw>                故意让程序崩溃，用来验证崩溃报告和转储文件能否生成
@@ -478,6 +484,8 @@ int main(int argc, char** argv) {
     if (cmd == "assist" && need(2)) return runAssistCommand(app, args);
     if (cmd == "sample" && need(2)) return runSampleCommand(app, args);
     if (cmd == "dataset" && need(2)) return runDatasetCommand(app, args);
+    if (cmd == "train" && need(2)) return runTrainCommand(app, args);
+    if (cmd == "model" && need(2)) return runModelCommand(app, args);
     if (cmd == "inspect" && need(3)) return cmdInspect(app, args[1], {args.begin() + 2, args.end()});
     if (cmd == "version" && need(3) && args[1] == "show") {
         auto doc = app.authoring.getVersionDocument(args[2]);

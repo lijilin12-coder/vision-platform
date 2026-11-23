@@ -17,10 +17,12 @@
 #include "vision/content/content_store.h"
 #include "vision/eventbus/in_memory_event_bus.h"
 #include "vision/execution/api.h"
+#include "vision/models/api.h"
 #include "vision/persistence/json_repositories.h"
 #include "vision/persistence/runtime_repositories.h"
 #include "vision/release/api.h"
 #include "vision/station/api.h"
+#include "vision/training/api.h"
 
 namespace vision::cli {
 
@@ -70,6 +72,17 @@ struct App {
     data::DataService data;
     content::DataSampleRegistry sampleRegistry;
 
+    // 模型仓库（BC-7）和模型训练（BC-12）。训练后端现在是占位的“没有配置”：
+    // 提交的训练任务会以“已失败”记录下来，其余功能照常可用。真正的训练服务见 POC-13 第 3 步。
+    persistence::JsonModelVersionRepository modelVersionRepository;
+    persistence::JsonTrainingJobRepository trainingJobRepository;
+    content::ModelFileStore modelFiles;
+    models::ModelService models;
+    content::DataDatasetSource datasetSource;
+    content::RepositoryModelImporter modelImporter;
+    content::NoTrainingBackend noTrainingBackend;
+    training::TrainingService training;
+
     bool verboseEvents = false;
 
     explicit App(const std::filesystem::path& dataDir)
@@ -95,7 +108,14 @@ struct App {
           datasetRepository(dataDir),
           sampleFiles(contentStore),
           data(sampleRepository, datasetRepository, sampleFiles, bus),
-          sampleRegistry(data) {
+          sampleRegistry(data),
+          modelVersionRepository(dataDir),
+          trainingJobRepository(dataDir),
+          modelFiles(contentStore),
+          models(modelVersionRepository, modelFiles, bus),
+          datasetSource(data),
+          modelImporter(models),
+          training(trainingJobRepository, noTrainingBackend, datasetSource, modelImporter, bus) {
         goldenSets.useSampleRegistry(sampleRegistry);
         // 匹配模板：方案编排往内容仓库里存，检测引擎从内容仓库里取
         authoring.useTemplateStore(templates);
@@ -131,5 +151,8 @@ int runAssistCommand(App& app, const std::vector<std::string>& args);
 // sample ...、dataset ... 两组命令（数据，见 data_commands.cpp）。
 int runSampleCommand(App& app, const std::vector<std::string>& args);
 int runDatasetCommand(App& app, const std::vector<std::string>& args);
+// train ...、model ... 两组命令（训练任务和模型仓库，见 data_commands.cpp）。
+int runTrainCommand(App& app, const std::vector<std::string>& args);
+int runModelCommand(App& app, const std::vector<std::string>& args);
 
 }  // namespace vision::cli
