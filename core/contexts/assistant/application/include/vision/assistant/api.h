@@ -14,6 +14,7 @@
 
 #include "vision/common/domain_event.h"
 #include "vision/common/result.h"
+#include "vision/kernel/image.h"
 #include "vision/kernel/signature.h"
 
 namespace vision::assistant {
@@ -33,6 +34,9 @@ public:
     virtual Status connect(const std::string& recipeId, const std::string& from, const std::string& to) = 0;
     virtual Status setParam(const std::string& recipeId, const std::string& nodeId, const std::string& param,
                             const ParamValue& value) = 0;
+    // 从 source 上框出一块作为匹配模板，返回模板 ID（工作流有模板槽时才会用到）
+    virtual Result<std::string> createTemplate(const std::string& recipeId, const std::string& name, const Image& source,
+                                               int x, int y, int width, int height) = 0;
 };
 
 // 对图像做的已知扰动，用于稳健性检查
@@ -54,6 +58,11 @@ public:
     virtual ~TrialRunner() = default;
     virtual Result<TrialResult> run(const std::string& recipeId, const std::string& imageRef,
                                     const std::optional<Perturbation>& perturbation) = 0;
+    // 用候选方案的当前草稿运行一幅图像，取出某个节点某个输出端口上的图像。
+    // 用来从“经过了前面的预处理的图像”上框模板：模板必须取自定位节点实际看到的图像。
+    // 这时候候选方案里用到模板的节点还没有模板，会运行失败；只要它上游的节点正常运行就够了。
+    virtual Result<Image> outputImage(const std::string& recipeId, const std::string& imageRef, const std::string& nodeId,
+                                      const std::string& port) = 0;
 };
 
 struct CaseInfo {
@@ -87,6 +96,13 @@ public:
 
 // ===== 应用服务 =====
 
+// 任务书里给工作流的一个模板槽提供的模板：用哪个用例的图像，框哪一块
+struct TemplateRequest {
+    std::string slot;
+    std::string caseId;
+    int x = 0, y = 0, width = 0, height = 0;
+};
+
 // 检测任务书（用户提交的内容）
 struct AssistRequest {
     std::string goal;
@@ -100,6 +116,7 @@ struct AssistRequest {
     int maxRounds = 20;
     double maxSeconds = 300;
     int hardeningRounds = 8;  // 达标之后最多再用几轮扩大余量；0 表示达标就结束
+    std::vector<TemplateRequest> templates;  // 工作流有模板槽时，每个槽一个；用例必须属于调参集
 };
 
 struct SessionView {

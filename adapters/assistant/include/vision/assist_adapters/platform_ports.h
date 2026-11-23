@@ -28,6 +28,10 @@ public:
                     const ParamValue& value) override {
         return authoring_.setParam(recipeId, nodeId, param, value);
     }
+    Result<std::string> createTemplate(const std::string& recipeId, const std::string& name, const Image& source, int x, int y,
+                                       int width, int height) override {
+        return authoring_.createMatchTemplate(recipeId, name, source, x, y, width, height);
+    }
 
 private:
     authoring::AuthoringService& authoring_;
@@ -44,6 +48,8 @@ public:
     void setWithStatistics(bool on) { withStatistics_ = on; }
     Result<assistant::TrialResult> run(const std::string& recipeId, const std::string& imageRef,
                                        const std::optional<assistant::Perturbation>& perturbation) override;
+    Result<Image> outputImage(const std::string& recipeId, const std::string& imageRef, const std::string& nodeId,
+                              const std::string& port) override;
 
 private:
     Result<Image> imageFor(const std::string& imageRef);

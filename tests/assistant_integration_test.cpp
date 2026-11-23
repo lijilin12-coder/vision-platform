@@ -17,6 +17,7 @@
 #include "vision/authoring/api.h"
 #include "vision/catalog/api.h"
 #include "vision/common/path.h"
+#include "vision/content/content_store.h"
 #include "vision/eventbus/in_memory_event_bus.h"
 #include "vision/execution/api.h"
 #include "vision/imaging/cv_bridge.h"
@@ -90,6 +91,11 @@ protected:
         editor = std::make_unique<assist_adapters::AuthoringCandidateEditor>(*authoring);
         runner = std::make_unique<assist_adapters::EngineTrialRunner>(*authoring, *execution);
         goldenCases = std::make_unique<assist_adapters::ReleaseGoldenCases>(*golden);
+        // 匹配模板：方案编排往内容仓库里存，检测引擎从内容仓库里取
+        contentStore = std::make_unique<content::FileContentStore>(root);
+        templateContent = std::make_unique<content::TemplateContent>(*contentStore);
+        authoring->useTemplateStore(*templateContent);
+        execution->useTemplateSource(*templateContent);
 
         bus.subscribe("*", [this](const EventPtr& e) { events.emplace_back(e->name()); });
 
@@ -160,6 +166,8 @@ protected:
     std::unique_ptr<assist_adapters::AuthoringCandidateEditor> editor;
     std::unique_ptr<assist_adapters::EngineTrialRunner> runner;
     std::unique_ptr<assist_adapters::ReleaseGoldenCases> goldenCases;
+    std::unique_ptr<content::FileContentStore> contentStore;
+    std::unique_ptr<content::TemplateContent> templateContent;
     std::vector<std::string> events;
 };
 
@@ -754,6 +762,10 @@ TEST_F(AssistantIntegration, EverySampleWorkflowBuildsAndRuns) {
         ScriptedAdvisor advisor("scripted:none", {});  // 不提任何修改：只检查工作流本身
         auto request = makeRequest(1.0);
         request.workflowId = id.value();
+        // 工作流有模板槽的话，随便从一个调参用例上框一块给它：这里只检查工作流本身能不能搭起来、跑起来
+        const auto workflow = workflows->find(id.value());  // 先存下来：直接遍历临时对象的成员会访问到已经销毁的内存
+        ASSERT_TRUE(workflow.has_value());
+        for (const auto& slot : workflow->templateSlots()) request.templates.push_back({slot.name, "ok0", 20, 20, 60, 40});
         auto result = run(advisor, request);
         ASSERT_TRUE(result.ok()) << id.value() << "：" << result.error().message;
 
@@ -799,4 +811,186 @@ TEST_F(AssistantIntegration, WidthMeasurementRecipeEndToEnd) {
     cv::Mat empty(120, 300, CV_8UC3, cv::Scalar(150, 150, 150));
     const auto none = execution->inspect(doc, imaging::fromMat(empty).value()).value();
     EXPECT_EQ(none.verdict, "NG");
+}
+
+// ---------------- 带匹配模板的工作流（docs/ddd/07-recipe-assistant.md §8.5）----------------
+
+namespace {
+
+// 浅色背景上一块深色零件（宽 width），上面有一个亮的圆和一个小方块（用来定位）。
+// 整体平移 (dx, dy)、顺时针转 angle 度。零件在标准位置时左边缘在 x = 60。
+cv::Mat locatePart(double width, double dx, double dy, double angle) {
+    cv::Mat m(200, 280, CV_8UC3, cv::Scalar(150, 150, 150));
+    cv::rectangle(m, cv::Rect(60, 50, static_cast<int>(width), 100), cv::Scalar(70, 70, 70), cv::FILLED);
+    cv::circle(m, cv::Point(95, 85), 10, cv::Scalar(225, 225, 225), cv::FILLED, cv::LINE_AA);
+    cv::rectangle(m, cv::Rect(115, 98, 14, 9), cv::Scalar(200, 200, 200), cv::FILLED);
+    const double radians = angle * CV_PI / 180.0, c = std::cos(radians), sn = std::sin(radians);
+    const cv::Mat move = (cv::Mat_<double>(2, 3) << c, -sn, 140 - (c * 140 - sn * 100) + dx, sn, c, 100 - (sn * 140 + c * 100) + dy);
+    cv::Mat out;
+    cv::warpAffine(m, out, move, m.size(), cv::INTER_LINEAR, cv::BORDER_CONSTANT, cv::Scalar(150, 150, 150));
+    return out;
+}
+
+const char* kLocateWorkflow = R"({
+  "id": "locate-width", "name": "定位后测宽", "description": "模板匹配 → 对齐 → 卡尺 → 判定",
+  "nodes": [
+    {"key": "input", "operator": "vision.image_input"},
+    {"key": "gray", "operator": "vision.to_gray"},
+    {"key": "match", "operator": "vision.template_match", "params": {"angleRange": 12, "minScore": 0.5}},
+    {"key": "located", "operator": "vision.judge_range", "params": {"min": 0.6, "max": 1, "label": "定位得分"}},
+    {"key": "align", "operator": "vision.align_to_pose", "params": {"border": "replicate"}},
+    {"key": "caliper", "operator": "vision.caliper_width"},
+    {"key": "judge", "operator": "vision.judge_range", "params": {"min": 157, "max": 163, "label": "宽度"}}
+  ],
+  "edges": [["input.image", "gray.image"], ["gray.image", "match.image"], ["match.score", "located.value"],
+            ["gray.image", "align.image"], ["match.pose", "align.pose"], ["align.image", "caliper.image"],
+            ["caliper.width", "judge.value"]],
+  "templates": [{"name": "locator", "node": "match", "param": "template", "from": "gray.image", "hint": "框圆和小方块"}],
+  "tunables": [{"node": "caliper", "param": "edgeThreshold", "min": 0.5, "max": 100, "initial": 90}],
+  "robustness": [{"kind": "brightness", "levels": [0.8]}]
+})";
+
+}  // namespace
+
+class AssistantLocating : public AssistantIntegration {
+protected:
+    void SetUp() override {
+        AssistantIntegration::SetUp();
+        const fs::path file = root / "locate-width.json";
+        std::ofstream(file, std::ios::binary) << kLocateWorkflow;
+        ASSERT_TRUE(workflows->importFile(file).ok());
+    }
+
+    // 8 个调参用例 + 4 个盲测用例。第一个调参用例（ok0）摆在标准位置，用来框模板；其余的位置、角度各不相同。
+    // 合格的宽 160，不合格的宽 150 或 170。
+    AssistRequest locateRequest() {
+        release::GoldenSetDefinition def;
+        def.name = "定位后测宽";
+        AssistRequest request;
+        int n = 0;
+        const auto add = [&](const std::string& id, double width, bool blind) {
+            const bool reference = id == "ok0";
+            const double dx = reference ? 0 : ((n * 7) % 31) - 15, dy = reference ? 0 : ((n * 11) % 25) - 12;
+            const double angle = reference ? 0 : ((n * 5) % 15) - 7;
+            ++n;
+            const std::string file = pathToUtf8(root / "images" / (id + ".png"));
+            EXPECT_TRUE(imaging::saveImage(file, imaging::fromMat(locatePart(width, dx, dy, angle)).value()).ok());
+            def.cases.push_back({id, file, width != 160});
+            if (blind) request.blindCaseIds.push_back(id);
+        };
+        for (int i = 0; i < 4; ++i) {
+            add("ok" + std::to_string(i), 160, false);
+            add("ng" + std::to_string(i), i % 2 == 0 ? 150 : 170, false);
+        }
+        for (int i = 0; i < 2; ++i) {
+            add("blind_ok" + std::to_string(i), 160, true);
+            add("blind_ng" + std::to_string(i), i % 2 == 0 ? 170 : 150, true);
+        }
+        request.goldenSetId = golden->createGoldenSet(def).value();
+        request.goal = "零件位置不固定，测量宽度";
+        request.workflowId = "locate-width";
+        request.hardeningRounds = 0;
+        request.templates = {{"locator", "ok0", 78, 68, 60, 46}};  // 圆和小方块那一带
+        return request;
+    }
+};
+
+// 助手按任务书给的模板搭出带定位的候选方案，并把它调到达标：零件的位置和角度各不相同，宽度照样量得准
+TEST_F(AssistantLocating, BuildsCandidateWithTheTemplateFromTheBriefAndTunesIt) {
+    ScriptedAdvisor advisor("scripted:test", {setParam("caliper", "edgeThreshold", 20, "90 太高，找不到边缘")});
+    auto result = run(advisor, locateRequest());
+    ASSERT_TRUE(result.ok()) << result.error().message;
+    const SessionView& v = result.value();
+    EXPECT_EQ(v.endReason, "criteria-met");
+    EXPECT_TRUE(v.tuningMeetsCriteria);
+    ASSERT_TRUE(v.blindMeetsCriteria.has_value());
+    EXPECT_TRUE(*v.blindMeetsCriteria);
+
+    // 候选方案里有任务书给的那个模板，定位节点用的就是它
+    const auto draft = authoring->getDraft(v.candidateRecipeId).value();
+    ASSERT_EQ(draft.templates.size(), 1u);
+    EXPECT_EQ(draft.templates[0].name, "locator");
+    EXPECT_EQ(draft.templates[0].width, 60);
+    EXPECT_EQ(draft.templates[0].referenceX, 78);
+    EXPECT_TRUE(contentStore->contains(draft.templates[0].sha256));
+    bool used = false;
+    for (const auto& n : draft.nodes) {
+        if (n.operatorId == "vision.template_match") used = std::get<std::string>(n.params.at("template")) == draft.templates[0].id;
+    }
+    EXPECT_TRUE(used);
+    // 模板是从“灰度”节点的输出上框的（工作流里写的 from），所以是单通道的图像：定位节点看到的就是这种图像
+    const auto doc = authoring->getDraftDocument(v.candidateRecipeId).value();
+    const auto templ = templateContent->load(doc.templates[0]);
+    ASSERT_TRUE(templ.ok());
+    EXPECT_EQ(templ.value().format(), Image::Format::Gray8);
+
+    // 任务书里的模板进了会话记录
+    auto stored = sessions->find(v.sessionId);
+    ASSERT_TRUE(stored.has_value());
+    ASSERT_EQ(stored->state().brief.templates.size(), 1u);
+    EXPECT_EQ(stored->state().brief.templates[0].caseId, "ok0");
+    EXPECT_EQ(stored->workflow().templateSlots().size(), 1u);
+    // 采纳之后可以发布：模板参数已经设置（P6）
+    EXPECT_TRUE(authoring->publish(v.candidateRecipeId).ok());
+}
+
+// A12：模板只能取自调参集。用盲测集的图像做模板，等于把盲测集的内容放进了方案
+TEST_F(AssistantLocating, A12_TemplateMustComeFromATuningCase) {
+    ScriptedAdvisor advisor("scripted:test", {});
+    auto request = locateRequest();
+    request.templates = {{"locator", "blind_ok0", 78, 68, 60, 46}};
+    const auto result = run(advisor, request);
+    ASSERT_FALSE(result.ok());
+    EXPECT_EQ(result.error().code, "assistant.template_from_blind");
+    EXPECT_TRUE(sessions->list().empty());  // 没有开始会话
+    EXPECT_TRUE(advisor.seen().empty());    // 顾问没有被问过
+}
+
+TEST_F(AssistantLocating, A12_EverySlotNeedsExactlyOneTemplate) {
+    ScriptedAdvisor advisor("scripted:test", {});
+    auto request = locateRequest();
+    request.templates.clear();
+    auto result = run(advisor, request);
+    ASSERT_FALSE(result.ok());
+    EXPECT_EQ(result.error().code, "assistant.missing_template");
+    EXPECT_NE(result.error().message.find("框圆和小方块"), std::string::npos);  // 把工作流里“应该框什么”的说明带给用户
+
+    request = locateRequest();
+    request.templates.push_back({"nope", "ok0", 10, 10, 20, 20});
+    EXPECT_EQ(run(advisor, request).error().code, "assistant.unknown_template_slot");
+
+    request = locateRequest();
+    request.templates.push_back({"locator", "ok1", 10, 10, 20, 20});
+    EXPECT_EQ(run(advisor, request).error().code, "assistant.duplicate_template");
+
+    request = locateRequest();
+    request.templates = {{"locator", "no-such-case", 78, 68, 60, 46}};
+    EXPECT_EQ(run(advisor, request).error().code, "assistant.template_case");
+
+    // 没有模板槽的工作流不接受模板
+    auto plain = makeRequest(1.0);
+    plain.templates = {{"locator", "ok0", 20, 20, 60, 40}};
+    EXPECT_EQ(run(advisor, plain).error().code, "assistant.unknown_template_slot");
+}
+
+// 框出了图像的范围：方案编排拒绝，助手如实报告，不留下半截的会话
+TEST_F(AssistantLocating, BadTemplateBoxIsReportedClearly) {
+    ScriptedAdvisor advisor("scripted:test", {});
+    auto request = locateRequest();
+    request.templates = {{"locator", "ok0", 250, 68, 60, 46}};  // 右边伸出了图像
+    const auto result = run(advisor, request);
+    ASSERT_FALSE(result.ok());
+    EXPECT_NE(result.error().message.find("locator"), std::string::npos);
+    EXPECT_TRUE(sessions->list().empty());
+}
+
+// 顾问仍然只能调数值参数：想改模板参数会被规则拒绝（模板由人定）
+TEST_F(AssistantLocating, AdvisorCannotChangeTheTemplate) {
+    Proposal swap;
+    swap.changes.push_back({ProposedChange::Kind::SetParam, "match", "template", 2});
+    ScriptedAdvisor advisor("scripted:test", {swap, setParam("caliper", "edgeThreshold", 20)});
+    auto result = run(advisor, locateRequest());
+    ASSERT_TRUE(result.ok()) << result.error().message;
+    EXPECT_EQ(result.value().rejected, 1);
+    EXPECT_EQ(result.value().endReason, "criteria-met");
 }

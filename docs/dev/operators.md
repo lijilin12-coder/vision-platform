@@ -84,6 +84,26 @@ image_input → to_gray ─┬→ template_match ─(score)→ judge_range「定
 - 够用就好，不要太大：耗时主要由模板的大小决定
 - 框的地方不要有每个零件都不一样的东西（序列号、划痕）
 
+**让方案助手来调带定位的方案**
+
+工作流 `locate-width-measure`（定位 → 对齐 → 卡尺 → 判定）可以直接交给方案助手。模板由你在任务书里给出：用基准图集里的哪个用例、框哪一块。
+
+```bash
+vision-cli workflow import samples/workflows/locate-width-measure.json
+```
+
+```bash
+vision-cli golden sample ./locate-demo --scenario locate --blind-lighting same
+```
+
+```bash
+vision-cli assist run ./locate-demo/brief.json --advisor search
+```
+
+示例图集里零件的位置随机偏 ±20 像素、转 ±8°。带定位的工作流 4 轮调到达标，盲测集也达标；同一批图交给不定位的 `width-measure`，怎么调都达不了标。
+
+模板必须取自调参集的用例（任务书里用了盲测集的用例会被拒绝），而且要选一张零件摆得正的图。
+
 ## 3. 几个容易用错的地方
 
 | 现象 | 原因 |

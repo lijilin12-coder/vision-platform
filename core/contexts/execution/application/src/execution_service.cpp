@@ -59,8 +59,10 @@ private:
 };
 
 // 发布语言 → 本上下文的模型（防止上游模型渗透进来）
+// allowUnsetTemplates：调试运行时为真。模板参数还没有设置的节点照样编译进计划，运行到它时才失败；
+// 它上游的节点正常运行、中间结果照样能看。人和方案助手都靠这个从“预处理之后的图像”上框模板。
 Result<PlanSpec> toPlanSpec(const authoring::RecipeVersionDocument& doc, const catalog::OperatorCatalog& catalog,
-                            TemplateSource* templateSource) {
+                            TemplateSource* templateSource, bool allowUnsetTemplates) {
     if (!authoring::isSupportedRecipeDocumentSchema(doc.schemaVersion)) {
         return Result<PlanSpec>::failure("execution.schema", "不支持的方案文档版本：" + doc.schemaVersion);
     }
@@ -81,7 +83,10 @@ Result<PlanSpec> toPlanSpec(const authoring::RecipeVersionDocument& doc, const c
             const std::string templateId =
                 value != n.params.end() && std::holds_alternative<std::string>(value->second) ? std::get<std::string>(value->second) : "";
             const std::string where = "节点 " + n.id + " 的模板参数 " + def.name;
-            if (templateId.empty()) return Result<PlanSpec>::failure("execution.template_unset", where + " 还没有设置");
+            if (templateId.empty()) {
+                if (allowUnsetTemplates) continue;
+                return Result<PlanSpec>::failure("execution.template_unset", where + " 还没有设置");
+            }
             const auto ref = std::find_if(doc.templates.begin(), doc.templates.end(),
                                           [&](const authoring::RecipeDocumentTemplate& t) { return t.id == templateId; });
             if (ref == doc.templates.end()) {
@@ -240,7 +245,8 @@ struct ExecutionService::Impl {
             std::lock_guard<std::mutex> lock(cacheMutex);
             if (auto it = planCache.find(doc.versionId); it != planCache.end()) return it->second;
         }
-        auto spec = toPlanSpec(doc, catalog, templateSource);
+        // 调试运行不用缓存（useCache 为假），也只有它允许模板还没有设置
+        auto spec = toPlanSpec(doc, catalog, templateSource, /*allowUnsetTemplates=*/!useCache);
         if (!spec) return spec.error();
         auto plan = planner.plan(spec.value());
         if (!plan) return plan.error();

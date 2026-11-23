@@ -111,6 +111,27 @@ Result<AssistSession> AssistSession::start(SessionId id, InspectionBrief brief, 
         if (!blind.insert(b).second) return R::failure("assistant.duplicate_case", "盲测集里的用例 " + b + " 重复了");
     }
 
+    // A12：每个模板槽正好一个模板；模板只能取自调参集
+    std::set<std::string> chosen;
+    for (const auto& t : brief.templates) {
+        const bool known = std::any_of(workflow.templateSlots().begin(), workflow.templateSlots().end(),
+                                       [&](const TemplateSlot& slot) { return slot.name == t.slot; });
+        if (!known) return R::failure("assistant.unknown_template_slot", "工作流里没有模板槽 " + t.slot);
+        if (!chosen.insert(t.slot).second) return R::failure("assistant.duplicate_template", "模板槽 " + t.slot + " 给了两个模板");
+        if (all.count(t.caseId) == 0) return R::failure("assistant.template_case", "模板 " + t.slot + " 用的用例 " + t.caseId + " 不在基准图集里");
+        if (blind.count(t.caseId) != 0) {
+            return R::failure("assistant.template_from_blind",
+                              "模板 " + t.slot + " 用的用例 " + t.caseId + " 属于盲测集。模板只能取自调参集：否则盲测集的内容就进了方案");
+        }
+        if (t.width <= 0 || t.height <= 0 || t.x < 0 || t.y < 0) return R::failure("assistant.template_box", "模板 " + t.slot + " 的框不合法");
+    }
+    for (const auto& slot : workflow.templateSlots()) {
+        if (chosen.count(slot.name) == 0) {
+            return R::failure("assistant.missing_template",
+                              "工作流需要模板“" + slot.name + "”" + (slot.hint.empty() ? "" : "（" + slot.hint + "）") + "，任务书里没有提供");
+        }
+    }
+
     SessionState s;
     s.id = std::move(id);
     s.brief = std::move(brief);

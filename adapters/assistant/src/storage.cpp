@@ -40,9 +40,13 @@ json workflowJson(const Workflow& w) {
                             {"initial", t.initial}, {"hint", t.hint}});
     }
     for (const auto& p : w.probes()) probes.push_back({{"kind", toString(p.kind)}, {"levels", p.levels}});
+    json slots = json::array();
+    for (const auto& t : w.templateSlots()) {
+        slots.push_back({{"name", t.name}, {"node", t.nodeKey}, {"param", t.param}, {"from", t.source}, {"hint", t.hint}});
+    }
     return {{"schema", "vision.workflow/0.1"}, {"id", w.id()}, {"version", w.version()}, {"name", w.name()},
             {"description", w.description()}, {"nodes", nodes}, {"edges", edges}, {"tunables", tunables},
-            {"robustness", probes}};
+            {"robustness", probes}, {"templates", slots}};
 }
 
 Result<Workflow> workflowFromJson(const json& j) {
@@ -72,9 +76,14 @@ Result<Workflow> workflowFromJson(const json& j) {
         p.levels = jp.at("levels").get<std::vector<double>>();
         probes.push_back(std::move(p));
     }
+    std::vector<TemplateSlot> slots;
+    for (const auto& jt : j.value("templates", json::array())) {
+        slots.push_back({jt.at("name").get<std::string>(), jt.at("node").get<std::string>(), jt.at("param").get<std::string>(),
+                         jt.at("from").get<std::string>(), jt.value("hint", "")});
+    }
     return Workflow::create(j.at("id").get<std::string>(), j.value("version", 1), j.at("name").get<std::string>(),
                             j.value("description", ""), std::move(nodes), std::move(edges), std::move(tunables),
-                            std::move(probes));
+                            std::move(probes), std::move(slots));
 }
 
 std::vector<std::string> jsonStems(const fs::path& dir) {
@@ -327,11 +336,15 @@ Status JsonAssistSessionRepository::save(const AssistSession& session) {
     if (!safeFileName(s.id)) return Status::failure("persistence.bad_id", "会话 ID 不能用作文件名：" + s.id);
     json rounds = json::array();
     for (const auto& r : s.rounds) rounds.push_back(roundJson(r));
+    json briefTemplates = json::array();
+    for (const auto& t : s.brief.templates) {
+        briefTemplates.push_back({{"slot", t.slot}, {"case", t.caseId}, {"x", t.x}, {"y", t.y}, {"width", t.width}, {"height", t.height}});
+    }
     const json j = {
         {"schema", "vision.assist-session/0.1"},
         {"id", s.id},
         {"brief", {{"goal", s.brief.goal}, {"goldenSet", s.brief.goldenSetId}, {"blindCases", s.brief.blindCaseIds},
-                   {"dataSharing", toString(s.brief.dataSharing)}}},
+                   {"dataSharing", toString(s.brief.dataSharing)}, {"templates", briefTemplates}}},
         {"budget", {{"maxRounds", s.budget.maxRounds}, {"maxSeconds", s.budget.maxSeconds},
                     {"hardeningRounds", s.budget.hardeningRounds}}},
         {"advisor", s.advisor},
@@ -372,6 +385,12 @@ std::optional<AssistSession> JsonAssistSessionRepository::find(const SessionId& 
     s.brief.goldenSetId = b.at("goldenSet").get<std::string>();
     s.brief.blindCaseIds = b.at("blindCases").get<std::vector<std::string>>();
     s.brief.dataSharing = enumFrom(b.at("dataSharing"), {DataSharing::NoImages, DataSharing::Thumbnails, DataSharing::Originals});
+    if (b.contains("templates")) {  // 旧的记录里没有
+        for (const auto& t : b.at("templates")) {
+            s.brief.templates.push_back({t.at("slot").get<std::string>(), t.at("case").get<std::string>(), t.at("x").get<int>(),
+                                         t.at("y").get<int>(), t.at("width").get<int>(), t.at("height").get<int>()});
+        }
+    }
     s.budget.maxRounds = j.at("budget").at("maxRounds").get<int>();
     s.budget.maxSeconds = j.at("budget").at("maxSeconds").get<double>();
     s.advisor = j.at("advisor").get<std::string>();

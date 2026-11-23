@@ -18,7 +18,9 @@ public:
         m.signature.inputs = {{"image", PortType::Image, false}, {"pose", PortType::Pose, false}};
         m.signature.outputs = {{"image", PortType::Image, false}};
         m.signature.params = {
-            {"fill", ParamType::Number, 0.0, 0.0, 255.0, {}, "对齐之后空出来的地方填什么灰度"},
+            {"border", ParamType::Choice, std::string("constant"), std::nullopt, std::nullopt, {"constant", "replicate"},
+             "对齐之后空出来的地方怎么填：constant 填固定的灰度（fill）；replicate 把图像边上的像素延伸出去"},
+            {"fill", ParamType::Number, 0.0, 0.0, 255.0, {}, "border 为 constant 时填什么灰度"},
         };
         m.displayName = "按位姿对齐";
         m.category = "定位";
@@ -47,8 +49,10 @@ public:
         const double fill = ctx.number("fill");
         cv::Mat out;
         // WARP_INVERSE_MAP：m 给的是“输出 → 输入”的对应关系，正好是上面推出来的
-        cv::warpAffine(src, out, m, src.size(), cv::INTER_LINEAR | cv::WARP_INVERSE_MAP, cv::BORDER_CONSTANT,
-                       cv::Scalar(fill, fill, fill));
+        // replicate：空出来的地方接着图像边缘的灰度往外延伸，不会凭空多出一条“画面 / 填充色”的边缘。
+        // 后面要找边缘（卡尺、边缘强度）时用它；constant 填的颜色和背景不一样时，那条边会被当成真的边缘。
+        const int border = ctx.text("border") == "replicate" ? cv::BORDER_REPLICATE : cv::BORDER_CONSTANT;
+        cv::warpAffine(src, out, m, src.size(), cv::INTER_LINEAR | cv::WARP_INVERSE_MAP, border, cv::Scalar(fill, fill, fill));
         auto img = imaging::fromMat(out);
         if (!img) return img.error();
         ctx.setOutput("image", img.value());

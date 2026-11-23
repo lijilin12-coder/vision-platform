@@ -24,7 +24,8 @@ std::string num(double v) {
 
 Result<Workflow> Workflow::create(std::string id, int version, std::string name, std::string description,
                                   std::vector<WorkflowNode> nodes, std::vector<WorkflowEdge> edges,
-                                  std::vector<Tunable> tunables, std::vector<RobustnessProbe> probes) {
+                                  std::vector<Tunable> tunables, std::vector<RobustnessProbe> probes,
+                                  std::vector<TemplateSlot> templateSlots) {
     using R = Result<Workflow>;
     if (id.empty()) return R::failure("workflow.empty_id", "工作流 ID 不能为空");
     if (name.empty()) return R::failure("workflow.empty_name", "工作流名称不能为空");
@@ -55,6 +56,19 @@ Result<Workflow> Workflow::create(std::string id, int version, std::string name,
     for (const auto& p : probes) {
         if (p.levels.empty()) return R::failure("workflow.bad_probe", "稳健性检查没有给出扰动的大小");
     }
+    std::set<std::string> slotNames, slotTargets;
+    for (const auto& slot : templateSlots) {
+        if (slot.name.empty() || slot.param.empty()) return R::failure("workflow.bad_template_slot", "模板槽缺少名字或参数名");
+        if (!slotNames.insert(slot.name).second) return R::failure("workflow.bad_template_slot", "模板槽重名：" + slot.name);
+        if (keys.count(slot.nodeKey) == 0) return R::failure("workflow.bad_template_slot", "模板槽 " + slot.name + " 指向了不存在的节点");
+        if (slot.source.find('.') == std::string::npos || keys.count(nodeOf(slot.source)) == 0) {
+            return R::failure("workflow.bad_template_slot", "模板槽 " + slot.name + " 的图像来源要写成“节点.端口”，并且节点必须存在");
+        }
+        const std::string target = slot.nodeKey + "." + slot.param;
+        if (!slotTargets.insert(target).second) return R::failure("workflow.bad_template_slot", "两个模板槽指向了同一个参数：" + target);
+        // 模板由人定：它不能同时被声明成可调项
+        if (tunableNames.count(target) != 0) return R::failure("workflow.bad_template_slot", target + " 是模板参数，不能同时是可调项");
+    }
 
     Workflow w;
     w.id_ = std::move(id);
@@ -64,6 +78,7 @@ Result<Workflow> Workflow::create(std::string id, int version, std::string name,
     w.nodes_ = std::move(nodes);
     w.edges_ = std::move(edges);
     w.tunables_ = std::move(tunables);
+    w.templateSlots_ = std::move(templateSlots);
     w.probes_ = std::move(probes);
     return w;
 }

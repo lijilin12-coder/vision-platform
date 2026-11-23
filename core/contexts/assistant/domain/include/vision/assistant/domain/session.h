@@ -29,6 +29,13 @@ struct Budget {
     int hardeningRounds = 8;
 };
 
+// 值对象：任务书里给一个模板槽提供的模板——用哪个用例的图像，框哪一块。
+struct TemplateChoice {
+    std::string slot;    // 工作流里模板槽的名字
+    std::string caseId;  // 基准图集里的一个用例。必须属于调参集（A12）
+    int x = 0, y = 0, width = 0, height = 0;
+};
+
 // 值对象：检测任务书。用户交给助手的输入。
 struct InspectionBrief {
     std::string goal;                       // 要检测什么（文字描述）
@@ -36,6 +43,7 @@ struct InspectionBrief {
     std::vector<std::string> blindCaseIds;  // 盲测集；基准图集里其余的用例是调参集
     WorkMode mode = WorkMode::TuneWithinWorkflow;
     DataSharing dataSharing = DataSharing::NoImages;
+    std::vector<TemplateChoice> templates;  // 工作流有模板槽时，每个槽一个
 };
 
 // ---------- 评估 ----------
@@ -222,6 +230,8 @@ struct SessionState {
 //   A8  只有人可以采纳：adopt() 只在会话结束并且有了报告之后才被接受
 //   A9  交给顾问的内容符合数据外发策略
 //   A10 工作流内调参时，提议只能修改声明的可调项，且在声明的范围内
+//   A12 匹配模板只能取自调参集的用例：用盲测集的图像做模板，等于把盲测集的内容放进了方案；
+//       工作流的每个模板槽都必须由任务书提供模板，不能多也不能少。模板由人定，顾问不能改
 //   A11 加固不能以调参集为代价：达标之后，只有“调参集的评估不变差，并且稳健性检查里判错的更少”的修改才保留
 class AssistSession : public EventRecorder {
 public:

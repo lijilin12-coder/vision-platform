@@ -62,6 +62,17 @@ struct RobustnessProbe {
 };
 const char* toString(RobustnessProbe::Kind kind);
 
+// 值对象：模板槽。工作流里声明“这个节点的这个参数需要一个匹配模板”。
+// 工作流是通用的，不含任何具体产品的图像；模板由任务书提供（docs/ddd/07-recipe-assistant.md §8.5）。
+struct TemplateSlot {
+    std::string name;      // 槽的名字，任务书按它提供模板，例如 "locator"
+    std::string nodeKey;   // 哪个节点
+    std::string param;     // 它的哪个模板参数
+    std::string source;    // 模板从哪个输出端口的图像上框，例如 "gray.image"：
+                           // 模板必须取自“这个节点实际看到的图像”（经过了前面的预处理），而不是相机的原图
+    std::string hint;      // 给人看的说明：应该框什么
+};
+
 // 应用一处可调项的修改时，要对候选方案执行的编辑
 struct TunableEdit {
     std::string nodeKey;
@@ -76,11 +87,13 @@ struct TunableEdit {
 // 不变量：
 //   - 节点的名字不重复；连线两端的节点都存在
 //   - 可调项指向存在的节点，不重复，并且 min ≤ initial ≤ max
+//   - 模板槽的名字不重复；它指向的节点、它的图像来源都存在；模板参数不能同时是可调项（模板由人定，顾问不能改）
 class Workflow {
 public:
     static Result<Workflow> create(std::string id, int version, std::string name, std::string description,
                                    std::vector<WorkflowNode> nodes, std::vector<WorkflowEdge> edges,
-                                   std::vector<Tunable> tunables, std::vector<RobustnessProbe> probes);
+                                   std::vector<Tunable> tunables, std::vector<RobustnessProbe> probes,
+                                   std::vector<TemplateSlot> templateSlots = {});
 
     // A10：工作流内调参时，提议只能修改声明的可调项，且在声明的范围内。
     // 不合法时返回失败，错误信息说明原因（会告诉顾问）。
@@ -94,6 +107,7 @@ public:
     const std::vector<WorkflowEdge>& edges() const { return edges_; }
     const std::vector<Tunable>& tunables() const { return tunables_; }
     const std::vector<RobustnessProbe>& probes() const { return probes_; }
+    const std::vector<TemplateSlot>& templateSlots() const { return templateSlots_; }
     const Tunable* findTunable(const std::string& nodeKey, const std::string& param) const;
 
 private:
@@ -106,6 +120,7 @@ private:
     std::vector<WorkflowEdge> edges_;
     std::vector<Tunable> tunables_;
     std::vector<RobustnessProbe> probes_;
+    std::vector<TemplateSlot> templateSlots_;
 };
 
 }  // namespace vision::assistant
