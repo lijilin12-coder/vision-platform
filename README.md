@@ -35,6 +35,9 @@ VID=$(./build/apps/vision-cli recipe publish $RID)
 | [docs/ddd/04-context-map.md](docs/ddd/04-context-map.md) | 限界上下文与上下文映射 |
 | [docs/ddd/05-tactical-design.md](docs/ddd/05-tactical-design.md) | 核心上下文的战术设计 |
 | [docs/ddd/06-scenario-walkthrough.md](docs/ddd/06-scenario-walkthrough.md) | 关键场景走查与发现的问题 |
+| [docs/ddd/07-recipe-assistant.md](docs/ddd/07-recipe-assistant.md) | 方案助手：循环、顾问、工作流、加固阶段 |
+| [docs/ddd/08-platforms-and-training.md](docs/ddd/08-platforms-and-training.md) | 平台划分、模型训练与数据的划分 |
+| [docs/ddd/09-match-template-and-locating.md](docs/ddd/09-match-template-and-locating.md) | 匹配模板与定位（**草案，待确认**） |
 
 ### 工程文档
 
