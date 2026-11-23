@@ -60,13 +60,14 @@ protected:
         for (int y = 0; y < m.rows; ++y) {
             for (int x = 0; x < m.cols; ++x) m.at<uchar>(y, x) = static_cast<uchar>((x * 3 + y * 5 + seed * 17) % 251);
         }
-        const std::string path = pathToUtf8(dir / "images" / name);
+        const std::string path = pathToUtf8(dir / "images" / pathFromUtf8(name));
         EXPECT_TRUE(imaging::saveImage(path, imaging::fromMat(m).value()).ok());
         return path;
     }
 
     std::string copyAs(const std::string& from, const std::string& name) {
-        const fs::path to = dir / "images" / name;
+        // 程序里的字符串都是 UTF-8。在 Windows 上直接用 std::string 拼路径会按本地编码解释，中文名字就成了乱码
+        const fs::path to = dir / "images" / pathFromUtf8(name);
         fs::copy_file(pathFromUtf8(from), to, fs::copy_options::overwrite_existing);
         return pathToUtf8(to);
     }
