@@ -113,7 +113,7 @@ protected:
         const auto add = [&](const std::string& id, int spots, bool dust, double lighting, bool blind) {
             const std::string file = pathToUtf8(root / "images" / (id + ".png"));
             EXPECT_TRUE(imaging::saveImage(file, imaging::fromMat(drawProduct(spots, dust, lighting)).value()).ok());
-            def.cases.push_back({id, file, spots > 0});
+            def.cases.push_back({id, file, spots > 0, {}});
             if (blind) request.blindCaseIds.push_back(id);
         };
         for (int i = 0; i < 8; ++i) {
@@ -875,7 +875,7 @@ protected:
             ++n;
             const std::string file = pathToUtf8(root / "images" / (id + ".png"));
             EXPECT_TRUE(imaging::saveImage(file, imaging::fromMat(locatePart(width, dx, dy, angle)).value()).ok());
-            def.cases.push_back({id, file, width != 160});
+            def.cases.push_back({id, file, width != 160, {}});
             if (blind) request.blindCaseIds.push_back(id);
         };
         for (int i = 0; i < 4; ++i) {

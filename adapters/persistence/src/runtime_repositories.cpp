@@ -120,7 +120,8 @@ Status JsonGoldenSetRepository::save(const release::GoldenSet& s) {
     if (!safeFileName(s.id())) return Status::failure("persistence.bad_id", "基准图集 ID 不能用作文件名：" + s.id());
     json cases = json::array();
     for (const auto& c : s.cases()) {
-        cases.push_back({{"id", c.id}, {"image", c.imageRef}, {"truth", c.truth == release::Truth::Ng ? "NG" : "OK"}});
+        cases.push_back({{"id", c.id}, {"image", c.imageRef}, {"truth", c.truth == release::Truth::Ng ? "NG" : "OK"},
+                         {"sample", c.sampleId}});
     }
     json j = {{"schema", "vision.golden-set/0.1"},
               {"id", s.id()},
@@ -140,7 +141,8 @@ std::optional<release::GoldenSet> JsonGoldenSetRepository::find(const release::G
     std::vector<release::GoldenCase> cases;
     for (const auto& c : j->at("cases")) {
         cases.push_back({c.at("id").get<std::string>(), c.at("image").get<std::string>(),
-                         c.at("truth").get<std::string>() == "NG" ? release::Truth::Ng : release::Truth::Ok});
+                         c.at("truth").get<std::string>() == "NG" ? release::Truth::Ng : release::Truth::Ok,
+                         c.value("sample", std::string())});  // 旧文件里没有 sample
     }
     const json& k = j->at("criteria");
     return release::GoldenSet::restore(j->at("id").get<std::string>(), j->at("name").get<std::string>(), std::move(cases),
@@ -152,5 +154,84 @@ std::optional<release::GoldenSet> JsonGoldenSetRepository::find(const release::G
 }
 
 std::vector<release::GoldenSetId> JsonGoldenSetRepository::listIds() { return listJsonStems(dir_); }
+
+// ---------- JsonSampleRepository ----------
+
+JsonSampleRepository::JsonSampleRepository(fs::path root) : dir_(std::move(root) / "samples") {}
+
+Status JsonSampleRepository::save(const data::Sample& s) {
+    if (!safeFileName(s.id())) return Status::failure("persistence.bad_id", "样本 ID 不能用作文件名");
+    const json j = {{"schema", "vision.sample/0.1"}, {"id", s.id()}, {"bytes", s.bytes()}, {"names", s.names()},
+                    {"label", data::toString(s.label())}, {"use", data::toString(s.use())}};
+    return writeFileAtomically(dir_ / (s.id() + ".json"), j.dump(2));
+}
+
+namespace {
+data::Label labelFrom(const std::string& s) { return s == "ok" ? data::Label::Ok : s == "ng" ? data::Label::Ng : data::Label::Unlabeled; }
+data::SampleUse useFrom(const std::string& s) {
+    return s == "benchmark" ? data::SampleUse::Benchmark : s == "training" ? data::SampleUse::Training : data::SampleUse::Unassigned;
+}
+}  // namespace
+
+std::optional<data::Sample> JsonSampleRepository::find(const data::SampleId& id) try {
+    if (!safeFileName(id)) return std::nullopt;
+    auto j = readJson(dir_ / (id + ".json"));
+    if (!j) return std::nullopt;
+    return data::Sample::restore(j->at("id").get<std::string>(), j->at("bytes").get<long long>(),
+                                 j->at("names").get<std::vector<std::string>>(), labelFrom(j->at("label").get<std::string>()),
+                                 useFrom(j->at("use").get<std::string>()));
+} catch (const std::exception&) {
+    return std::nullopt;
+}
+
+std::vector<data::SampleId> JsonSampleRepository::listIds() { return listJsonStems(dir_); }
+
+// ---------- JsonDatasetRepository ----------
+
+JsonDatasetRepository::JsonDatasetRepository(fs::path root) : dir_(root / "datasets"), versionsDir_(root / "dataset-versions") {}
+
+Status JsonDatasetRepository::save(const data::Dataset& d) {
+    if (!safeFileName(d.id())) return Status::failure("persistence.bad_id", "数据集 ID 不能用作文件名");
+    const json j = {{"schema", "vision.dataset/0.1"}, {"id", d.id()}, {"name", d.name()}, {"samples", d.samples()},
+                    {"nextVersion", d.nextVersion()}};
+    return writeFileAtomically(dir_ / (d.id() + ".json"), j.dump(2));
+}
+
+std::optional<data::Dataset> JsonDatasetRepository::find(const data::DatasetId& id) try {
+    if (!safeFileName(id)) return std::nullopt;
+    auto j = readJson(dir_ / (id + ".json"));
+    if (!j) return std::nullopt;
+    return data::Dataset::restore(j->at("id").get<std::string>(), j->at("name").get<std::string>(),
+                                  j->at("samples").get<std::vector<std::string>>(), j->at("nextVersion").get<int>());
+} catch (const std::exception&) {
+    return std::nullopt;
+}
+
+std::vector<data::DatasetId> JsonDatasetRepository::listIds() { return listJsonStems(dir_); }
+
+// 数据集版本的 ID 形如 "<数据集ID>@v1"，存成 <数据集ID>/v1.json
+Status JsonDatasetRepository::saveVersion(const data::DatasetVersion& v) {
+    if (!safeFileName(v.dataset())) return Status::failure("persistence.bad_id", "数据集 ID 不能用作文件名");
+    json entries = json::array();
+    for (const auto& e : v.entries()) entries.push_back({{"sample", e.sampleId}, {"label", data::toString(e.label)}});
+    const json j = {{"schema", "vision.dataset-version/0.1"}, {"id", v.id()}, {"dataset", v.dataset()}, {"number", v.number()},
+                    {"name", v.name()}, {"entries", entries}};
+    return writeFileAtomically(versionsDir_ / v.dataset() / ("v" + std::to_string(v.number()) + ".json"), j.dump(2));
+}
+
+std::optional<data::DatasetVersion> JsonDatasetRepository::findVersion(const std::string& versionId) try {
+    const auto at = versionId.rfind("@v");
+    if (at == std::string::npos) return std::nullopt;
+    const std::string dataset = versionId.substr(0, at), number = versionId.substr(at + 2);
+    if (!safeFileName(dataset) || !safeFileName(number)) return std::nullopt;
+    auto j = readJson(versionsDir_ / dataset / ("v" + number + ".json"));
+    if (!j) return std::nullopt;
+    std::vector<data::DatasetEntry> entries;
+    for (const auto& e : j->at("entries")) entries.push_back({e.at("sample").get<std::string>(), labelFrom(e.at("label").get<std::string>())});
+    return data::DatasetVersion(j->at("id").get<std::string>(), j->at("dataset").get<std::string>(), j->at("number").get<int>(),
+                                j->at("name").get<std::string>(), std::move(entries));
+} catch (const std::exception&) {
+    return std::nullopt;
+}
 
 }  // namespace vision::persistence

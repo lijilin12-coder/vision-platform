@@ -164,4 +164,20 @@ Result<Image> TemplateContent::load(const authoring::RecipeDocumentTemplate& ref
     return imaging::fromMat(decoded);
 }
 
+// ---------------- 样本 ----------------
+
+Result<data::StoredFile> SampleFiles::importFile(const std::string& path) {
+    using R = Result<data::StoredFile>;
+    std::ifstream in(pathFromUtf8(path), std::ios::binary);
+    if (!in) return R::failure("content.read", "无法读取 " + path);
+    const std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    // 确认它真的是一幅能解码的图像，免得把别的文件当成样本存进来
+    if (bytes.empty() || cv::imdecode(bytes, cv::IMREAD_UNCHANGED).empty()) return R::failure("content.not_image", path + " 不是能识别的图像文件");
+    auto hash = store_.put(bytes);
+    if (!hash) return hash.error();
+    return data::StoredFile{hash.value(), static_cast<long long>(bytes.size())};
+}
+
+std::string SampleFiles::pathOf(const std::string& sha256) const { return pathToUtf8(store_.pathOf(sha256)); }
+
 }  // namespace vision::content

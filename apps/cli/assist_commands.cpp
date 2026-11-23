@@ -167,7 +167,7 @@ int cmdGoldenSample(App& app, const std::string& dir, const std::string& blindLi
         if (!image) return image.error();
         const std::string file = pathToUtf8(outDir / (id + ".png"));
         if (auto st = imaging::saveImage(file, image.value()); !st) return st;
-        def.cases.push_back({id, file, spots > 0});
+        def.cases.push_back({id, file, spots > 0, {}});
         return Status::success();
     };
     char name[32];

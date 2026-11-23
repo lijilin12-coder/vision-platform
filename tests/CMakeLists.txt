@@ -105,3 +105,14 @@ target_link_libraries(template_integration_tests PRIVATE
   vision_operators vision_imaging vision_eventbus vision_persistence vision_content
   GTest::gtest_main)
 gtest_discover_tests(template_integration_tests)
+
+# ---- 数据（BC-9，POC-13 第 1 步）：样本、数据集版本、规则 N1 ----
+add_executable(data_domain_tests data_domain_test.cpp)
+target_link_libraries(data_domain_tests PRIVATE data_domain GTest::gtest_main)
+gtest_discover_tests(data_domain_tests)
+
+add_executable(data_integration_tests data_integration_test.cpp)
+target_link_libraries(data_integration_tests PRIVATE
+  data_application release_application vision_content vision_imaging vision_eventbus vision_persistence
+  GTest::gtest_main)
+gtest_discover_tests(data_integration_tests)

@@ -180,6 +180,33 @@ jobs:
           & $cli --data $data recipe template add $recipe 出界 "$images\ok_01.png" 600 90 64 64
           if ($LASTEXITCODE -eq 0) { throw "伸出样图的模板没有被拒绝" }
           & $cli --data $data recipe show $recipe; Check
+      - name: 样本、数据集和规则 N1（留作基准的图像不能用于训练）
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+          function Check { if ($LASTEXITCODE -ne 0) { throw "命令失败，退出码 $LASTEXITCODE" } }
+          function Last($lines) { return ($lines | Select-Object -Last 1).Trim() }
+          $cli = ".\build\apps\vision-cli.exe"
+          $data = "$env:RUNNER_TEMP\样本数据"
+          $images = "$env:RUNNER_TEMP\样本图像"
+          & $cli --data $data sample-images $images; Check
+          & $cli --data $data sample import $images --label ok; Check
+          # 同一个文件换个中文名字再导入：还是同一个样本，样本总数不变
+          Copy-Item "$images\ok_01.png" "$images\换了个名字.png"
+          & $cli --data $data sample import "$images\换了个名字.png"; Check
+          $count = @(Get-ChildItem "$data\samples" -Filter *.json).Count
+          if ($count -ne 4) { throw "应该有 4 个样本，实际有 $count 个" }
+          # 冻结成数据集版本（用于训练）之后，这些图像不能再放进基准图集
+          $dataset = Last (& $cli --data $data dataset new 训练用); Check
+          & $cli --data $data dataset add $dataset --all-unassigned; Check
+          $version = Last (& $cli --data $data dataset freeze $dataset); Check
+          & $cli --data $data dataset show $version; Check
+          $before = @(Get-ChildItem "$data\golden-sets" -Filter *.json -ErrorAction SilentlyContinue).Count
+          # golden sample 自己生成新的图像，和训练用的不重复：必须成功
+          & $cli --data $data golden sample "$env:RUNNER_TEMP\样本基准"; Check
+          $after = @(Get-ChildItem "$data\golden-sets" -Filter *.json).Count
+          if ($after -ne $before + 1) { throw "基准图集没有建出来" }
       - name: 编译并运行教程示例
         shell: cmd
         run: docs\tutorial\cpp\run_all.bat
