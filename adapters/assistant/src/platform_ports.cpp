@@ -67,6 +67,25 @@ Result<assistant::TrialResult> EngineTrialRunner::run(const std::string& recipeI
     return t;
 }
 
+Result<Image> EngineTrialRunner::outputImage(const std::string& recipeId, const std::string& imageRef, const std::string& nodeId,
+                                             const std::string& port) {
+    using R = Result<Image>;
+    auto doc = authoring_.getDraftDocument(recipeId);
+    if (!doc) return doc.error();
+    auto image = imageFor(imageRef);
+    if (!image) return image.error();
+    // 调试运行：还没有模板的节点会失败，但它上游的节点照常运行，中间结果都在
+    auto run = execution_.debugRun(doc.value(), image.value());
+    if (!run) return run.error();
+    const auto node = run.value().outputs.find(nodeId);
+    if (node == run.value().outputs.end()) return R::failure("assistant.no_output", "节点 " + nodeId + " 没有运行出结果");
+    const auto value = node->second.find(port);
+    if (value == node->second.end() || !std::holds_alternative<Image>(value->second)) {
+        return R::failure("assistant.no_output", "节点 " + nodeId + " 的输出 " + port + " 不是图像");
+    }
+    return std::get<Image>(value->second);
+}
+
 Result<std::vector<assistant::CaseInfo>> ReleaseGoldenCases::cases(const std::string& goldenSetId) {
     auto set = golden_.getGoldenSet(goldenSetId);
     if (!set) return set.error();

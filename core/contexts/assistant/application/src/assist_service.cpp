@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <chrono>
 #include <map>
 
@@ -180,6 +181,27 @@ Status buildCandidate(const Workflow& wf, Lab& lab) {
     return Status::success();
 }
 
+// 给候选方案配上任务书提供的匹配模板（docs/ddd/07-recipe-assistant.md §8.5）。
+// 模板不是从相机的原图上框的，而是从工作流指定的那个端口的输出上框：
+// 定位节点看到的是经过了前面预处理的图像，模板必须和它是同一种图像。
+Status installTemplates(const Workflow& wf, const InspectionBrief& brief, Lab& lab) {
+    for (const auto& slot : wf.templateSlots()) {
+        const auto choice = std::find_if(brief.templates.begin(), brief.templates.end(),
+                                         [&](const TemplateChoice& t) { return t.slot == slot.name; });
+        if (choice == brief.templates.end()) continue;  // 不会发生：聚合在开始会话时已经检查过（A12）
+        const auto dot = slot.source.find('.');
+        auto source = lab.runner.outputImage(lab.recipeId, lab.cases.at(choice->caseId).imageRef,
+                                             lab.nodeIdOf.at(slot.source.substr(0, dot)), slot.source.substr(dot + 1));
+        if (!source) {
+            return Status::failure(source.error().code, "取不到用来框模板“" + slot.name + "”的图像（" + slot.source + "）：" + source.error().message);
+        }
+        auto id = lab.editor.createTemplate(lab.recipeId, slot.name, source.value(), choice->x, choice->y, choice->width, choice->height);
+        if (!id) return Status::failure(id.error().code, "模板“" + slot.name + "”创建失败：" + id.error().message);
+        if (auto st = lab.editor.setParam(lab.recipeId, lab.nodeIdOf.at(slot.nodeKey), slot.param, ParamValue(id.value())); !st) return st;
+    }
+    return Status::success();
+}
+
 }  // namespace
 
 AssistService::AssistService(WorkflowRepository& workflows, AssistSessionRepository& sessions, RecipeAdvisor& advisor,
@@ -213,6 +235,7 @@ Result<SessionView> AssistService::run(const AssistRequest& request) {
     brief.dataSharing = sharing.value();
     brief.blindCaseIds =
         request.blindCaseIds.empty() ? chooseBlindCases(withTruth, request.blindFraction, request.seed) : request.blindCaseIds;
+    for (const auto& t : request.templates) brief.templates.push_back({t.slot, t.caseId, t.x, t.y, t.width, t.height});
 
     if (auto st = buildCandidate(*workflow, lab); !st) return st.error();
 
@@ -221,6 +244,8 @@ Result<SessionView> AssistService::run(const AssistRequest& request) {
                                         advisor_.name(), allCaseIds, lab.recipeId);
     if (!created) return created.error();
     AssistSession session = std::move(created).value();
+    // 会话开始时聚合已经确认：每个模板槽都有模板，并且都取自调参集（A12）。现在才真的去框
+    if (auto st = installTemplates(*workflow, session.state().brief, lab); !st) return st.error();
     const auto save = [&]() -> Status {
         if (auto st = sessions_.save(session); !st) return st;
         events_.publishAll(session.pullEvents());

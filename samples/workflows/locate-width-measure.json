@@ -1,0 +1,130 @@
+{
+  "id": "locate-width-measure",
+  "version": 1,
+  "name": "定位后测量宽度",
+  "description": "零件每次摆放的位置和角度不一样：先用匹配模板找到零件（模板匹配），把图像转正、移回标准位置（按位姿对齐），再用卡尺量宽度。定位得分太低或宽度超差都判不合格。",
+  "nodes": [
+    {
+      "key": "input",
+      "operator": "vision.image_input"
+    },
+    {
+      "key": "gray",
+      "operator": "vision.to_gray"
+    },
+    {
+      "key": "match",
+      "operator": "vision.template_match",
+      "params": {
+        "angleRange": 12,
+        "minScore": 0.5
+      }
+    },
+    {
+      "key": "located",
+      "operator": "vision.judge_range",
+      "params": {
+        "min": 0.6,
+        "max": 1,
+        "label": "定位得分",
+        "unit": ""
+      }
+    },
+    {
+      "key": "align",
+      "operator": "vision.align_to_pose",
+      "params": {
+        "border": "replicate"
+      }
+    },
+    {
+      "key": "caliper",
+      "operator": "vision.caliper_width",
+      "params": {
+        "direction": "horizontal"
+      }
+    },
+    {
+      "key": "judge",
+      "operator": "vision.judge_range",
+      "params": {
+        "min": 395,
+        "max": 405,
+        "label": "宽度",
+        "unit": "像素"
+      }
+    }
+  ],
+  "edges": [
+    [
+      "input.image",
+      "gray.image"
+    ],
+    [
+      "gray.image",
+      "match.image"
+    ],
+    [
+      "match.score",
+      "located.value"
+    ],
+    [
+      "gray.image",
+      "align.image"
+    ],
+    [
+      "match.pose",
+      "align.pose"
+    ],
+    [
+      "align.image",
+      "caliper.image"
+    ],
+    [
+      "caliper.width",
+      "judge.value"
+    ]
+  ],
+  "templates": [
+    {
+      "name": "locator",
+      "node": "match",
+      "param": "template",
+      "from": "gray.image",
+      "hint": "框零件上不对称的特征（一个角、几个大小不同的孔）。不要只框一个圆或一条直边"
+    }
+  ],
+  "tunables": [
+    {
+      "node": "caliper",
+      "param": "edgeThreshold",
+      "min": 0.5,
+      "max": 100,
+      "initial": 3,
+      "hint": "边缘两侧的平均灰度至少相差多少才算一条边缘。太低会把划痕、污渍当成零件的边缘，量出来偏大；太高会找不到零件的边缘。"
+    },
+    {
+      "node": "caliper",
+      "param": "smooth",
+      "min": 1,
+      "max": 21,
+      "initial": 3,
+      "hint": "求导之前对灰度曲线做平滑的宽度（像素）。大一些更抗噪声，但会让边缘的位置不那么准。"
+    }
+  ],
+  "robustness": [
+    {
+      "kind": "brightness",
+      "levels": [
+        0.8,
+        1.2
+      ]
+    },
+    {
+      "kind": "noise",
+      "levels": [
+        10
+      ]
+    }
+  ]
+}

@@ -78,10 +78,11 @@ constexpr const char* kUsage = R"(用法：vision-cli [--data <目录>] <命令>
 方案助手（方案构建平台）
   workflow import <工作流.json>                 导入一个工作流（示例见 samples/workflows/）
   workflow list
-  golden sample <输出目录> [--blind-lighting dim|same] [--scenario basic|glare|width] [--workflow <工作流ID>]
+  golden sample <输出目录> [--blind-lighting dim|same] [--scenario basic|glare|width|locate] [--workflow <工作流ID>]
                                                生成示例基准图集和一份任务书；dim（默认）表示盲测集的光照比调参集暗；
                                                glare：图上还有不算缺陷的大面积反光（配 bright-spot-glare 工作流）；
                                                width：测量零件的宽度（配 width-measure 工作流）；
+                                               locate：零件位置和角度随机，先定位再测量（配 locate-width-measure 工作流，任务书里带匹配模板）；
                                                --workflow：任务书里改用另一个工作流，例如 bright-spot-normalized
   golden list | golden show <基准图集ID>
   assist run <任务书.json> (--advisor search | --script <顾问脚本.json> | --llm <大模型配置.json>)

@@ -84,13 +84,49 @@ cv::Mat drawWidthSample(double width, bool scratch, double lighting, unsigned se
     return m;
 }
 
+// “定位后测量”的示例图像：在宽度示例的基础上，零件上多了两个标记（一个亮的圆、一个小方块，用来定位），
+// 并且零件整体平移 (dx, dy)、顺时针转 angle 度——模拟零件每次摆放得不一样。
+// 标准位置（dx = dy = angle = 0）时零件的左边缘在 x = 320 − width / 2。
+cv::Mat drawLocateSample(double width, bool scratch, double lighting, unsigned seed, double dx, double dy, double angle) {
+    cv::RNG rng(seed);
+    cv::Mat m(480, 640, CV_8UC3, cv::Scalar(150, 150, 150));
+    const double left = 320.0 - width / 2, right = left + width;
+    for (int x = 0; x < m.cols; ++x) {
+        const double covered = std::max(0.0, std::min(x + 1.0, right) - std::max<double>(x, left));
+        if (covered <= 0) continue;
+        const double g = 150 - 75 * covered;
+        cv::rectangle(m, cv::Rect(x, 90, 1, 300), cv::Scalar(g, g, g), cv::FILLED);
+    }
+    const int markX = static_cast<int>(left) + 60;
+    cv::circle(m, cv::Point(markX, 180), 14, cv::Scalar(225, 225, 225), cv::FILLED, cv::LINE_AA);
+    cv::rectangle(m, cv::Rect(markX + 35, 200, 20, 12), cv::Scalar(200, 200, 200), cv::FILLED);
+
+    // 零件绕画面中心转 angle 度（屏幕上顺时针为正），再平移
+    const double radians = angle * CV_PI / 180.0, c = std::cos(radians), sn = std::sin(radians);
+    const cv::Mat move = (cv::Mat_<double>(2, 3) << c, -sn, 320 - (c * 320 - sn * 240) + dx, sn, c, 240 - (sn * 320 + c * 240) + dy);
+    cv::Mat moved;
+    cv::warpAffine(m, moved, move, m.size(), cv::INTER_LINEAR, cv::BORDER_CONSTANT, cv::Scalar(150, 150, 150));
+    // 划痕画在背景上，不跟着零件动
+    if (scratch) cv::rectangle(moved, cv::Rect(rng.uniform(10, 30), 0, 3, 480), cv::Scalar(135, 135, 135), cv::FILLED);
+
+    moved.convertTo(moved, -1, lighting, 0);
+    cv::Mat noise(moved.size(), CV_16SC3);
+    rng.fill(noise, cv::RNG::NORMAL, 0.0, 4.0);
+    cv::Mat wide;
+    moved.convertTo(wide, CV_16S);
+    wide += noise;
+    wide.convertTo(moved, CV_8U);
+    return moved;
+}
+
 int cmdGoldenSample(App& app, const std::string& dir, const std::string& blindLighting, const std::string& scenario,
                     const std::string& workflowOverride) {
-    if (scenario != "basic" && scenario != "glare" && scenario != "width") {
-        std::cerr << "--scenario 只能是 basic、glare 或 width\n";
+    if (scenario != "basic" && scenario != "glare" && scenario != "width" && scenario != "locate") {
+        std::cerr << "--scenario 只能是 basic、glare、width 或 locate\n";
         return 1;
     }
-    const bool widthScenario = scenario == "width";
+    const bool locateScenario = scenario == "locate";
+    const bool widthScenario = scenario == "width" || locateScenario;
     const bool withGlare = scenario == "glare";
     if (blindLighting != "dim" && blindLighting != "same") {
         std::cerr << "--blind-lighting 只能是 dim 或 same\n";
@@ -114,7 +150,16 @@ int cmdGoldenSample(App& app, const std::string& dir, const std::string& blindLi
             static const double okWidths[] = {400.0, 397.3, 402.6, 396.2, 403.8, 399.1, 401.4, 398.5};
             static const double ngWidths[] = {388.0, 412.5, 391.2, 409.4, 385.6, 414.0, 392.3, 408.7};
             const double width = (spots > 0 ? ngWidths : okWidths)[seed % 8];
-            drawn = drawWidthSample(width, dust, lighting, ++seed);
+            if (locateScenario) {
+                // 第一个用例（ok_01）摆在标准位置、不旋转：任务书用它来框模板。其余的随机平移 ±20 像素、旋转 ±8°
+                const bool reference = def.cases.empty();
+                cv::RNG placement(1000 + seed);
+                const double dx = reference ? 0.0 : placement.uniform(-20.0, 20.0), dy = reference ? 0.0 : placement.uniform(-20.0, 20.0);
+                const double angle = reference ? 0.0 : placement.uniform(-8.0, 8.0);
+                drawn = drawLocateSample(reference ? 400.0 : width, dust && !reference, lighting, ++seed, dx, dy, angle);
+            } else {
+                drawn = drawWidthSample(width, dust, lighting, ++seed);
+            }
         } else {
             drawn = drawSample(spots, dust, lighting, ++seed, glare);
         }
@@ -147,10 +192,12 @@ int cmdGoldenSample(App& app, const std::string& dir, const std::string& blindLi
 
     // 顺手写一份任务书，方便直接试
     const std::string workflow = !workflowOverride.empty() ? workflowOverride
+                                 : locateScenario          ? "locate-width-measure"
                                  : widthScenario           ? "width-measure"
                                  : withGlare               ? "bright-spot-glare"
                                                            : "bright-spot";
-    const json brief = {{"goal", widthScenario ? "测量零件的宽度，395 到 405 像素之间为合格；背景上的划痕不是零件的边缘"
+    json brief = {{"goal", locateScenario ? "零件每次摆放的位置和角度不一样。测量零件的宽度，395 到 405 像素之间为合格；背景上的划痕不是零件的边缘"
+                                 : widthScenario ? "测量零件的宽度，395 到 405 像素之间为合格；背景上的划痕不是零件的边缘"
                                  : withGlare   ? "检出零件表面的亮斑，一个都不允许；灰尘和大面积的反光不算缺陷"
                                                : "检出零件表面的亮斑，一个都不允许；灰尘不算缺陷"},
                         {"goldenSet", id.value()},
@@ -160,6 +207,10 @@ int cmdGoldenSample(App& app, const std::string& dir, const std::string& blindLi
                         {"maxRounds", 30},
                         {"hardeningRounds", 8},
                         {"maxSeconds", 300}};
+    if (locateScenario) {
+        // 匹配模板：从 ok_01（零件在标准位置）上框住圆和小方块那一带。零件宽 400，左边缘在 x = 120，圆心在 (180, 180)
+        brief["templates"] = json::array({{{"slot", "locator"}, {"case", "ok_01"}, {"x", 156}, {"y", 156}, {"width", 90}, {"height", 66}}});
+    }
     const fs::path briefFile = outDir / "brief.json";
     std::ofstream(briefFile, std::ios::binary) << brief.dump(2) << "\n";
 
@@ -194,6 +245,10 @@ Result<assistant::AssistRequest> parseBrief(const std::string& text) try {
     r.maxRounds = j.value("maxRounds", 20);
     r.maxSeconds = j.value("maxSeconds", 300.0);
     r.hardeningRounds = j.value("hardeningRounds", 8);
+    for (const auto& t : j.value("templates", json::array())) {
+        r.templates.push_back({t.at("slot").get<std::string>(), t.at("case").get<std::string>(), t.at("x").get<int>(),
+                               t.at("y").get<int>(), t.at("width").get<int>(), t.at("height").get<int>()});
+    }
     return r;
 } catch (const std::exception& e) {
     return Result<assistant::AssistRequest>::failure("cli.bad_brief", std::string("任务书格式不对：") + e.what());

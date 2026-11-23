@@ -791,3 +791,61 @@ TEST(Hardening, A3_ProbeObservationsExcludeBlindCases) {
     EXPECT_EQ(view.probeObservations[0].observation.caseId, "ng1");
     EXPECT_TRUE(view.probeObservations[0].observation.imageRef.empty());
 }
+
+// ---------------- 模板槽和任务书里的模板（A12）----------------
+
+namespace {
+
+Result<Workflow> withSlots(std::vector<TemplateSlot> slots, std::vector<Tunable> tunables = {{"bin", "value", 0, 255, 20, ""}}) {
+    return Workflow::create("wf", 1, "定位", "",
+                            {{"src", "vision.source", {}}, {"gray", "vision.gray", {}}, {"match", "vision.match", {}},
+                             {"bin", "vision.threshold", {}}},
+                            {{"src.image", "gray.image"}, {"gray.image", "match.image"}}, std::move(tunables), {}, std::move(slots));
+}
+
+const TemplateSlot kLocator{"locator", "match", "template", "gray.image", "框一个角"};
+
+Result<AssistSession> startWith(std::vector<TemplateChoice> templates, std::vector<TemplateSlot> slots = {kLocator}) {
+    InspectionBrief b = brief();
+    b.templates = std::move(templates);
+    return AssistSession::start("s", b, kNoHardening, withSlots(std::move(slots)).value(), "x", kAll, "r");
+}
+
+}  // namespace
+
+TEST(TemplateSlot, WorkflowValidatesItsSlots) {
+    EXPECT_TRUE(withSlots({kLocator}).ok());
+    const auto rejected = [](TemplateSlot slot) { return !withSlots({std::move(slot)}).ok(); };
+    EXPECT_TRUE(rejected({"", "match", "template", "gray.image", ""}));          // 没有名字
+    EXPECT_TRUE(rejected({"locator", "nope", "template", "gray.image", ""}));    // 节点不存在
+    EXPECT_TRUE(rejected({"locator", "match", "", "gray.image", ""}));           // 没有参数名
+    EXPECT_TRUE(rejected({"locator", "match", "template", "gray", ""}));         // 图像来源没有写端口
+    EXPECT_TRUE(rejected({"locator", "match", "template", "nope.image", ""}));   // 图像来源的节点不存在
+    EXPECT_FALSE(withSlots({kLocator, kLocator}).ok());                           // 重名
+    EXPECT_FALSE(withSlots({kLocator, {"other", "match", "template", "gray.image", ""}}).ok());  // 两个槽指向同一个参数
+    // 模板由人定：模板参数不能同时声明成可调项
+    EXPECT_FALSE(withSlots({kLocator}, {{"match", "template", 0, 10, 1, ""}}).ok());
+}
+
+// A12：模板只能取自调参集；每个槽正好一个
+TEST(TemplateSlot, A12_BriefMustProvideEachTemplateFromATuningCase) {
+    EXPECT_TRUE(startWith({{"locator", "ok1", 10, 10, 40, 30}}).ok());
+    EXPECT_EQ(startWith({{"locator", "ok3", 10, 10, 40, 30}}).error().code, "assistant.template_from_blind");  // ok3 在盲测集里
+    EXPECT_EQ(startWith({{"locator", "ng3", 10, 10, 40, 30}}).error().code, "assistant.template_from_blind");
+    EXPECT_EQ(startWith({{"locator", "zzz", 10, 10, 40, 30}}).error().code, "assistant.template_case");
+    EXPECT_EQ(startWith({}).error().code, "assistant.missing_template");
+    EXPECT_EQ(startWith({{"other", "ok1", 10, 10, 40, 30}}).error().code, "assistant.unknown_template_slot");
+    EXPECT_EQ(startWith({{"locator", "ok1", 10, 10, 40, 30}, {"locator", "ok2", 10, 10, 40, 30}}).error().code,
+              "assistant.duplicate_template");
+    EXPECT_EQ(startWith({{"locator", "ok1", 10, 10, 0, 30}}).error().code, "assistant.template_box");
+    EXPECT_EQ(startWith({{"locator", "ok1", -1, 10, 40, 30}}).error().code, "assistant.template_box");
+    // 没有模板槽的工作流：不需要、也不接受模板
+    EXPECT_TRUE(startWith({}, {}).ok());
+    EXPECT_EQ(startWith({{"locator", "ok1", 10, 10, 40, 30}}, {}).error().code, "assistant.unknown_template_slot");
+}
+
+// 顾问想改模板参数：它不是可调项，按 A10 拒绝
+TEST(TemplateSlot, TemplateParamIsNotTunable) {
+    const Workflow w = withSlots({kLocator}).value();
+    EXPECT_EQ(w.validate(setParam("match", "template", 2)).error().code, "assistant.not_tunable");
+}

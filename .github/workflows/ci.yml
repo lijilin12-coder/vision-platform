@@ -148,6 +148,16 @@ jobs:
           if ($width.workflow.id -ne "width-measure") { throw "最新的会话不是宽度测量的" }
           if ($width.endReason -ne "criteria-met") { throw "宽度测量没有调到达标" }
           if (-not $width.report.blind.meetsCriteria) { throw "宽度测量在盲测集上没有达标" }
+          # 带定位的工作流：任务书里带着匹配模板，零件的位置和角度随机。必须调到调参集和盲测集都达标
+          & $cli --data $data workflow import samples\workflows\locate-width-measure.json; Check
+          & $cli --data $data golden sample "$env:RUNNER_TEMP\定位图集" --scenario locate --blind-lighting same; Check
+          & $cli --data $data assist run "$env:RUNNER_TEMP\定位图集\brief.json" --advisor search; Check
+          $latest = Get-ChildItem "$data\assist-sessions" -Filter *.json | Where-Object { $_.Name -notlike "*.llm.json" } | Sort-Object LastWriteTime | Select-Object -Last 1
+          $locate = Get-Content $latest.FullName -Raw -Encoding utf8 | ConvertFrom-Json
+          if ($locate.workflow.id -ne "locate-width-measure") { throw "最新的会话不是带定位的工作流的" }
+          if ($locate.endReason -ne "criteria-met") { throw "带定位的工作流没有调到达标" }
+          if (-not $locate.report.blind.meetsCriteria) { throw "带定位的工作流在盲测集上没有达标" }
+          if ($locate.brief.templates.Count -ne 1) { throw "会话记录里应该有任务书给的 1 个模板" }
       - name: 匹配模板（中文数据目录下的内容仓库）
         shell: pwsh
         run: |

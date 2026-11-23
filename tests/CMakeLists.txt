@@ -82,7 +82,7 @@ gtest_discover_tests(assistant_domain_tests)
 # ---- 方案助手的集成测试：真实算子 + 检测引擎 + JSON 文件存储 + 按脚本出牌的顾问 ----
 add_executable(assistant_integration_tests assistant_integration_test.cpp)
 target_link_libraries(assistant_integration_tests PRIVATE
-  vision_assist_adapters vision_llm assistant_application authoring_application execution_application release_application
+  vision_assist_adapters vision_llm vision_content assistant_application authoring_application execution_application release_application
   catalog_application vision_operators vision_imaging vision_eventbus vision_persistence
   nlohmann_json::nlohmann_json GTest::gtest_main)
 target_compile_definitions(assistant_integration_tests PRIVATE VISION_SOURCE_DIR="${CMAKE_SOURCE_DIR}")

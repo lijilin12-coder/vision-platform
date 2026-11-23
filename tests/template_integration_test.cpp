@@ -313,9 +313,17 @@ TEST_F(TemplateMechanism, UnsetTemplateBlocksPublishAndExplainsItselfInDebugRun)
     ASSERT_FALSE(rejected.ok());
     EXPECT_NE(rejected.error().message.find("模板参数"), std::string::npos);
 
+    // 调试运行：用到模板的那个节点失败并说明原因，但运行本身不被拒绝——它上游的节点照样运行、中间结果照样能看。
+    // （不然就没法先看“预处理之后的图像”再去框模板了。）
     const auto run = p->execution.debugRun(p->authoring.getDraftDocument(recipe).value(), sampleImage());
-    ASSERT_FALSE(run.ok());
-    EXPECT_EQ(run.error().code, "execution.template_unset");
+    ASSERT_TRUE(run.ok());
+    EXPECT_EQ(run.value().report.verdict, "ERROR");
+    bool explained = false;
+    for (const auto& n : run.value().report.nodes) explained |= n.status == "failed" && n.message.find("还没有设置") != std::string::npos;
+    EXPECT_TRUE(explained);
+    // 正式的检测仍然直接拒绝
+    EXPECT_EQ(p->execution.inspect(p->authoring.getDraftDocument(recipe).value(), sampleImage()).error().code,
+              "execution.template_unset");
 }
 
 // 内容被改动或者丢失：加载方案时就报错，并且说得出是哪个模板——而不是用一幅错的模板继续检测
