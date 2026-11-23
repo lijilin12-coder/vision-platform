@@ -17,7 +17,7 @@ add_library(vision_persistence STATIC
   persistence/src/runtime_repositories.cpp)
 target_include_directories(vision_persistence PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/persistence/include)
 target_link_libraries(vision_persistence
-  PUBLIC authoring_domain authoring_application release_domain station_domain
+  PUBLIC authoring_domain authoring_application release_domain station_domain data_domain
   PRIVATE nlohmann_json::nlohmann_json)
 
 # 日志接收器：控制台、轮转文件
@@ -68,5 +68,5 @@ target_include_directories(vision_llm SYSTEM PRIVATE ${OpenCV_INCLUDE_DIRS})
 add_library(vision_content STATIC content/src/content_store.cpp)
 target_include_directories(vision_content PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/content/include)
 target_link_libraries(vision_content
-  PUBLIC authoring_application execution_application
+  PUBLIC authoring_application execution_application data_application release_application
   PRIVATE vision_imaging)

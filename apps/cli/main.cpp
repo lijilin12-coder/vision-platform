@@ -93,6 +93,14 @@ constexpr const char* kUsage = R"(用法：vision-cli [--data <目录>] <命令>
   assist list | assist show <会话ID>
   assist adopt <会话ID>                         采纳候选方案（只有人可以做这个决定）
   assist abandon <会话ID>
+数据（方案构建平台）
+  sample import <图像或目录...> [--label ok|ng]  导入图像成为样本。样本按图像的内容识别：同一个文件换个名字再导入，还是同一个样本
+  sample list | sample label <样本ID> <ok|ng>   样本 ID 可以只写开头几位
+  dataset new <名称>                            输出数据集 ID
+  dataset add <数据集ID> <样本ID...|--all-unassigned>
+  dataset freeze <数据集ID>                     冻结成一个数据集版本（用于训练），输出版本 ID。
+                                               含有已经留作基准的样本时拒绝；反过来，用于训练的图像也不能再放进基准图集
+  dataset show <数据集版本ID>
 工具
   sample-images <输出目录> [宽 高]              生成示例图像（良品与带亮斑缺陷的产品），默认 640×480
   debug crash <segv|abort|throw>                故意让程序崩溃，用来验证崩溃报告和转储文件能否生成
@@ -468,6 +476,8 @@ int main(int argc, char** argv) {
     if (cmd == "golden" && need(2)) return runGoldenCommand(app, args);
     if (cmd == "workflow" && need(2)) return runWorkflowCommand(app, args);
     if (cmd == "assist" && need(2)) return runAssistCommand(app, args);
+    if (cmd == "sample" && need(2)) return runSampleCommand(app, args);
+    if (cmd == "dataset" && need(2)) return runDatasetCommand(app, args);
     if (cmd == "inspect" && need(3)) return cmdInspect(app, args[1], {args.begin() + 2, args.end()});
     if (cmd == "version" && need(3) && args[1] == "show") {
         auto doc = app.authoring.getVersionDocument(args[2]);

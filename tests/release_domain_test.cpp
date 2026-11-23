@@ -55,8 +55,8 @@ GoldenSet frozenSet(AcceptanceCriteria criteria = {}) {
     auto set = GoldenSet::create("gs-1", "亮斑");
     EXPECT_TRUE(set.ok());
     GoldenSet s = std::move(set).value();
-    for (const char* id : {"ok1", "ok2", "ok3", "ok4"}) EXPECT_TRUE(s.addCase({id, std::string(id) + ".png", Truth::Ok}).ok());
-    for (const char* id : {"ng1", "ng2"}) EXPECT_TRUE(s.addCase({id, std::string(id) + ".png", Truth::Ng}).ok());
+    for (const char* id : {"ok1", "ok2", "ok3", "ok4"}) EXPECT_TRUE(s.addCase({id, std::string(id) + ".png", Truth::Ok, {}}).ok());
+    for (const char* id : {"ng1", "ng2"}) EXPECT_TRUE(s.addCase({id, std::string(id) + ".png", Truth::Ng, {}}).ok());
     EXPECT_TRUE(s.setCriteria(criteria).ok());
     EXPECT_TRUE(s.freeze().ok());
     return s;
@@ -67,7 +67,7 @@ GoldenSet frozenSet(AcceptanceCriteria criteria = {}) {
 TEST(GoldenSet, FrozenSetCannotBeChanged) {
     GoldenSet s = frozenSet();
     EXPECT_TRUE(s.frozen());
-    EXPECT_FALSE(s.addCase({"x", "x.png", Truth::Ok}).ok());
+    EXPECT_FALSE(s.addCase({"x", "x.png", Truth::Ok, {}}).ok());
     EXPECT_FALSE(s.setCriteria({1, 0.5, 0}).ok());
     EXPECT_FALSE(s.freeze().ok());
 }
@@ -76,8 +76,8 @@ TEST(GoldenSet, RejectsDuplicateCasesAndEmptySets) {
     auto set = GoldenSet::create("gs", "n");
     ASSERT_TRUE(set.ok());
     EXPECT_FALSE(set.value().freeze().ok());  // 空的图集不能冻结
-    EXPECT_TRUE(set.value().addCase({"a", "a.png", Truth::Ok}).ok());
-    EXPECT_FALSE(set.value().addCase({"a", "b.png", Truth::Ng}).ok());
+    EXPECT_TRUE(set.value().addCase({"a", "a.png", Truth::Ok, {}}).ok());
+    EXPECT_FALSE(set.value().addCase({"a", "b.png", Truth::Ng, {}}).ok());
     EXPECT_FALSE(set.value().setCriteria({-1, 0, 0}).ok());
     EXPECT_FALSE(set.value().setCriteria({0, 1.5, 0}).ok());
 }

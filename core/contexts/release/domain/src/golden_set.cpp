@@ -35,6 +35,13 @@ Status GoldenSet::addCase(GoldenCase goldenCase) {
     if (goldenCase.id.empty()) return Status::failure("golden.empty_case_id", "用例 ID 不能为空");
     if (goldenCase.imageRef.empty()) return Status::failure("golden.no_image", "用例 " + goldenCase.id + " 没有图像");
     if (findCase(goldenCase.id) != nullptr) return Status::failure("golden.duplicate_case", "用例 ID 重复：" + goldenCase.id);
+    if (!goldenCase.sampleId.empty()) {
+        const auto same = std::find_if(cases_.begin(), cases_.end(),
+                                       [&](const GoldenCase& c) { return c.sampleId == goldenCase.sampleId; });
+        if (same != cases_.end()) {
+            return Status::failure("golden.duplicate_sample", "用例 " + goldenCase.id + " 和用例 " + same->id + " 是同一幅图像");
+        }
+    }
     cases_.push_back(std::move(goldenCase));
     return Status::success();
 }

@@ -5,6 +5,8 @@
 
 #include <filesystem>
 
+#include "vision/data/domain/dataset.h"
+#include "vision/data/domain/sample.h"
 #include "vision/release/domain/golden_set.h"
 #include "vision/release/domain/release.h"
 #include "vision/station/domain/station.h"
@@ -46,6 +48,32 @@ public:
 
 private:
     std::filesystem::path dir_;
+};
+
+// <root>/samples/<样本ID>.json。只有样本的信息；图像内容在内容仓库里（ADR-20）
+class JsonSampleRepository final : public data::SampleRepository {
+public:
+    explicit JsonSampleRepository(std::filesystem::path root);
+    Status save(const data::Sample& sample) override;
+    std::optional<data::Sample> find(const data::SampleId& id) override;
+    std::vector<data::SampleId> listIds() override;
+
+private:
+    std::filesystem::path dir_;
+};
+
+// <root>/datasets/<数据集ID>.json，<root>/dataset-versions/<数据集ID>/v<N>.json
+class JsonDatasetRepository final : public data::DatasetRepository {
+public:
+    explicit JsonDatasetRepository(std::filesystem::path root);
+    Status save(const data::Dataset& dataset) override;
+    std::optional<data::Dataset> find(const data::DatasetId& id) override;
+    std::vector<data::DatasetId> listIds() override;
+    Status saveVersion(const data::DatasetVersion& version) override;
+    std::optional<data::DatasetVersion> findVersion(const std::string& versionId) override;
+
+private:
+    std::filesystem::path dir_, versionsDir_;
 };
 
 }  // namespace vision::persistence

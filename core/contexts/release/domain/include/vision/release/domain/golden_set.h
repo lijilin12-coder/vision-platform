@@ -17,8 +17,11 @@ enum class Truth { Ok, Ng };
 // 值对象：基准图集里的一个用例
 struct GoldenCase {
     std::string id;
-    std::string imageRef;  // 图像的位置。设计上将来改为引用样本（见 08 第 3 节），现在还没有样本这个概念
+    std::string imageRef;  // 图像的位置
     Truth truth = Truth::Ok;
+    // 这幅图像是哪个样本（BC-9 数据里按图像内容识别的 ID）。有了它，才能检查规则 N1：
+    // 留作基准的样本不能用于训练。没有接上数据上下文的程序里它是空的。
+    std::string sampleId;
 };
 
 // 值对象：验收标准，由用户设定（例如“漏检 0 张、误报率不超过 2%”）
@@ -34,7 +37,9 @@ struct AcceptanceCriteria {
 //   - 用例的 ID 不重复
 //   - 冻结时至少有一个用例
 //   - 冻结后不可修改（修改标准或用例 = 新建一个基准图集）
-// 还没有实现：一致性标准、用例引用样本、规则 N1（留作基准的样本不用于训练）。
+//   - 同一个样本（同样内容的图像）不能在一个图集里出现两次
+// 规则 N1（留作基准的样本不用于训练）涉及数据上下文的样本，由应用层在冻结时通过端口检查。
+// 还没有实现：一致性标准。
 class GoldenSet : public EventRecorder {
 public:
     static Result<GoldenSet> create(GoldenSetId id, std::string name);

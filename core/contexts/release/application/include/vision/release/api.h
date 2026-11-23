@@ -66,6 +66,18 @@ struct GoldenCaseView {
     std::string id;
     std::string imageRef;
     bool truthNg = false;  // 人确认的真实判定：是否不合格
+    std::string sampleId;  // 这幅图像是哪个样本；没有接上数据上下文时为空
+};
+
+// 端口：样本登记处（接到 BC-9 数据上）。基准图集的用例引用的是样本，这样才能检查规则 N1
+// （docs/ddd/08-platforms-and-training.md §3）。
+class SampleRegistry {
+public:
+    virtual ~SampleRegistry() = default;
+    // 这幅图像是哪个样本（按内容识别；没见过的图像会被登记成新的样本）。truthNg 是人确认的真实判定。
+    virtual Result<std::string> sampleOf(const std::string& imageRef, bool truthNg) = 0;
+    // 把这些样本的用途定为“留作基准”。其中有已经用于训练的 → 整体拒绝（N1）。
+    virtual Status reserveForBenchmark(const std::vector<std::string>& sampleIds) = 0;
 };
 
 struct CriteriaView {
@@ -115,7 +127,10 @@ public:
     GoldenSetService(GoldenSetRepository& sets, EventPublisher& events);
 
     // 创建并冻结一个基准图集，返回它的 ID。冻结之后不能修改。
+    // 接上了样本登记处时：每个用例登记成样本，并且把它们的用途定为“留作基准”；
+    // 其中有已经用于训练的图像，冻结被拒绝（N1）。
     Result<std::string> createGoldenSet(const GoldenSetDefinition& definition);
+    void useSampleRegistry(SampleRegistry& registry) { sampleRegistry_ = &registry; }
     Result<GoldenSetView> getGoldenSet(const std::string& goldenSetId) const;
     std::vector<std::string> listGoldenSets() const;
 
@@ -128,6 +143,7 @@ public:
 private:
     GoldenSetRepository& sets_;
     EventPublisher& events_;
+    SampleRegistry* sampleRegistry_ = nullptr;
     mutable std::mutex mutex_;
 };
 

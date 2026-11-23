@@ -10,7 +10,7 @@ GoldenSetView toView(const GoldenSet& s) {
     GoldenSetView v;
     v.id = s.id();
     v.name = s.name();
-    for (const auto& c : s.cases()) v.cases.push_back({c.id, c.imageRef, c.truth == Truth::Ng});
+    for (const auto& c : s.cases()) v.cases.push_back({c.id, c.imageRef, c.truth == Truth::Ng, c.sampleId});
     v.criteria = {s.criteria().maxMisses, s.criteria().maxFalseAlarmRate, s.criteria().maxErrors};
     return v;
 }
@@ -36,12 +36,25 @@ GoldenSetService::GoldenSetService(GoldenSetRepository& sets, EventPublisher& ev
 Result<std::string> GoldenSetService::createGoldenSet(const GoldenSetDefinition& definition) {
     auto set = GoldenSet::create(newUuid(), definition.name);
     if (!set) return set.error();
+    std::vector<std::string> sampleIds;
     for (const auto& c : definition.cases) {
-        if (auto st = set.value().addCase({c.id, c.imageRef, c.truthNg ? Truth::Ng : Truth::Ok}); !st) return st.error();
+        std::string sampleId;
+        if (sampleRegistry_ != nullptr) {
+            auto sample = sampleRegistry_->sampleOf(c.imageRef, c.truthNg);
+            if (!sample) return Result<std::string>::failure(sample.error().code, "用例 " + c.id + "：" + sample.error().message);
+            sampleId = sample.value();
+            sampleIds.push_back(sampleId);
+        }
+        if (auto st = set.value().addCase({c.id, c.imageRef, c.truthNg ? Truth::Ng : Truth::Ok, sampleId}); !st) return st.error();
     }
     const auto& k = definition.criteria;
     if (auto st = set.value().setCriteria({k.maxMisses, k.maxFalseAlarmRate, k.maxErrors}); !st) return st.error();
     if (auto st = set.value().freeze(); !st) return st.error();
+    // 规则 N1：冻结基准图集时，其中的样本的用途固定为“留作基准”；有已经用于训练的，拒绝冻结。
+    // 放在保存之前：被拒绝的图集不会留下来。
+    if (sampleRegistry_ != nullptr) {
+        if (auto st = sampleRegistry_->reserveForBenchmark(sampleIds); !st) return st.error();
+    }
 
     std::vector<EventPtr> events;
     {

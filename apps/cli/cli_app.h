@@ -13,6 +13,7 @@
 #include "vision/authoring/api.h"
 #include "vision/catalog/api.h"
 #include "vision/common/log.h"
+#include "vision/data/api.h"
 #include "vision/content/content_store.h"
 #include "vision/eventbus/in_memory_event_bus.h"
 #include "vision/execution/api.h"
@@ -62,27 +63,40 @@ struct App {
     assist_adapters::EngineTrialRunner trialRunner;
     assist_adapters::ReleaseGoldenCases goldenCases;
 
+    // 数据（BC-9）：样本、数据集。基准图集的用例通过 sampleRegistry 变成对样本的引用（规则 N1 靠它检查）
+    persistence::JsonSampleRepository sampleRepository;
+    persistence::JsonDatasetRepository datasetRepository;
+    content::SampleFiles sampleFiles;
+    data::DataService data;
+    content::DataSampleRegistry sampleRegistry;
+
     bool verboseEvents = false;
 
-    explicit App(const std::filesystem::path& data)
-        : recipes(data),
-          versions(data),
-          releaseRepository(data),
-          stationRepository(data),
-          contentStore(data),
+    explicit App(const std::filesystem::path& dataDir)
+        : recipes(dataDir),
+          versions(dataDir),
+          releaseRepository(dataDir),
+          stationRepository(dataDir),
+          contentStore(dataDir),
           templates(contentStore),
           authoring(recipes, versions, catalog::OperatorCatalog::global(), bus),
           execution(catalog::OperatorCatalog::global(), bus),
           recipeSource(authoring),
           releases(releaseRepository, recipeSource, bus),
           stations(stationRepository, releases, execution, bus),
-          goldenSetRepository(data),
+          goldenSetRepository(dataDir),
           goldenSets(goldenSetRepository, bus),
-          workflows(data),
-          assistSessions(data),
+          workflows(dataDir),
+          assistSessions(dataDir),
           candidateEditor(authoring),
           trialRunner(authoring, execution),
-          goldenCases(goldenSets) {
+          goldenCases(goldenSets),
+          sampleRepository(dataDir),
+          datasetRepository(dataDir),
+          sampleFiles(contentStore),
+          data(sampleRepository, datasetRepository, sampleFiles, bus),
+          sampleRegistry(data) {
+        goldenSets.useSampleRegistry(sampleRegistry);
         // 匹配模板：方案编排往内容仓库里存，检测引擎从内容仓库里取
         authoring.useTemplateStore(templates);
         execution.useTemplateSource(templates);
@@ -113,5 +127,9 @@ int runStationCommand(App& app, const std::vector<std::string>& args);
 int runGoldenCommand(App& app, const std::vector<std::string>& args);
 int runWorkflowCommand(App& app, const std::vector<std::string>& args);
 int runAssistCommand(App& app, const std::vector<std::string>& args);
+
+// sample ...、dataset ... 两组命令（数据，见 data_commands.cpp）。
+int runSampleCommand(App& app, const std::vector<std::string>& args);
+int runDatasetCommand(App& app, const std::vector<std::string>& args);
 
 }  // namespace vision::cli
