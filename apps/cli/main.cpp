@@ -66,6 +66,11 @@ constexpr const char* kUsage = R"(用法：vision-cli [--data <目录>] <命令>
   release list
   release show <上线包ID>
   release withdraw <上线包ID>                   撤回：不允许再部署
+方案包：把方案版本连同它用到的模板、模型打成一个文件，带到另一台机器上
+  package export <方案版本ID> <文件.vpkg>       导出。方案用到的模型必须已经发布
+  package import <文件.vpkg>                    导入。之后就可以 release create <方案版本ID>、部署到工位。
+                                               本平台缺算子、或者同一个 ID 已经有不同的内容时被拒绝；重复导入不出错
+  package show <文件.vpkg>                      只看包里有什么，不导入
 工位运行（BC-5）
   station create <名称> [--auto-rollback N]     创建工位，输出工位 ID（N：连续多少次 ERROR 自动回滚，默认 3）
   station list
@@ -515,6 +520,7 @@ int main(int argc, char** argv) {
     }
     if (cmd == "release" && need(2)) return runReleaseCommand(app, args);
     if (cmd == "station" && need(2)) return runStationCommand(app, args);
+    if (cmd == "package" && need(3)) return runPackageCommand(app, args);
     if (cmd == "golden" && need(2)) return runGoldenCommand(app, args);
     if (cmd == "workflow" && need(2)) return runWorkflowCommand(app, args);
     if (cmd == "assist" && need(2)) return runAssistCommand(app, args);

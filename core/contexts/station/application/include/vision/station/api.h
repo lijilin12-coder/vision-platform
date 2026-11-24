@@ -80,6 +80,9 @@ public:
     StationService(StationRepository& stations, release::ReleaseService& releases, execution::ExecutionService& execution,
                    EventPublisher& events);
     ~StationService();  // 等待所有后台加载结束
+    // 等待所有工位的后台加载结束。组装根在开始销毁其他服务【之前】要调用它：
+    // 后台加载会用到检测引擎、模板、模型，它们不能在加载还没结束时就被销毁。
+    void finishBackgroundWork();
     StationService(const StationService&) = delete;
     StationService& operator=(const StationService&) = delete;
 

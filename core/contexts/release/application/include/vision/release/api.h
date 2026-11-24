@@ -4,6 +4,7 @@
 
 #include <map>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -156,6 +157,149 @@ private:
     EventPublisher& events_;
     SampleRegistry* sampleRegistry_ = nullptr;
     mutable std::mutex mutex_;
+};
+
+// =====================================================================================
+// 方案包（REL-02，H-06，docs/ddd/12-recipe-package.md）
+// 把一个方案版本连同它用到的匹配模板、模型打成一个文件，带到另一台机器上导入。
+// =====================================================================================
+
+// ===== 发布语言：方案包的清单 =====
+// 它就是包文件里 manifest.json 的内容；两台机器之间靠它说话。
+
+struct PackageTemplateEntry {
+    std::string id, name, sha256;
+    long long bytes = 0;
+};
+
+struct PackageModelEntry {
+    std::string id;  // 模型版本 ID，例如 "surface-anomaly@v1"
+    std::string sha256;
+    long long bytes = 0;
+    // 模型契约和来源：导入的一方靠它们登记这个模型
+    std::string kind, output;
+    int inputWidth = 0, inputHeight = 0, inputChannels = 1;
+    std::map<std::string, double> numbers;
+    std::string provenanceKind, trainingJobId, datasetVersionId, split, backend;
+};
+
+struct PackageManifest {
+    std::string schema;
+    std::string packageId;        // 每次导出一个新的 ID
+    std::string recipeVersionId, recipeName;
+    std::string recipeSha256;     // 方案版本文档的内容哈希
+    std::vector<std::pair<std::string, int>> operators;  // 用到的算子：ID、主版本号
+    std::vector<PackageTemplateEntry> templates;
+    std::vector<PackageModelEntry> models;
+};
+
+// 一个方案包的全部内容（已经读进内存、校验和都核对过）
+struct PackageFile {
+    PackageManifest manifest;
+    authoring::RecipeVersionDocument recipe;
+    std::map<std::string, std::vector<unsigned char>> contents;  // 内容哈希 → 字节（模板图像、模型文件）
+};
+
+// ===== 端口 =====
+
+// 包文件的读写（先只有“一个文件”这一种传输方式；传输方式是适配器的事）。
+class PackageExchange {
+public:
+    virtual ~PackageExchange() = default;
+    virtual Status write(const std::string& filePath, const PackageFile& package) = 0;
+    // 读出来的同时核对：结构完整、每一份内容的哈希和清单一致、方案文档的哈希和清单一致。任何一处不对都返回失败
+    virtual Result<PackageFile> read(const std::string& filePath) = 0;
+    // 方案版本文档的内容哈希（两台机器上对同一份文档必须算出同一个数）
+    virtual std::string fingerprint(const authoring::RecipeVersionDocument& recipe) const = 0;
+};
+
+// 本机有哪些算子，以及一个算子的哪些参数是“模型”
+struct OperatorFacts {
+    int majorVersion = 1;
+    std::vector<std::string> modelParams;
+};
+class OperatorInventory {
+public:
+    virtual ~OperatorInventory() = default;
+    virtual std::optional<OperatorFacts> find(const std::string& operatorId) const = 0;
+};
+
+// 模型仓库在方案包这件事上要做的两件事
+struct ArchivedModel {
+    PackageModelEntry entry;
+    bool published = false;
+};
+class ModelArchive {
+public:
+    virtual ~ModelArchive() = default;
+    virtual Result<ArchivedModel> find(const std::string& modelVersionId) = 0;
+    // 把包里带来的模型登记进模型仓库，ID 不变、状态是“已发布”（它在导出的那一方已经发布过了）
+    virtual Status add(const PackageModelEntry& entry, const std::vector<unsigned char>& bytes) = 0;
+};
+
+// 按内容哈希存取二进制内容（匹配模板的图像、模型文件）
+class ContentArchive {
+public:
+    virtual ~ContentArchive() = default;
+    virtual Result<std::vector<unsigned char>> get(const std::string& sha256) = 0;
+    virtual Status put(const std::vector<unsigned char>& bytes, const std::string& expectedSha256) = 0;
+};
+
+// 导入进来的方案版本放在哪里。
+// 导入的方案版本不进方案编排（那边是可以编辑的方案）；它只是一份只读的文档，给上线包和检测引擎用。
+// 产线运行平台上没有方案编排，方案版本全都来自这里。
+class ImportedRecipes {
+public:
+    virtual ~ImportedRecipes() = default;
+    virtual Status save(const authoring::RecipeVersionDocument& recipe) = 0;
+    virtual std::optional<authoring::RecipeVersionDocument> find(const std::string& recipeVersionId) const = 0;
+    virtual std::vector<std::string> listIds() const = 0;
+};
+
+// ===== 应用服务 =====
+
+struct ExportReport {
+    std::string packageId, recipeVersionId;
+    int templates = 0, models = 0;
+    long long contentBytes = 0;
+};
+
+struct ImportReport {
+    std::string packageId, recipeVersionId, recipeName;
+    bool recipeAdded = false;                 // 为假：本机已经有一模一样的
+    std::vector<std::string> modelsAdded, modelsAlreadyHere;
+    int templates = 0;
+    bool nothingNew() const { return !recipeAdded && modelsAdded.empty(); }
+};
+
+class PackageService {
+public:
+    PackageService(const RecipeVersionSource& recipes, ImportedRecipes& imported, PackageExchange& exchange,
+                   const OperatorInventory& operators, ModelArchive& models, ContentArchive& content, EventPublisher& events);
+
+    // 导出：方案版本必须存在；它用到的模型必须已经发布（没发布的模型带过去也不能正式使用）。
+    Result<ExportReport> exportPackage(const std::string& recipeVersionId, const std::string& filePath);
+    // 导入：先把所有规则检查完（K1～K4），再开始写；规则不过，什么都不会留下。重复导入不出错。
+    Result<ImportReport> importPackage(const std::string& filePath);
+    // 只看不导入：清单里有什么
+    Result<PackageManifest> inspect(const std::string& filePath);
+
+private:
+    const RecipeVersionSource& recipes_;
+    ImportedRecipes& imported_;
+    PackageExchange& exchange_;
+    const OperatorInventory& operators_;
+    ModelArchive& models_;
+    ContentArchive& content_;
+    EventPublisher& events_;
+    std::mutex mutex_;  // 两次导入不要交错
+};
+
+// 领域事件：方案包已导入
+struct RecipePackageImported final : DomainEvent {
+    std::string packageId, recipeVersionId;
+    RecipePackageImported(std::string p, std::string r) : packageId(std::move(p)), recipeVersionId(std::move(r)) {}
+    const char* name() const override { return "RecipePackageImported"; }
 };
 
 }  // namespace vision::release

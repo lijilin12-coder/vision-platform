@@ -10,6 +10,7 @@ target_link_libraries(vision_platform_assembly INTERFACE
   assistant_application
   vision_assist_adapters
   vision_content
+  vision_exchange
   vision_image_sources
   data_application
   models_application

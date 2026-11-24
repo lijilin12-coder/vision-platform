@@ -1,8 +1,10 @@
 #include "vision/persistence/runtime_repositories.h"
 
 #include <algorithm>
+#include <fstream>
 
 #include "json_files.h"
+#include "vision/persistence/json_repositories.h"
 
 namespace vision::persistence {
 
@@ -117,6 +119,27 @@ std::optional<station::Station> JsonStationRepository::find(const station::Stati
 }
 
 std::vector<station::StationId> JsonStationRepository::listIds() { return listJsonStems(dir_); }
+
+// ---------- JsonImportedRecipes ----------
+
+JsonImportedRecipes::JsonImportedRecipes(fs::path root) : dir_(std::move(root) / "imported-recipes") {}
+
+Status JsonImportedRecipes::save(const authoring::RecipeVersionDocument& recipe) {
+    if (!safeFileName(recipe.versionId)) return Status::failure("persistence.bad_id", "方案版本 ID 不能用作文件名：" + recipe.versionId);
+    return writeFileAtomically(dir_ / (recipe.versionId + ".json"), toJson(recipe, 2));
+}
+
+std::optional<authoring::RecipeVersionDocument> JsonImportedRecipes::find(const std::string& recipeVersionId) const {
+    if (!safeFileName(recipeVersionId)) return std::nullopt;
+    std::ifstream in(dir_ / pathFromUtf8(recipeVersionId + ".json"), std::ios::binary);
+    if (!in) return std::nullopt;
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    auto doc = recipeDocumentFromJson(text);
+    if (!doc) return std::nullopt;  // 文件损坏视为不存在
+    return std::move(doc).value();
+}
+
+std::vector<std::string> JsonImportedRecipes::listIds() const { return listJsonStems(dir_); }
 
 // ---------- JsonGoldenSetRepository ----------
 

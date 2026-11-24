@@ -194,6 +194,14 @@ Result<models::StoredModelFile> ModelFileStore::importFile(const std::string& pa
     return models::StoredModelFile{hash.value(), static_cast<long long>(bytes.size())};
 }
 
+Result<models::StoredModelFile> ModelFileStore::importBytes(const std::vector<unsigned char>& bytes) {
+    using R = Result<models::StoredModelFile>;
+    if (bytes.empty()) return R::failure("content.empty", "模型文件是空的");
+    auto hash = store_.put(bytes);
+    if (!hash) return hash.error();
+    return models::StoredModelFile{hash.value(), static_cast<long long>(bytes.size())};
+}
+
 std::string ModelFileStore::pathOf(const std::string& sha256) const { return pathToUtf8(store_.pathOf(sha256)); }
 
 Result<training::DatasetInfo> DataDatasetSource::load(const std::string& datasetVersionId) {

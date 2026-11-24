@@ -430,6 +430,8 @@ TEST_F(HttpApi, ParameterChangeToPreviewRoundTripIsFast) {
             best = std::min(best, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
         }
         std::cout << "[ 耗时 ] " << width << "x" << height << "：改参数 + 调试运行 + 取一幅区域图 = " << best << " ms（5 次里最快的）\n";
-        if (width == 640) EXPECT_LT(best, 3000.0);
+        if (width == 640) {
+            EXPECT_LT(best, 3000.0);
+        }
     }
 }

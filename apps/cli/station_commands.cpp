@@ -459,4 +459,46 @@ int runStationCommand(App& app, const std::vector<std::string>& rawArgs) {
     return usageError("station create | list | show | deploy | rollback | run | stress（详见 vision-cli help）");
 }
 
+// ---------- package ----------
+
+int runPackageCommand(App& app, const std::vector<std::string>& args) {
+    const std::string& sub = args[1];
+    const auto printManifest = [](const release::PackageManifest& m) {
+        std::cout << "方案包 " << m.packageId << "\n  方案版本 " << m.recipeVersionId << "（" << m.recipeName << "）\n  算子";
+        for (const auto& [id, major] : m.operators) std::cout << " " << id << "@v" << major;
+        std::cout << "\n";
+        for (const auto& t : m.templates) std::cout << "  匹配模板 " << t.name << "（" << t.bytes << " 字节）\n";
+        for (const auto& x : m.models) std::cout << "  模型 " << x.id << "（" << x.kind << "，" << x.bytes << " 字节）\n";
+    };
+    if (sub == "export" && args.size() >= 4) {
+        auto r = app.packages.exportPackage(args[2], args[3]);
+        if (!r) return fail(r.error());
+        std::cout << "已导出 " << args[3] << "：方案版本 " << r.value().recipeVersionId << "，匹配模板 " << r.value().templates << " 个，模型 "
+                  << r.value().models << " 个\n";
+        return 0;
+    }
+    if (sub == "import") {
+        auto r = app.packages.importPackage(args[2]);
+        if (!r) return fail(r.error());
+        const auto& v = r.value();
+        if (v.nothingNew()) {
+            std::cout << "本平台已经有这个方案包里的全部内容，没有什么要导入的\n";
+        } else {
+            std::cout << "已导入方案版本 " << v.recipeVersionId << "（" << v.recipeName << "）" << (v.recipeAdded ? "" : "：本平台已经有了") << "\n";
+            for (const auto& id : v.modelsAdded) std::cout << "  新增模型 " << id << "\n";
+        }
+        for (const auto& id : v.modelsAlreadyHere) std::cout << "  模型 " << id << " 本平台已经有了\n";
+        std::cout << v.recipeVersionId << "\n";
+        return 0;
+    }
+    if (sub == "show") {
+        auto m = app.packages.inspect(args[2]);
+        if (!m) return fail(m.error());
+        printManifest(m.value());
+        return 0;
+    }
+    std::cerr << "未知的 package 命令\n";
+    return 1;
+}
+
 }  // namespace vision::cli

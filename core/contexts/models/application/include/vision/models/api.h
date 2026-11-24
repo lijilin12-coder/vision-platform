@@ -24,6 +24,8 @@ class ModelFiles {
 public:
     virtual ~ModelFiles() = default;
     virtual Result<StoredModelFile> importFile(const std::string& path) = 0;
+    // 模型文件的内容已经在内存里时（从方案包里带来的）
+    virtual Result<StoredModelFile> importBytes(const std::vector<unsigned char>& bytes) = 0;
     virtual std::string pathOf(const std::string& sha256) const = 0;
 };
 
@@ -58,6 +60,12 @@ public:
     Result<std::string> importModel(const std::string& modelName, const std::string& filePath, const ContractView& contract,
                                     const ProvenanceView& provenance);
     Status publish(const std::string& modelVersionId);
+    // 接收一个在别的机器上已经发布的模型版本（从方案包里带来的）：ID 不变，状态直接是“已发布”。
+    //   本机没有这个 ID      → 登记
+    //   有，内容一样         → 什么都不做（重复接收不出错）
+    //   有，内容不一样       → 拒绝：模型版本是不可变的，同一个 ID 不能指两样东西
+    Status adoptModel(const std::string& modelVersionId, const std::vector<unsigned char>& bytes, const ContractView& contract,
+                      const ProvenanceView& provenance);
     Result<ModelVersionView> getModelVersion(const std::string& modelVersionId) const;
     std::vector<std::string> listModelVersions() const;
 

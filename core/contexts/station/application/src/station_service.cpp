@@ -224,7 +224,9 @@ StationService::StationService(StationRepository& stations, release::ReleaseServ
                                execution::ExecutionService& execution, EventPublisher& events)
     : impl_(std::make_unique<Impl>(stations, releases, execution, events)) {}
 
-StationService::~StationService() {
+StationService::~StationService() { finishBackgroundWork(); }
+
+void StationService::finishBackgroundWork() {
     std::vector<std::future<void>> pending;
     {
         std::lock_guard<std::mutex> lock(impl_->loadersMutex);
