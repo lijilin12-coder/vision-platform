@@ -59,6 +59,7 @@ VID=$(./build/apps/vision-cli recipe publish $RID)
 | [docs/poc/locating-report.md](docs/poc/locating-report.md) | 定位算子实测：模板匹配的精度和耗时、对齐对测量精度的影响 |
 | [docs/dev/build.md](docs/dev/build.md) | 构建与运行 |
 | [docs/dev/operators.md](docs/dev/operators.md) | 算子一览：18 个算子各自解决什么问题、怎么搭配 |
+| [docs/ddd/13-two-programs.md](docs/ddd/13-two-programs.md) | 两个程序：方案构建平台（`vision-cli`、`vision-runtime`）和产线运行平台（`vision-line`）各能做什么；产线上怎么部署和热切换 |
 | [docs/dev/http-api.md](docs/dev/http-api.md) | `vision-runtime` 的 HTTP 接口：怎么启动服务、有哪些接口、一个完整的例子 |
 | [docs/dev/training-demo.md](docs/dev/training-demo.md) | 训练闭环演示：从一批图像到工位上运行的模型，一步一步走一遍 |
 | [docs/dev/how-to-add-operator.md](docs/dev/how-to-add-operator.md) | 如何新增一个算子 |

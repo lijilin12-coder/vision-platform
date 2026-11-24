@@ -8,28 +8,13 @@
 #include <string>
 #include <vector>
 
+#include "line_commands.h"  // release、station、package 这几组命令和小工具：和 vision-line 共用
 #include "platform.h"
 
 namespace vision::cli {
 
 // 组装好的整个平台（和 vision-runtime 共用，见 apps/common/platform.h）
 using App = platform::Platform;
-
-// 显示一次检测的结果项（缺陷、测量值、位姿）。缺陷很多时只列前几个。
-void printResultItems(const ResultItems& result);
-
-// 报告命令失败：写日志、在控制台显示，返回退出码 1。
-int fail(const Error& e);
-
-// 把命令行里给出的图像文件和目录展开成图像文件的列表（目录里的按文件名排序）。
-std::vector<std::filesystem::path> expandImages(const std::vector<std::string>& args);
-
-// release ... 和 station ... 两组命令。args[0] 是 "release" 或 "station"。
-int runReleaseCommand(App& app, const std::vector<std::string>& args);
-int runStationCommand(App& app, const std::vector<std::string>& args);
-
-// package ...：方案包的导出和导入（见 station_commands.cpp）
-int runPackageCommand(App& app, const std::vector<std::string>& args);
 
 // golden ...、workflow ...、assist ... 三组命令（方案助手，见 assist_commands.cpp）。
 int runGoldenCommand(App& app, const std::vector<std::string>& args);

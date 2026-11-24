@@ -285,18 +285,23 @@ jobs:
           & $cli --data $builder model publish surface-anomaly@v1; Check
           & $cli --data $builder package export $version $package; Check
           & $cli --data $builder package show $package; Check
-          # 产线机：导入（两次：第二次不应该出错），上线，工位从目录取图检测
-          & $cli --data $line package import $package; Check
-          & $cli --data $line package import $package; Check
-          & $cli --data $line sample generate $images --ok 4 --ng 3 --seed 5; Check
-          $release = Last (& $cli --data $line release create $version); Check
-          $station = Last (& $cli --data $line station create 产线一号); Check
-          & $cli --data $line station deploy $station $release; Check
-          & $cli --data $line station bind $station folder "$images\ng"; Check
-          $summary = (& $cli --data $line station run $station | Select-Object -Last 1); Check
-          Write-Host $summary
+          # 产线机：用的是另一个程序 vision-line（它没有方案编排）。导入（两次：第二次不应该出错）、上线、绑定图像源
+          $lineExe = ".\build\apps\vision-line.exe"
+          & $lineExe --data $line recipe list
+          if ($LASTEXITCODE -eq 0) { throw "产线运行平台不应该有 recipe 命令" }
+          & $lineExe --data $line package import $package; Check
+          & $lineExe --data $line package import $package; Check
+          & $cli --data $builder sample generate $images --ok 4 --ng 3 --seed 5; Check
+          $release = Last (& $lineExe --data $line release create $version); Check
+          $station = Last (& $lineExe --data $line station create 产线一号); Check
+          & $lineExe --data $line station deploy $station $release; Check
+          & $lineExe --data $line station bind $station folder "$images\ng"; Check
+          # serve：工位自己取图检测，图像取完、空闲 2 秒后结束
+          $out = & $lineExe --data $line serve --port 8763 --exit-when-idle 2; Check
+          Write-Host ($out -join "`n")
+          $summary = $out | Select-Object -Last 1
           if ($summary -notmatch "OK 0，NG 3，ERROR 0") { throw "产线机上的检测结果不对：$summary" }
-          & $cli --data $line station unbind $station; Check
+          & $lineExe --data $line station unbind $station; Check
       - name: 服务（vision-runtime）和 HTTP 接口
         shell: pwsh
         run: |

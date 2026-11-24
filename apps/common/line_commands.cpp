@@ -1,4 +1,5 @@
-// vision-cli 的 release … 和 station … 两组命令（BC-4 上线管理、BC-5 工位运行）。
+// 产线运行平台的命令：release …、station …、package …、model（只看）、serve（让工位持续运行）。
+// vision-cli 和 vision-line 共用。
 
 #include <algorithm>
 #include <atomic>
@@ -8,10 +9,13 @@
 #include <iomanip>
 #include <iostream>
 #include <map>
+#include <mutex>
+#include <memory>
 #include <sstream>
 #include <thread>
 
-#include "cli_app.h"
+#include "line_commands.h"
+#include "vision/common/log.h"
 #include "vision/common/path.h"
 #include "vision/imaging/cv_bridge.h"
 
@@ -149,14 +153,14 @@ Result<std::vector<Image>> loadImages(const std::vector<std::string>& inputs, st
 }
 
 // 让工位进入运行状态。还没有任何上线包时给出明确的提示。
-Status startStation(App& app, const std::string& stationId) {
+Status startStation(platform::LinePlatform& app, const std::string& stationId) {
     if (auto st = app.stations.waitForLoading(stationId); !st) return st;
     return app.stations.start(stationId);
 }
 
 // ---------- station run ----------
 
-int cmdStationRun(App& app, std::vector<std::string> args) {
+int cmdStationRun(platform::LinePlatform& app, std::vector<std::string> args) {
     const int repeat = std::max(1, takeIntOption(args, "--repeat", 1));
     // --follow N：图像源暂时没有新图像时不退出，再等最多 N 秒（一边运行一边往目录里放图像时用）
     const int followSeconds = std::max(0, takeIntOption(args, "--follow", 0));
@@ -232,7 +236,7 @@ int cmdStationRun(App& app, std::vector<std::string> args) {
 // 检查：没有检测丢失；检测序号连续；每次检测用的方案版本，就是它开始时拿到的那个上线包里的方案版本。
 // 测量：单次检测耗时、热切换本身的耗时、上线包的加载耗时、写一条日志的耗时、内存占用。
 
-int cmdStationStress(App& app, std::vector<std::string> args) {
+int cmdStationStress(platform::LinePlatform& app, std::vector<std::string> args) {
     const int total = std::max(100, takeIntOption(args, "--count", 10000));
     const int deployments = std::max(1, takeIntOption(args, "--deploys", 20));
     const int rollbacks = std::max(0, takeIntOption(args, "--rollbacks", 5));
@@ -361,7 +365,7 @@ int cmdStationStress(App& app, std::vector<std::string> args) {
 
 // ---------- release … ----------
 
-int runReleaseCommand(App& app, const std::vector<std::string>& args) {
+int runReleaseCommand(platform::LinePlatform& app, const std::vector<std::string>& args) {
     const std::string& sub = args[1];
     if (sub == "create" && args.size() >= 3) {
         auto id = app.releases.createRelease(args[2]);
@@ -395,7 +399,7 @@ int runReleaseCommand(App& app, const std::vector<std::string>& args) {
 
 // ---------- station … ----------
 
-int runStationCommand(App& app, const std::vector<std::string>& rawArgs) {
+int runStationCommand(platform::LinePlatform& app, const std::vector<std::string>& rawArgs) {
     std::vector<std::string> args = rawArgs;
     const std::string sub = args[1];
 
@@ -461,7 +465,7 @@ int runStationCommand(App& app, const std::vector<std::string>& rawArgs) {
 
 // ---------- package ----------
 
-int runPackageCommand(App& app, const std::vector<std::string>& args) {
+int runPackageCommand(platform::LinePlatform& app, const std::vector<std::string>& args) {
     const std::string& sub = args[1];
     const auto printManifest = [](const release::PackageManifest& m) {
         std::cout << "方案包 " << m.packageId << "\n  方案版本 " << m.recipeVersionId << "（" << m.recipeName << "）\n  算子";
@@ -499,6 +503,144 @@ int runPackageCommand(App& app, const std::vector<std::string>& args) {
     }
     std::cerr << "未知的 package 命令\n";
     return 1;
+}
+
+// ---------- model（只看）----------
+
+int runModelViewCommand(platform::LinePlatform& app, const std::vector<std::string>& args) {
+    const std::string sub = args.size() > 1 ? args[1] : "";
+    if (sub == "list") {
+        for (const auto& id : app.models.listModelVersions()) {
+            const auto v = app.models.getModelVersion(id).value();
+            std::cout << v.id << "  " << v.status << "  " << v.contract.kind << "  " << v.provenance.kind << "\n";
+        }
+        return 0;
+    }
+    if (sub == "show" && args.size() >= 3) {
+        auto view = app.models.getModelVersion(args[2]);
+        if (!view) return fail(view.error());
+        const auto& v = view.value();
+        std::cout << v.id << "  " << v.status << "  " << v.bytes << " 字节\n  契约：" << v.contract.kind << "，输入 " << v.contract.inputWidth
+                  << "×" << v.contract.inputHeight << "×" << v.contract.inputChannels << "\n";
+        for (const auto& [name, value] : v.contract.numbers) std::cout << "    " << name << " = " << value << "\n";
+        if (v.provenance.kind == "trained") {
+            std::cout << "  来源：训练任务 " << v.provenance.trainingJobId << "，数据集版本 " << v.provenance.datasetVersionId << "\n";
+        }
+        return 0;
+    }
+    return usageError("model list | show <模型版本ID>（产线运行平台上的模型只能由方案包带来）");
+}
+
+// ---------- serve：让工位持续运行 ----------
+// 每个工位一个线程：取图、检测、取图、检测……图像源暂时没有新图像时歇一会儿再问。
+// 工位服务本身不开这种线程：什么时候取下一帧是“驱动”它的程序的事（docs/ddd/13-two-programs.md §3）。
+
+int serveStations(platform::LinePlatform& app, std::vector<std::string> stationIds, int exitWhenIdleSeconds,
+                  const std::atomic<bool>& stopRequested) {
+    // 没有指定工位：所有绑定了图像源的
+    if (stationIds.empty()) {
+        for (const auto& id : app.stations.listStations()) {
+            if (auto v = app.stations.getStation(id); v && !v.value().imageSourceKind.empty()) stationIds.push_back(id);
+        }
+        if (stationIds.empty()) {
+            std::cerr << "没有绑定了图像源的工位。先用 station bind 给工位绑定图像源\n";
+            return 1;
+        }
+    }
+    // 先把每个工位启动起来（热启动：加载上次生效的上线包）。有一个启动不了就都不开始
+    for (const auto& id : stationIds) {
+        if (auto st = startStation(app, id); !st) {
+            for (const auto& started : stationIds) {
+                if (started == id) break;
+                (void)app.stations.stop(started);
+            }
+            std::cerr << "工位 " << id << " 启动不了：";
+            return fail(st.error());
+        }
+        const auto v = app.stations.getStation(id).value();
+        std::cout << "工位 " << v.name << " 已启动：上线包 " << shortId(v.activeRelease) << "，图像源 " << v.imageSourceKind << "："
+                  << v.imageSourceLocation << std::endl;
+    }
+
+    struct Tally {
+        std::atomic<long> ok{0}, ng{0}, error{0}, unreadable{0};
+        std::atomic<bool> idle{false}, stopped{false};
+    };
+    std::vector<std::unique_ptr<Tally>> tallies;
+    for (std::size_t i = 0; i < stationIds.size(); ++i) tallies.push_back(std::make_unique<Tally>());
+    std::mutex printMutex;  // 几个工位的输出不要搅在一起
+    std::atomic<bool> quitting{false};  // 我们自己要收工了：之后工位“没有在运行”是意料之中的，不用报告
+    std::atomic<Clock::time_point::rep> lastActivity{Clock::now().time_since_epoch().count()};
+
+    std::vector<std::thread> threads;
+    for (std::size_t i = 0; i < stationIds.size(); ++i) {
+        threads.emplace_back([&, i] {
+            const std::string& id = stationIds[i];
+            Tally& tally = *tallies[i];
+            const std::string name = app.stations.getStation(id).value().name;
+            while (!stopRequested && !quitting) {
+                auto r = app.stations.inspectNext(id);
+                if (!r) {
+                    if (quitting) break;
+                    if (r.error().code == "image_source.bad_frame") {  // 一帧读不出来：记一笔，接着取后面的
+                        ++tally.unreadable;
+                        log::warn("serve", "图像读不出来", {{"station", id}, {"message", r.error().message}});
+                        continue;
+                    }
+                    // 工位不在运行了（被别的程序停掉、连续出错进入故障状态……）：这个工位到此为止
+                    std::lock_guard<std::mutex> lock(printMutex);
+                    std::cout << "工位 " << name << " 停下了：" << r.error().message << std::endl;
+                    log::error("serve", "工位停下了", {{"station", id}, {"code", r.error().code}, {"message", r.error().message}});
+                    break;
+                }
+                if (!r.value()) {  // 现在没有新图像
+                    tally.idle = true;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                    continue;
+                }
+                tally.idle = false;
+                lastActivity = Clock::now().time_since_epoch().count();
+                const auto& v = *r.value();
+                ++(v.report.verdict == "OK" ? tally.ok : v.report.verdict == "NG" ? tally.ng : tally.error);
+                std::lock_guard<std::mutex> lock(printMutex);
+                if (v.swapped) std::cout << "  —— 工位 " << name << " 已切换到上线包 " << shortId(v.releaseId) << " ——\n";
+                std::cout << name << " #" << v.sequence << " [" << v.report.verdict << "] " << v.frameName;
+                for (const auto& reason : v.report.reasons) {
+                    if (!reason.pass) std::cout << "  ✗ " << reason.text;
+                }
+                std::cout << std::endl;
+            }
+            tally.stopped = true;
+        });
+    }
+
+    // 主线程：等停止的请求；或者（给了 exitWhenIdleSeconds）所有工位都闲了这么久
+    for (;;) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        if (stopRequested) break;
+        bool allStopped = true, allIdleOrStopped = true;
+        for (const auto& t : tallies) {
+            allStopped = allStopped && t->stopped;
+            allIdleOrStopped = allIdleOrStopped && (t->idle || t->stopped);
+        }
+        if (allStopped) break;
+        if (exitWhenIdleSeconds > 0 && allIdleOrStopped) {
+            const Clock::time_point last{Clock::duration{lastActivity.load()}};
+            if (Clock::now() - last >= std::chrono::seconds(exitWhenIdleSeconds)) break;
+        }
+    }
+    // 收工：先告诉各个线程，再停工位（正在进行的那一次检测会做完）
+    quitting = true;
+    for (const auto& id : stationIds) (void)app.stations.stop(id);
+    for (auto& t : threads) t.join();
+
+    for (std::size_t i = 0; i < stationIds.size(); ++i) {
+        const auto v = app.stations.getStation(stationIds[i]).value();
+        std::cout << "工位 " << v.name << " 合计：OK " << tallies[i]->ok << "，NG " << tallies[i]->ng << "，ERROR " << tallies[i]->error;
+        if (tallies[i]->unreadable > 0) std::cout << "；读不出来的图像 " << tallies[i]->unreadable << " 幅";
+        std::cout << "\n";
+    }
+    return 0;
 }
 
 }  // namespace vision::cli

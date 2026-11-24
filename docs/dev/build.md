@@ -122,6 +122,14 @@ ctest --preset default
 | `crash_leaves_report_*` | 故意让程序以三种方式崩溃，检查崩溃报告、转储文件和日志是否留下 | — |
 | `boundary_violation_fails_to_compile` | 跨上下文引用领域类必须编译失败 | — |
 
+## 编译出来的程序
+
+| 程序 | 属于 | 用途 |
+|---|---|---|
+| `build/apps/vision-cli` | 方案构建平台 | 命令行：搭方案、调试、方案助手、数据集、训练、导出方案包（也能做上线包和工位的事） |
+| `build/apps/vision-runtime` | 方案构建平台 | 同样的功能通过 HTTP 提供（现在只有方案编排和调试运行），见 [http-api.md](http-api.md) |
+| `build/apps/vision-line` | 产线运行平台 | 只运行别处搭好的方案：导入方案包、上线包、工位、持续运行。见 [ddd/13-two-programs.md](../ddd/13-two-programs.md) |
+
 ## 命令行示例
 
 下面是 Linux 的写法。Windows 上把 `./build/apps/vision-cli` 换成 `build\apps\vision-cli.exe`，变量赋值的写法也不同，建议在 Git Bash 或 PowerShell 中运行。

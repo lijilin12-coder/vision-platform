@@ -167,3 +167,10 @@ target_link_libraries(package_tests PRIVATE vision_platform_assembly vision_oper
 target_compile_definitions(package_tests PRIVATE VISION_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 vision_copy_onnxruntime(package_tests)
 gtest_discover_tests(package_tests)
+
+# ---- 产线运行平台：只靠方案包拿到方案；持续运行；运行期间通过控制接口热切换 ----
+add_executable(line_platform_tests line_platform_test.cpp)
+target_link_libraries(line_platform_tests PRIVATE
+  vision_platform_assembly vision_line_commands vision_line_api vision_operators httplib::httplib GTest::gtest_main)
+vision_copy_onnxruntime(line_platform_tests)
+gtest_discover_tests(line_platform_tests)
