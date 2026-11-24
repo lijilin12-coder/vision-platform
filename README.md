@@ -3,7 +3,7 @@
 可编排的工业外观缺陷检测与测量平台。用户通过拖拽算子组合检测方案，完成缺陷检测、尺寸测量和定位；方案与平台无关，支持数据闭环、模型工具链，以及产线不停机的热更新。
 
 - **部署平台**：鸿蒙电脑（主要）、Windows（第二平台）；Linux 保持可编译
-- **开发平台**：macOS 和 Windows 都是开发机，由自动构建保证互不影响
+- **开发平台**：Windows 和 Linux，由自动构建保证互不影响（不考虑 macOS；之后适配鸿蒙）
 - **核心**：C++17，领域驱动设计 + 六边形架构，各平台共用
 - **界面**：Web（Vue 3），鸿蒙端为原生 ArkUI 外壳加 ArkWeb
 - **模型工具链**：独立的 Linux 服务（Python + Docker）
@@ -74,7 +74,7 @@ vision-platform/
 ├── operators/     # 算子实现
 ├── adapters/      # 被驱动适配器：持久化、推理、图像、方案包、事件总线……
 ├── services/      # 独立运行的服务：训练服务（Python）
-├── apps/          # runtime（Linux/Windows/Mac）、harmony、cli
+├── apps/          # runtime（Linux/Windows）、harmony、cli
 ├── web/           # Web 界面
 ├── toolchain/     # 模型工具链服务
 ├── samples/       # 示例图像、方案、基准图集

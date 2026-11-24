@@ -9,7 +9,7 @@
 
 大约需要 10 分钟（不算第一次安装 PyTorch 的时间）。所有命令都在仓库根目录运行。
 
-> 在 Linux 上验证过。macOS 和 Windows 上**还没有验证过**——遇到问题请告诉我。
+> 在 Linux 上完整验证过。Windows 上：第 3、4 步（用模型、上线、检测）由自动构建验证；**训练服务本身在 Windows 上还没有跑过**——遇到问题请告诉我。
 
 ## 0. 准备
 
@@ -26,7 +26,7 @@ cmake --build build
 cd services/training
 python3 -m venv .venv
 source .venv/bin/activate                 # Windows：.venv\Scripts\activate
-pip install torch                          # Linux 上想装小一点的：加 --index-url https://download.pytorch.org/whl/cpu
+pip install torch --index-url https://download.pytorch.org/whl/cpu   # 只含 CPU 的版本，小得多。有 NVIDIA 显卡想用它时，去掉 --index-url 及后面的地址
 pip install numpy opencv-python-headless onnx
 python server.py --port 8765 --work-dir ./work
 ```

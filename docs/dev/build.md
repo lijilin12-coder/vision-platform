@@ -1,6 +1,8 @@
 # 构建与运行
 
-开发机可以是 **macOS** 或 **Windows**，两者都必须能编译并通过全部测试。Linux 也可以构建。
+开发机可以是 **Windows** 或 **Linux**，两者都必须能编译并通过全部测试。
+
+> 2026-11-24：**不再考虑 macOS**。构建脚本里和 macOS 有关的部分留着，但不维护、不保证可用。
 
 ## 依赖
 
@@ -8,7 +10,7 @@
 |---|---|---|
 | CMake | ≥ 3.21 | 构建（使用预设 `CMakePresets.json`） |
 | Ninja | 任意 | 构建工具 |
-| C++ 编译器 | 支持 C++17：AppleClang ≥ 12、MSVC 2022、GCC ≥ 9 | |
+| C++ 编译器 | 支持 C++17：MSVC 2022、GCC ≥ 9 | |
 | OpenCV | 4.x（core、imgproc、imgcodecs） | 只有算子和适配器使用 |
 | nlohmann-json | 3.x | JSON 仓储 |
 | GoogleTest | 1.10+ | 测试 |
@@ -19,28 +21,6 @@
 
 - 下载不了时：手工下载 `cmake/OnnxRuntime.cmake` 里写的那个地址，把文件改名为 `.zip` 解压，配置时加 `-DFETCHCONTENT_SOURCE_DIR_ONNXRUNTIME_NUGET=<解压出来的目录>`
 - 暂时不需要模型功能：配置时加 `-DVISION_WITH_ONNXRUNTIME=OFF`。其余功能不受影响；用到模型的方案会提示“没有配置推理引擎”
-
-## macOS
-
-```bash
-xcode-select --install
-```
-
-```bash
-brew install cmake ninja opencv nlohmann-json googletest
-```
-
-```bash
-cmake --preset default
-```
-
-```bash
-cmake --build --preset default
-```
-
-```bash
-ctest --preset default
-```
 
 ## Windows
 
@@ -97,13 +77,23 @@ wsl --install -d Ubuntu-22.04
 sudo apt-get install -y cmake ninja-build g++ libopencv-dev nlohmann-json3-dev libgtest-dev
 ```
 
-然后和 macOS 一样使用 `default` 预设。
+然后使用 `default` 预设：
+
+```bash
+cmake --preset default
+```
+
+```bash
+cmake --build --preset default
+```
+
+```bash
+ctest --preset default
+```
 
 ## 自动构建
 
 每个 PR 和 `main` 分支上的每次推送，GitHub Actions 都会在 **Windows（MSVC）** 和 **Linux（GCC）** 上编译并运行全部测试、命令行冒烟测试和教程示例（见 `.github/workflows/ci.yml`）。只修改 Markdown 文档时不会触发。
-
-macOS 不在自动构建里：日常开发就在 Mac 上进行；macOS 构建机在私有仓库中按 10 倍计费。
 
 ## 跨平台编码约定
 
@@ -133,7 +123,7 @@ macOS 不在自动构建里：日常开发就在 Mac 上进行；macOS 构建机
 
 ## 命令行示例
 
-下面是 macOS / Linux 的写法。Windows 上把 `./build/apps/vision-cli` 换成 `build\apps\vision-cli.exe`，变量赋值的写法也不同，建议在 Git Bash 或 PowerShell 中运行。
+下面是 Linux 的写法。Windows 上把 `./build/apps/vision-cli` 换成 `build\apps\vision-cli.exe`，变量赋值的写法也不同，建议在 Git Bash 或 PowerShell 中运行。
 
 ```bash
 CLI=./build/apps/vision-cli

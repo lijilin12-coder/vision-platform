@@ -39,12 +39,12 @@
 ```
 
 - 两个平台是**两个程序**（两个组装根），可以装在同一台机器上，也可以分开。
-- 每个平台在各自支持的系统上有两种外壳：鸿蒙电脑上是鸿蒙应用（核心编译成 `.so`，ArkUI 原生页面加 ArkWeb）；Windows、Linux、macOS 上是系统服务加浏览器界面。
-- 开发机（Mac 或 Windows）上两个平台都能运行；模型服务在 Mac 上用 Docker，在 Windows 上用 WSL2。
+- 每个平台在各自支持的系统上有两种外壳：鸿蒙电脑上是鸿蒙应用（核心编译成 `.so`，ArkUI 原生页面加 ArkWeb）；Windows、Linux 上是系统服务加浏览器界面。
+- 开发机（Windows 或 Linux）上两个平台都能运行；模型服务在 Linux 上直接运行或用 Docker，在 Windows 上用 WSL2。（2026-11-24：不再考虑 macOS，见 ADR-22。）
 
 | 部署单元 | 包含的上下文 | 平台 | 说明 |
 |---|---|---|---|
-| 方案构建平台 | BC-1、2、3、4、7、9（数据集和标注）、11、12 | 鸿蒙电脑、Windows、macOS | 可以联网；可以使用大模型 |
+| 方案构建平台 | BC-1、2、3、4、7、9（数据集和标注）、11、12 | 鸿蒙电脑、Windows、Linux | 可以联网；可以使用大模型 |
 | 产线运行平台 | BC-1、3、4（导入和一致性检查）、5、6、7（只读）、9（采集和缓存）、10 | 鸿蒙电脑、Windows、Linux | 完全离线；开机自启即热启动 |
 | 模型服务 | BC-8 的执行部分、BC-12 的训练后端 | Linux（Docker），训练建议有 GPU | 可部署在开发机或服务器上 |
 
@@ -105,7 +105,7 @@ vision-platform/
 │   ├── advisor_llm_*/            # 方案顾问：各种大模型（云端、局域网、本机），按需增加
 │   └── eventbus/                 # 进程内事件总线
 ├── apps/                         # 驱动适配器 + 组装根（composition root）
-│   ├── runtime/                  # vision-runtime：HTTP/WS 服务，Linux / Windows / Mac
+│   ├── runtime/                  # vision-runtime：HTTP/WS 服务，Linux / Windows
 │   ├── harmony/                  # DevEco 工程：ArkTS 页面 + NAPI/JSBridge
 │   └── cli/                      # 命令行：运行方案、导入导出方案包、调试
 ├── web/                          # Vue 3 界面；PlatformClient 接口（Http 实现 / Bridge 实现）
@@ -138,14 +138,14 @@ vision-platform/
 
 ## 5. 平台差异：只在适配器里
 
-| 端口（领域层定义） | 鸿蒙电脑 | Linux | Windows | macOS（仅开发） |
-|---|---|---|---|---|
-| 驱动入口 | NAPI / ArkWeb JSBridge | HTTP + WS | HTTP + WS | HTTP + WS |
-| `InferBackend` | MindSpore Lite | ONNX Runtime | ONNX Runtime | ONNX Runtime |
-| `ImageSource` | 文件、鸿蒙相机、USB 摄像头（待 POC） | 文件、V4L2 摄像头 | 文件、DirectShow/MSMF 摄像头 | 文件、AVFoundation 摄像头 |
-| 仓储、文件存储 | 应用沙箱目录 | 数据目录 | 数据目录 | 数据目录 |
-| 热启动方式 | 应用启动时恢复（开机自启能力待 POC） | systemd 服务 | Windows 服务 | 手动启动 |
-| `ModelToolchain` 客户端 | HTTP | HTTP | HTTP | HTTP |
+| 端口（领域层定义） | 鸿蒙电脑 | Linux | Windows |
+|---|---|---|---|
+| 驱动入口 | NAPI / ArkWeb JSBridge | HTTP + WS | HTTP + WS |
+| `InferBackend` | MindSpore Lite | ONNX Runtime | ONNX Runtime |
+| `ImageSource` | 文件、鸿蒙相机、USB 摄像头（待 POC） | 文件、V4L2 摄像头 | 文件、DirectShow/MSMF 摄像头 |
+| 仓储、文件存储 | 应用沙箱目录 | 数据目录 | 数据目录 |
+| 热启动方式 | 应用启动时恢复（开机自启能力待 POC） | systemd 服务 | Windows 服务 |
+| `ModelToolchain` 客户端 | HTTP | HTTP | HTTP |
 
 **核心代码在所有平台上完全相同。** 新增一个平台 = 实现上表中的一列适配器 + 一个组装根。
 
@@ -203,7 +203,7 @@ REGISTER_OPERATOR(ThresholdOp);   // 编译期静态注册（鸿蒙不能动态�
 
 ### 6.6 界面与平台通信
 
-- Web 界面只依赖 `PlatformClient` 接口（TypeScript），有两个实现：`HttpClient`（Linux / Windows / Mac）和 `BridgeClient`（鸿蒙 ArkWeb，具体桥接方式待 POC）。
+- Web 界面只依赖 `PlatformClient` 接口（TypeScript），有两个实现：`HttpClient`（Linux / Windows）和 `BridgeClient`（鸿蒙 ArkWeb，具体桥接方式待 POC）。
 - 接口按上下文分组，和各上下文 `api.h` 中的应用服务一一对应。
 - 图像传输：预览用缩小的 JPEG；放大时按视口请求原图的局部区域。
 
@@ -239,7 +239,7 @@ v0.1 中仍然有效的决策保留编号；作废的标注说明。
 | **ADR-18** | **Linux / Windows 上的运行时作为系统服务运行**，开机自启即热启动 | 新增 |
 | **ADR-19** | **模型工具链是独立的 Python + Docker 服务** | 新增 |
 | **ADR-20** | **持久化：聚合用 JSON 文件；检测记录等用 SQLite；二进制用内容寻址文件存储** | 新增 |
-| **ADR-22** | **开发机为 macOS 和 Windows**；Windows 用 MSVC + vcpkg（清单模式），macOS 用 Homebrew；用 CMake 预设统一命令；GitHub Actions 在 Windows 和 Linux 上自动构建和测试 | 新增 |
+| **ADR-22** | **开发机为 Windows 和 Linux**（2026-11-24 修订：原为“macOS 和 Windows”，现在不再考虑 macOS）；Windows 用 MSVC + vcpkg（清单模式），Linux 用系统的包管理器；用 CMake 预设统一命令；GitHub Actions 在 Windows 和 Linux 上自动构建和测试 | **修订** |
 | **ADR-23** | **程序内部的路径和文本一律使用 UTF-8**；路径与字符串的转换只通过 `vision/common/path.h`；图像文件在内存中编解码，不使用 `cv::imread` / `cv::imwrite`（它们在 Windows 上不支持中文路径） | 新增 |
 | **ADR-24** | **日志**：自己实现的轻量日志（不引入第三方库，降低鸿蒙移植风险）。接口在 `core/common`，接收器在 `adapters/logging`（控制台、按大小轮转的文件）；每条一行，“固定消息 + 键值对”；每条立即刷新；领域层不写日志，由应用层、适配器和领域事件的订阅者来写。**POC-9 实测**（Linux，固态存储）：检测线程里写一条日志最坏约 0.13 毫秒，保持同步写入；在目标设备上要重新测量 | 新增 |
 | **ADR-25** | **崩溃处理**：启动时安装。Windows 写 minidump 并关闭崩溃对话框；macOS / Linux 写文本崩溃报告并放开 core 文件限制；未捕获的异常先记入日志。鸿蒙上的做法待 POC 验证 | 新增 |
