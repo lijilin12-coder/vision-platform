@@ -39,8 +39,12 @@ target_link_libraries(vision_platform_assembly INTERFACE
   vision_training_http)
 
 # 两个命令行程序共用的命令：上线包、工位、方案包、让工位持续运行
+# 让工位持续运行的部件：命令行（vision-line serve）和服务（给界面用）共用
+add_library(vision_station_runner STATIC common/station_runner.cpp)
+target_link_libraries(vision_station_runner PUBLIC vision_line_assembly)
+
 add_library(vision_line_commands STATIC common/line_commands.cpp common/cli_util.cpp)
-target_link_libraries(vision_line_commands PUBLIC vision_line_assembly)
+target_link_libraries(vision_line_commands PUBLIC vision_line_assembly vision_station_runner)
 
 # ---- 命令行 ----
 add_executable(vision-cli cli/main.cpp cli/assist_commands.cpp cli/data_commands.cpp)
@@ -60,7 +64,7 @@ vision_copy_onnxruntime(vision-line)
 # ---- 服务：HTTP 接口（一个库，测试也要链接它）+ 入口程序 ----
 add_library(vision_http_api STATIC runtime/http_api.cpp)
 target_include_directories(vision_http_api PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/runtime)
-target_link_libraries(vision_http_api PUBLIC vision_platform_assembly PRIVATE httplib::httplib)
+target_link_libraries(vision_http_api PUBLIC vision_platform_assembly vision_station_runner PRIVATE httplib::httplib)
 
 add_executable(vision-runtime runtime/main.cpp)
 # vision_operators 是 OBJECT 库（算子靠全局对象的构造函数注册自己）：它的目标文件只会进入【直接】链接它的目标，

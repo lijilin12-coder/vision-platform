@@ -15,6 +15,7 @@
 #include <thread>
 
 #include "line_commands.h"
+#include "station_runner.h"
 #include "vision/common/log.h"
 #include "vision/common/path.h"
 #include "vision/imaging/cv_bridge.h"
@@ -547,97 +548,50 @@ int serveStations(platform::LinePlatform& app, std::vector<std::string> stationI
             return 1;
         }
     }
-    // 先把每个工位启动起来（热启动：加载上次生效的上线包）。有一个启动不了就都不开始
+
+    std::mutex printMutex;  // 几个工位的输出不要搅在一起
+    std::map<std::string, std::string> names;
+    platform::StationRunner runner(app);
+    runner.onInspection = [&](const std::string& id, const platform::InspectionRecord& r) {
+        std::lock_guard<std::mutex> lock(printMutex);
+        if (r.swapped) std::cout << "  —— 工位 " << names[id] << " 已切换到上线包 " << shortId(r.releaseId) << " ——\n";
+        std::cout << names[id] << " #" << r.sequence << " [" << r.verdict << "] " << r.frameName;
+        for (const auto& reason : r.reasons) {
+            if (!reason.pass) std::cout << "  ✗ " << reason.text;
+        }
+        std::cout << std::endl;
+    };
+    runner.onStopped = [&](const std::string& id, const std::string& reason) {
+        std::lock_guard<std::mutex> lock(printMutex);
+        std::cout << "工位 " << names[id] << " 停下了：" << reason << std::endl;
+    };
+
+    // 把每个工位启动起来（热启动：加载上次生效的上线包）。有一个启动不了就都不开始
     for (const auto& id : stationIds) {
-        if (auto st = startStation(app, id); !st) {
-            for (const auto& started : stationIds) {
-                if (started == id) break;
-                (void)app.stations.stop(started);
-            }
+        if (auto v = app.stations.getStation(id)) names[id] = v.value().name;
+        if (auto st = runner.start(id); !st) {
+            runner.stopAll();
             std::cerr << "工位 " << id << " 启动不了：";
             return fail(st.error());
         }
         const auto v = app.stations.getStation(id).value();
+        std::lock_guard<std::mutex> lock(printMutex);
         std::cout << "工位 " << v.name << " 已启动：上线包 " << shortId(v.activeRelease) << "，图像源 " << v.imageSourceKind << "："
                   << v.imageSourceLocation << std::endl;
     }
 
-    struct Tally {
-        std::atomic<long> ok{0}, ng{0}, error{0}, unreadable{0};
-        std::atomic<bool> idle{false}, stopped{false};
-    };
-    std::vector<std::unique_ptr<Tally>> tallies;
-    for (std::size_t i = 0; i < stationIds.size(); ++i) tallies.push_back(std::make_unique<Tally>());
-    std::mutex printMutex;  // 几个工位的输出不要搅在一起
-    std::atomic<bool> quitting{false};  // 我们自己要收工了：之后工位“没有在运行”是意料之中的，不用报告
-    std::atomic<Clock::time_point::rep> lastActivity{Clock::now().time_since_epoch().count()};
-
-    std::vector<std::thread> threads;
-    for (std::size_t i = 0; i < stationIds.size(); ++i) {
-        threads.emplace_back([&, i] {
-            const std::string& id = stationIds[i];
-            Tally& tally = *tallies[i];
-            const std::string name = app.stations.getStation(id).value().name;
-            while (!stopRequested && !quitting) {
-                auto r = app.stations.inspectNext(id);
-                if (!r) {
-                    if (quitting) break;
-                    if (r.error().code == "image_source.bad_frame") {  // 一帧读不出来：记一笔，接着取后面的
-                        ++tally.unreadable;
-                        log::warn("serve", "图像读不出来", {{"station", id}, {"message", r.error().message}});
-                        continue;
-                    }
-                    // 工位不在运行了（被别的程序停掉、连续出错进入故障状态……）：这个工位到此为止
-                    std::lock_guard<std::mutex> lock(printMutex);
-                    std::cout << "工位 " << name << " 停下了：" << r.error().message << std::endl;
-                    log::error("serve", "工位停下了", {{"station", id}, {"code", r.error().code}, {"message", r.error().message}});
-                    break;
-                }
-                if (!r.value()) {  // 现在没有新图像
-                    tally.idle = true;
-                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                    continue;
-                }
-                tally.idle = false;
-                lastActivity = Clock::now().time_since_epoch().count();
-                const auto& v = *r.value();
-                ++(v.report.verdict == "OK" ? tally.ok : v.report.verdict == "NG" ? tally.ng : tally.error);
-                std::lock_guard<std::mutex> lock(printMutex);
-                if (v.swapped) std::cout << "  —— 工位 " << name << " 已切换到上线包 " << shortId(v.releaseId) << " ——\n";
-                std::cout << name << " #" << v.sequence << " [" << v.report.verdict << "] " << v.frameName;
-                for (const auto& reason : v.report.reasons) {
-                    if (!reason.pass) std::cout << "  ✗ " << reason.text;
-                }
-                std::cout << std::endl;
-            }
-            tally.stopped = true;
-        });
-    }
-
-    // 主线程：等停止的请求；或者（给了 exitWhenIdleSeconds）所有工位都闲了这么久
+    // 等停止的请求；或者（给了 exitWhenIdleSeconds）所有工位都闲了这么久；或者所有工位都自己停下了
     for (;;) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        if (stopRequested) break;
-        bool allStopped = true, allIdleOrStopped = true;
-        for (const auto& t : tallies) {
-            allStopped = allStopped && t->stopped;
-            allIdleOrStopped = allIdleOrStopped && (t->idle || t->stopped);
-        }
-        if (allStopped) break;
-        if (exitWhenIdleSeconds > 0 && allIdleOrStopped) {
-            const Clock::time_point last{Clock::duration{lastActivity.load()}};
-            if (Clock::now() - last >= std::chrono::seconds(exitWhenIdleSeconds)) break;
-        }
+        if (stopRequested || !runner.anyRunning()) break;
+        if (exitWhenIdleSeconds > 0 && runner.idleFor() >= std::chrono::seconds(exitWhenIdleSeconds)) break;
     }
-    // 收工：先告诉各个线程，再停工位（正在进行的那一次检测会做完）
-    quitting = true;
-    for (const auto& id : stationIds) (void)app.stations.stop(id);
-    for (auto& t : threads) t.join();
+    runner.stopAll();
 
-    for (std::size_t i = 0; i < stationIds.size(); ++i) {
-        const auto v = app.stations.getStation(stationIds[i]).value();
-        std::cout << "工位 " << v.name << " 合计：OK " << tallies[i]->ok << "，NG " << tallies[i]->ng << "，ERROR " << tallies[i]->error;
-        if (tallies[i]->unreadable > 0) std::cout << "；读不出来的图像 " << tallies[i]->unreadable << " 幅";
+    for (const auto& id : stationIds) {
+        const auto s = runner.status(id);
+        std::cout << "工位 " << names[id] << " 合计：OK " << s.ok << "，NG " << s.ng << "，ERROR " << s.error;
+        if (s.unreadable > 0) std::cout << "；读不出来的图像 " << s.unreadable << " 幅";
         std::cout << "\n";
     }
     return 0;

@@ -69,6 +69,7 @@ struct StationInspection {
     bool swapped = false;        // 这次检测开始前是否发生了热切换
     double swapMicros = 0;       // 热切换本身花的时间（没有切换时为 0）
     std::string frameName;       // 图像来自图像源时：这一帧的名字
+    Image frame;                 // 图像来自图像源时：这一帧的图像（和检测用的是同一份像素，不是复制品）
 };
 
 // 应用服务。线程模型：

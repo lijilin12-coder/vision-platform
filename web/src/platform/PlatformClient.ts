@@ -1,4 +1,4 @@
-import type { DebugRun, ModelInfo, OperatorMeta, ParamValue, Recipe, RecipeSummary, Roi, UploadedImage } from "./types";
+import type { DebugRun, ModelInfo, OperatorMeta, ParamValue, Recipe, RecipeSummary, Release, Roi, Station, UploadedImage } from "./types";
 
 // 界面使用平台的唯一入口。
 //
@@ -24,6 +24,21 @@ export interface PlatformClient {
 
   uploadImage(file: Blob): Promise<UploadedImage>;
   debugRun(recipeId: string, imageId: string): Promise<DebugRun>;
+
+  // ---- 上线包和工位 ----
+  listReleases(): Promise<Release[]>;
+  createRelease(recipeVersionId: string): Promise<string>; // 返回上线包 ID
+  listStations(): Promise<Station[]>;
+  createStation(name: string): Promise<Station>;
+  // afterSequence：只要序号比它大的检测记录
+  getStation(stationId: string, afterSequence?: number): Promise<Station>;
+  bindImageFolder(stationId: string, directory: string): Promise<Station>;
+  deploy(stationId: string, releaseId: string): Promise<Station>;
+  rollback(stationId: string): Promise<Station>;
+  startStation(stationId: string): Promise<Station>;
+  stopStation(stationId: string): Promise<Station>;
+  // 工位最近检测的那一帧。sequence 只是为了让地址每次不同（浏览器不要拿旧图充数）
+  stationFrameUrl(stationId: string, sequence: number): string;
 
   // 返回可以直接放进 <img src> 的地址。（不返回字节：鸿蒙的桥不一定传得了二进制，那时可以换成别的地址形式。）
   imageUrl(imageId: string): string;

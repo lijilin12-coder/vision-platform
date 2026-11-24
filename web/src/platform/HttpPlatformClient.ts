@@ -1,6 +1,6 @@
 import type { PlatformClient } from "./PlatformClient";
 import { PlatformError } from "./types";
-import type { DebugRun, ModelInfo, OperatorMeta, ParamValue, Recipe, RecipeSummary, Roi, UploadedImage } from "./types";
+import type { DebugRun, ModelInfo, OperatorMeta, ParamValue, Recipe, RecipeSummary, Release, Roi, Station, UploadedImage } from "./types";
 
 // PlatformClient 的 HTTP 实现：对着 vision-runtime 的接口（docs/dev/http-api.md）。
 // 整个界面里，只有这个文件发 HTTP 请求。
@@ -85,6 +85,40 @@ export class HttpPlatformClient implements PlatformClient {
   }
   debugRun(recipeId: string, imageId: string) {
     return this.request<DebugRun>("POST", `/api/recipes/${recipeId}/debug-runs`, { imageId });
+  }
+
+  async listReleases() {
+    return (await this.request<{ releases: Release[] }>("GET", "/api/releases")).releases;
+  }
+  async createRelease(recipeVersionId: string) {
+    return (await this.request<{ releaseId: string }>("POST", "/api/releases", { recipeVersionId })).releaseId;
+  }
+  async listStations() {
+    return (await this.request<{ stations: Station[] }>("GET", "/api/stations")).stations;
+  }
+  createStation(name: string) {
+    return this.request<Station>("POST", "/api/stations", { name });
+  }
+  getStation(stationId: string, afterSequence = 0) {
+    return this.request<Station>("GET", `/api/stations/${stationId}?after=${afterSequence}`);
+  }
+  bindImageFolder(stationId: string, directory: string) {
+    return this.request<Station>("PUT", `/api/stations/${stationId}/image-source`, { kind: "folder", location: directory });
+  }
+  deploy(stationId: string, releaseId: string) {
+    return this.request<Station>("POST", `/api/stations/${stationId}/deploy`, { releaseId });
+  }
+  rollback(stationId: string) {
+    return this.request<Station>("POST", `/api/stations/${stationId}/rollback`, {});
+  }
+  startStation(stationId: string) {
+    return this.request<Station>("POST", `/api/stations/${stationId}/start`, {});
+  }
+  stopStation(stationId: string) {
+    return this.request<Station>("POST", `/api/stations/${stationId}/stop`, {});
+  }
+  stationFrameUrl(stationId: string, sequence: number) {
+    return `${this.base}/api/stations/${stationId}/frame?s=${sequence}`;
   }
 
   imageUrl(imageId: string) {

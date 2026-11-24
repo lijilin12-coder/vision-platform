@@ -11,6 +11,8 @@
 #include <atomic>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
+#include <functional>
 #include <opencv2/imgproc.hpp>
 #include <thread>
 
@@ -410,6 +412,107 @@ TEST_F(HttpApi, ManyRequestsAtOnce) {
     reader.join();
     EXPECT_EQ(failures.load(), 0);
     EXPECT_EQ(get("/api/recipes").body["recipes"].size(), 5u);
+}
+
+// 工位页面要用的接口：上线包、工位、持续运行、热切换。
+// 流程：发布两个方案版本（严格的、宽松的）→ 各做成上线包 → 建工位、绑定图像目录、部署 → 开始 → 运行中换上线包
+TEST_F(HttpApi, StationsRunContinuouslyAndHotSwapThroughTheApi) {
+    const auto eventually = [](const std::function<bool()>& condition) {
+        for (int i = 0; i < 400; ++i) {
+            if (condition()) return true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        }
+        return false;
+    };
+    const auto publishWith = [&](int maxCount) {
+        const std::string recipe = brightSpotRecipe("亮斑 ≤ " + std::to_string(maxCount));
+        EXPECT_EQ(put("/api/recipes/" + recipe + "/nodes/n5/params/maxCount", {{"value", maxCount}}).status, 200);
+        const auto published = post("/api/recipes/" + recipe + "/publish");
+        EXPECT_EQ(published.status, 201);
+        const auto release = post("/api/releases", {{"recipeVersionId", published.body.value("versionId", "")}});
+        EXPECT_EQ(release.status, 201) << release.raw;
+        return release.body.value("releaseId", std::string());
+    };
+    const std::string strict = publishWith(0), lenient = publishWith(5);
+    const auto releases = get("/api/releases");
+    ASSERT_EQ(releases.body["releases"].size(), 2u);
+    EXPECT_FALSE(releases.body["releases"][0]["recipeName"].get<std::string>().empty());
+    EXPECT_EQ(post("/api/releases", {{"recipeVersionId", "nobody@v1"}}).status, 404);
+
+    // 图像目录（中文名）
+    const fs::path images = dir / pathFromUtf8("来料");
+    fs::create_directories(images);
+    const auto writeImage = [&](const std::string& name, int spots) {
+        const std::string content = png(spots);
+        std::ofstream(images / name, std::ios::binary) << content;
+    };
+    writeImage("1.png", 2);
+
+    const auto created = post("/api/stations", {{"name", "一号工位"}});
+    ASSERT_EQ(created.status, 200) << created.raw;
+    const std::string station = created.body["id"];
+    const std::string base = "/api/stations/" + station;
+    EXPECT_EQ(created.body["state"], "stopped");
+    EXPECT_FALSE(created.body["runner"]["running"].get<bool>());
+
+    // 还没有图像源、没有上线包：开始不了，原因说清楚
+    EXPECT_EQ(post(base + "/start").body["code"], "station.no_image_source");
+    EXPECT_EQ(put(base + "/image-source", {{"kind", "folder"}, {"location", pathToUtf8(images / "nope")}}).status, 404);
+    ASSERT_EQ(put(base + "/image-source", {{"kind", "folder"}, {"location", pathToUtf8(images)}}).status, 200);
+    EXPECT_EQ(post(base + "/start").status, 422);  // 没有上线包
+    EXPECT_EQ(get(base + "/frame").status, 404);    // 还没有检测过
+
+    ASSERT_EQ(post(base + "/deploy", {{"releaseId", strict}}).status, 200);
+    ASSERT_TRUE(eventually([&] { return get(base).body.value("pendingReady", false); }));
+    const auto started = post(base + "/start");
+    ASSERT_EQ(started.status, 200) << started.raw;
+    EXPECT_TRUE(started.body["runner"]["running"].get<bool>());
+    EXPECT_EQ(post(base + "/start").status, 200);  // 已经在跑：再点一次不出错
+
+    // 第一幅：严格的方案，2 个亮斑 → NG
+    ASSERT_TRUE(eventually([&] { return get(base).body["runner"]["ng"] == 1; }));
+    auto status = get(base);
+    ASSERT_EQ(status.body["recent"].size(), 1u);
+    EXPECT_EQ(status.body["recent"][0]["frameName"], "1.png");
+    EXPECT_EQ(status.body["recent"][0]["verdict"], "NG");
+    EXPECT_EQ(status.body["recent"][0]["result"]["defects"].size(), 2u);
+    EXPECT_EQ(status.body["activeRelease"], strict);
+    ASSERT_TRUE(eventually([&] { return get(base).body["runner"]["idle"].get<bool>(); }));
+    // 最近的那一帧能取回来
+    const auto frame = client->Get(base + "/frame");
+    ASSERT_TRUE(frame && frame->status == 200);
+    EXPECT_EQ(frame->get_header_value("Content-Type"), "image/png");
+    // 运行中不能换图像源（S7）
+    EXPECT_EQ(put(base + "/image-source", {{"kind", "folder"}, {"location", pathToUtf8(images)}}).body["code"], "station.source_while_running");
+
+    // 运行中部署宽松的方案；下一幅图像到来时切换。同样 2 个亮斑，这次是 OK
+    ASSERT_EQ(post(base + "/deploy", {{"releaseId", lenient}}).status, 200);
+    ASSERT_TRUE(eventually([&] { return get(base).body.value("pendingReady", false); }));
+    writeImage("2.png", 2);
+    ASSERT_TRUE(eventually([&] { return get(base).body["runner"]["ok"] == 1; }));
+    // ?after=1：只要第一次之后的记录
+    status = get(base + "?after=1");
+    ASSERT_EQ(status.body["recent"].size(), 1u);
+    EXPECT_EQ(status.body["recent"][0]["frameName"], "2.png");
+    EXPECT_TRUE(status.body["recent"][0]["swapped"].get<bool>());
+    EXPECT_EQ(status.body["activeRelease"], lenient);
+    EXPECT_EQ(get(base + "?after=abc").status, 400);
+
+    // 回滚；工位列表里看得到运行情况，但不带检测记录
+    ASSERT_EQ(post(base + "/rollback").status, 200);
+    EXPECT_EQ(get(base).body["activeRelease"], strict);
+    const auto list = get("/api/stations");
+    ASSERT_EQ(list.body["stations"].size(), 1u);
+    EXPECT_TRUE(list.body["stations"][0]["runner"]["running"].get<bool>());
+    EXPECT_TRUE(list.body["stations"][0]["recent"].empty());
+
+    // 停止
+    const auto stopped = post(base + "/stop");
+    ASSERT_EQ(stopped.status, 200);
+    EXPECT_FALSE(stopped.body["runner"]["running"].get<bool>());
+    EXPECT_EQ(stopped.body["state"], "stopped");
+    EXPECT_EQ(post(base + "/stop").status, 200);  // 没在跑：再停一次不出错
+    EXPECT_EQ(get("/api/stations/nobody").status, 404);
 }
 
 // 通过标准 3（服务一侧）：改一个参数 → 重新运行 → 取回一幅中间结果，一共要多久。

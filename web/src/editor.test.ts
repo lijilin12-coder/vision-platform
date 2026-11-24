@@ -157,4 +157,14 @@ describe("编辑器", () => {
     await editor.setParam("n1", "value", 77);
     expect(editor.state.publishedVersionId).toBeNull();
   });
+
+  it("发布之后可以直接做成上线包", async () => {
+    const { client, editor } = await setup();
+    await editor.addNode("vision.threshold");
+    await editor.publish();
+    await editor.createRelease();
+    expect(client.releases.map((r) => r.recipeVersionId)).toEqual([`${editor.state.recipe!.id}@v1`]);
+    expect(editor.state.notice).toContain("已做成上线包");
+    expect(editor.state.publishedVersionId).toBeNull(); // 同一个版本不用再做第二次
+  });
 });

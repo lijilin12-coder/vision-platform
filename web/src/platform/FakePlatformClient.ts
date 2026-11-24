@@ -1,6 +1,6 @@
 import type { PlatformClient } from "./PlatformClient";
 import { PlatformError } from "./types";
-import type { DebugRun, OperatorMeta, ParamValue, Recipe, Roi } from "./types";
+import type { DebugRun, InspectionRecord, OperatorMeta, ParamValue, Recipe, Release, Roi, Station } from "./types";
 
 // 测试用的假后端：在内存里记着方案，按很少的几条规则回答。
 // 有了它，编辑器的状态和操作可以不启动 vision-runtime、不开浏览器就测。
@@ -123,6 +123,76 @@ export class FakePlatformClient implements PlatformClient {
         outputs: { threshold: { type: "number", value: n.params.value } } })),
     };
   }
+  // ---- 上线包和工位：同样只有测试需要的那一点 ----
+  releases: Release[] = [];
+  stations = new Map<string, Station>();
+  produced: InspectionRecord[] = []; // 测试往这里放“工位新检测出来的记录”，下一次查询时交出去
+
+  private station(id: string): Station {
+    const s = this.stations.get(id);
+    if (!s) throw new PlatformError(`找不到工位 ${id}`, "station.not_found", 404);
+    return s;
+  }
+  async listReleases() {
+    return this.releases;
+  }
+  async createRelease(recipeVersionId: string) {
+    const id = `rel-${this.releases.length + 1}`;
+    this.releases.push({ id, recipeVersionId, recipeName: recipeVersionId, withdrawn: false });
+    return id;
+  }
+  async listStations() {
+    return [...this.stations.values()].map((s) => ({ ...s, recent: [] }));
+  }
+  async createStation(name: string) {
+    const s: Station = { id: `s${this.stations.size + 1}`, name, state: "stopped", activeRelease: "", pendingRelease: "", pendingReady: false,
+      releaseHistory: [], consecutiveErrors: 0, sequence: 0, imageSource: { kind: "", location: "" },
+      runner: { running: false, idle: false, ok: 0, ng: 0, error: 0, unreadable: 0, stoppedReason: "" }, recent: [] };
+    this.stations.set(s.id, s);
+    return { ...s };
+  }
+  async getStation(stationId: string, afterSequence = 0) {
+    const s = this.station(stationId);
+    for (const r of this.produced.splice(0)) {
+      s.sequence = r.sequence;
+      s.runner[r.verdict === "OK" ? "ok" : r.verdict === "NG" ? "ng" : "error"]++;
+      s.recent.push(r);
+    }
+    return { ...s, runner: { ...s.runner }, recent: s.recent.filter((r) => r.sequence > afterSequence) };
+  }
+  async bindImageFolder(stationId: string, directory: string) {
+    const s = this.station(stationId);
+    if (s.runner.running) throw new PlatformError("工位停止之后才能更换图像源", "station.source_while_running", 422);
+    s.imageSource = { kind: "folder", location: directory };
+    return { ...s };
+  }
+  async deploy(stationId: string, releaseId: string) {
+    const s = this.station(stationId);
+    if (!this.releases.some((r) => r.id === releaseId)) throw new PlatformError(`找不到上线包 ${releaseId}`, "release.not_found", 404);
+    if (s.runner.running) Object.assign(s, { pendingRelease: releaseId, pendingReady: true });
+    else s.activeRelease = releaseId;
+    return { ...s };
+  }
+  async rollback(stationId: string) {
+    return { ...this.station(stationId) };
+  }
+  async startStation(stationId: string) {
+    const s = this.station(stationId);
+    if (!s.activeRelease) throw new PlatformError("工位还没有可用的上线包，请先部署", "station.no_active_release", 422);
+    s.state = "running";
+    s.runner.running = true;
+    return { ...s, runner: { ...s.runner } };
+  }
+  async stopStation(stationId: string) {
+    const s = this.station(stationId);
+    s.state = "stopped";
+    s.runner.running = false;
+    return { ...s, runner: { ...s.runner } };
+  }
+  stationFrameUrl(stationId: string, sequence: number) {
+    return `/api/stations/${stationId}/frame?s=${sequence}`;
+  }
+
   imageUrl(imageId: string) {
     return `/api/images/${imageId}`;
   }
