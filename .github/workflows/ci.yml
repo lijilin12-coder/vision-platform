@@ -264,6 +264,39 @@ jobs:
           & $cli --data $data station deploy $station $release; Check
           $summary = (& $cli --data $data station run $station "$images\ok" "$images\ng" | Select-Object -Last 1); Check
           if ($summary -notmatch "OK 10，NG 6，ERROR 0") { throw "工位的检测结果不对：$summary" }
+      - name: 方案包和图像源（两个数据目录当作两台机器）
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+          function Check { if ($LASTEXITCODE -ne 0) { throw "命令失败，退出码 $LASTEXITCODE" } }
+          function Last($lines) { return ($lines | Select-Object -Last 1).Trim().Split(" ")[-1] }
+          $cli = ".\build\apps\vision-cli.exe"
+          $builder = "$env:RUNNER_TEMP\构建机"
+          $line = "$env:RUNNER_TEMP\产线机"
+          $package = "$env:RUNNER_TEMP\表面检测.vpkg"
+          $images = "$env:RUNNER_TEMP\来料图像"
+          # 构建机：带模型的方案，发布，导出
+          & $cli --data $builder model import tests\data\surface-anomaly.onnx --name surface-anomaly --size 256 256 --threshold 0.080625; Check
+          $recipe = Last (& $cli --data $builder recipe build samples\recipes\surface-anomaly.draft.json); Check
+          $version = Last (& $cli --data $builder recipe publish $recipe); Check
+          & $cli --data $builder package export $version $package
+          if ($LASTEXITCODE -eq 0) { throw "模型还没有发布，导出应该被拒绝" }
+          & $cli --data $builder model publish surface-anomaly@v1; Check
+          & $cli --data $builder package export $version $package; Check
+          & $cli --data $builder package show $package; Check
+          # 产线机：导入（两次：第二次不应该出错），上线，工位从目录取图检测
+          & $cli --data $line package import $package; Check
+          & $cli --data $line package import $package; Check
+          & $cli --data $line sample generate $images --ok 4 --ng 3 --seed 5; Check
+          $release = Last (& $cli --data $line release create $version); Check
+          $station = Last (& $cli --data $line station create 产线一号); Check
+          & $cli --data $line station deploy $station $release; Check
+          & $cli --data $line station bind $station folder "$images\ng"; Check
+          $summary = (& $cli --data $line station run $station | Select-Object -Last 1); Check
+          Write-Host $summary
+          if ($summary -notmatch "OK 0，NG 3，ERROR 0") { throw "产线机上的检测结果不对：$summary" }
+          & $cli --data $line station unbind $station; Check
       - name: 服务（vision-runtime）和 HTTP 接口
         shell: pwsh
         run: |

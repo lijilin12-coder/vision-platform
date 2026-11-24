@@ -40,11 +40,12 @@ Station Station::restore(StationSnapshot snap) {
     s.policy_ = snap.policy;
     s.consecutiveErrors_ = snap.consecutiveErrors;
     s.sequence_ = snap.sequence;
+    s.imageSource_ = std::move(snap.imageSource);
     return s;
 }
 
 StationSnapshot Station::snapshot() const {
-    return {id_, name_, state_, activeRelease_, pendingRelease_, releaseHistory_, policy_, consecutiveErrors_, sequence_};
+    return {id_, name_, state_, activeRelease_, pendingRelease_, releaseHistory_, policy_, consecutiveErrors_, sequence_, imageSource_};
 }
 
 void Station::recoverAfterRestart() {
@@ -146,6 +147,33 @@ Status Station::rollback(bool withdrawRequested) {
 }
 
 // ---------------- 生命周期 ----------------
+
+// ---------------- 图像源 ----------------
+
+Status Station::bindImageSource(ImageSourceBinding binding) {
+    // S7
+    if (state_ != StationState::Stopped) {
+        return Status::failure("station.source_while_running", "工位停止之后才能更换图像源（当前状态：" + std::string(toString(state_)) + "）");
+    }
+    if (binding.kind.empty() || binding.location.empty()) {
+        return Status::failure("station.bad_source", "图像源的种类和位置都不能为空");
+    }
+    imageSource_ = std::move(binding);
+    markDirty();
+    record(std::make_shared<StationImageSourceBound>(id_, imageSource_->kind, imageSource_->location));
+    return Status::success();
+}
+
+Status Station::unbindImageSource() {
+    if (state_ != StationState::Stopped) {
+        return Status::failure("station.source_while_running", "工位停止之后才能解除图像源（当前状态：" + std::string(toString(state_)) + "）");
+    }
+    if (!imageSource_) return Status::success();  // 本来就没有：不算出错
+    imageSource_.reset();
+    markDirty();
+    record(std::make_shared<StationImageSourceBound>(id_, "", ""));
+    return Status::success();
+}
 
 Status Station::start() {
     if (state_ == StationState::Running) return Status::failure("station.already_running", "工位已经在运行");

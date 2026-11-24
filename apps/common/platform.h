@@ -16,7 +16,9 @@
 #include "vision/data/api.h"
 #include "vision/content/content_store.h"
 #include "vision/eventbus/in_memory_event_bus.h"
+#include "vision/exchange/package_file.h"
 #include "vision/execution/api.h"
+#include "vision/image_sources/folder_source.h"
 #ifdef VISION_WITH_ONNXRUNTIME
 #include "vision/inference_onnx/onnx_model_source.h"
 #endif
@@ -33,15 +35,21 @@ namespace vision::platform {
 
 // 把“取方案版本文档”这个端口接到方案编排上。
 // 现在两个平台还在同一个程序里；分开之后，产线运行平台会换成从上线包文件里读。
+// 方案版本有两个来源：本机的方案编排发布的，和从方案包导入的。先找前者。
 class AuthoringRecipeSource final : public release::RecipeVersionSource {
 public:
-    explicit AuthoringRecipeSource(const authoring::AuthoringService& authoring) : authoring_(authoring) {}
+    AuthoringRecipeSource(const authoring::AuthoringService& authoring, const release::ImportedRecipes& imported)
+        : authoring_(authoring), imported_(imported) {}
     Result<authoring::RecipeVersionDocument> find(const std::string& recipeVersionId) const override {
-        return authoring_.getVersionDocument(recipeVersionId);
+        auto own = authoring_.getVersionDocument(recipeVersionId);
+        if (own) return own;
+        if (auto doc = imported_.find(recipeVersionId)) return *doc;
+        return own;  // 两边都没有：用方案编排给的“找不到”
     }
 
 private:
     const authoring::AuthoringService& authoring_;
+    const release::ImportedRecipes& imported_;
 };
 
 // 把“这个方案版本能不能加载”这个端口接到检测引擎上：让它真的加载一次（结果会留在缓存里，不白做）。
@@ -67,9 +75,11 @@ struct Platform {
     content::TemplateContent templates;
     authoring::AuthoringService authoring;
     execution::ExecutionService execution;
+    persistence::JsonImportedRecipes importedRecipes;  // 从方案包导入的方案版本
     AuthoringRecipeSource recipeSource;
     release::ReleaseService releases;
     ExecutionLoadCheck loadCheck;
+    image_sources::ImageSources imageSources;  // 工位的图像从哪里来（现在只有“目录”这一种）
     station::StationService stations;
 
     // ---- 以下只属于方案构建平台（ADR-28）：基准图集、工作流、方案助手 ----
@@ -102,11 +112,24 @@ struct Platform {
     // 推理引擎：检测引擎通过它运行模型仓库里的模型。编译时关掉了推理功能的话，用到模型的方案会报“没有配置推理引擎”
     inference_onnx::OnnxModelSource modelSource;
 #endif
+    // 方案包（REL-02）：导出、导入
+    exchange::TarPackageExchange packageExchange;
+    exchange::CatalogOperatorInventory operatorInventory;
+    exchange::RepositoryModelArchive modelArchive;
+    exchange::StoreContentArchive contentArchive;
+    release::PackageService packages;
     http::CurlCommandHttpClient trainingHttp;
     std::unique_ptr<training::TrainingBackend> trainingBackend;
     training::TrainingService training;
 
     bool verboseEvents = false;
+
+    // 销毁的顺序：成员按声明的反序销毁，所以声明在工位服务【后面】的东西（模型仓库、推理引擎……）会比它先销毁。
+    // 而工位的后台加载线程正会用到它们。所以在任何成员开始销毁之前，先等后台加载全部结束。
+    // （2026-11-24 发现：部署了一个用到模型的上线包之后马上退出程序，会崩溃。）
+    ~Platform() { stations.finishBackgroundWork(); }
+    Platform(const Platform&) = delete;
+    Platform& operator=(const Platform&) = delete;
 
     explicit Platform(const std::filesystem::path& dataDir, const std::string& trainingUrl = {})
         : recipes(dataDir),
@@ -117,7 +140,8 @@ struct Platform {
           templates(contentStore),
           authoring(recipes, versions, catalog::OperatorCatalog::global(), bus),
           execution(catalog::OperatorCatalog::global(), bus),
-          recipeSource(authoring),
+          importedRecipes(dataDir),
+          recipeSource(authoring, importedRecipes),
           releases(releaseRepository, recipeSource, bus),
           loadCheck(execution),
           stations(stationRepository, releases, execution, bus),
@@ -142,6 +166,10 @@ struct Platform {
 #ifdef VISION_WITH_ONNXRUNTIME
           modelSource(models),
 #endif
+          operatorInventory(catalog::OperatorCatalog::global()),
+          modelArchive(models),
+          contentArchive(contentStore),
+          packages(recipeSource, importedRecipes, packageExchange, operatorInventory, modelArchive, contentArchive, bus),
           trainingBackend(trainingUrl.empty()
                               ? std::unique_ptr<training::TrainingBackend>(std::make_unique<content::NoTrainingBackend>())
                               : std::make_unique<training_http::HttpTrainingBackend>(trainingHttp, trainingUrl)),
@@ -150,6 +178,7 @@ struct Platform {
         // 匹配模板：方案编排往内容仓库里存，检测引擎从内容仓库里取
         authoring.useTemplateStore(templates);
         execution.useTemplateSource(templates);
+        stations.useImageSources(imageSources);
         releases.useLoadCheck(loadCheck);
 #ifdef VISION_WITH_ONNXRUNTIME
         execution.useModelSource(modelSource);

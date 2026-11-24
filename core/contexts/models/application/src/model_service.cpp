@@ -38,6 +38,37 @@ Result<std::string> ModelService::importModel(const std::string& modelName, cons
     return id;
 }
 
+Status ModelService::adoptModel(const std::string& modelVersionId, const std::vector<unsigned char>& bytes, const ContractView& c,
+                                const ProvenanceView& p) {
+    // ID 的形式是 “<模型名>@v<数字>”
+    const auto at = modelVersionId.rfind("@v");
+    int number = 0;
+    try {
+        if (at != std::string::npos && at > 0) number = std::stoi(modelVersionId.substr(at + 2));
+    } catch (const std::exception&) {
+    }
+    if (number < 1 || modelVersionId != modelVersionId.substr(0, at) + "@v" + std::to_string(number)) {
+        return Status::failure("models.bad_id", "不是合法的模型版本 ID：" + modelVersionId);
+    }
+    auto stored = files_.importBytes(bytes);
+    if (!stored) return stored.error();
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (auto existing = versions_.find(modelVersionId)) {
+        if (existing->contentHash() == stored.value().sha256) return Status::success();
+        return Status::failure("models.conflict", "已经有模型版本 " + modelVersionId + "，但内容不一样");
+    }
+    // 先按“新建”的规则检查一遍契约（和手工导入走同一套规则），再恢复成“已发布”
+    const ModelContract contract{c.kind, c.inputWidth, c.inputHeight, c.inputChannels, c.output, c.numbers};
+    const Provenance provenance{p.kind, p.trainingJobId, p.datasetVersionId, p.split, p.backend};
+    const std::string modelName = modelVersionId.substr(0, at);
+    auto checked = ModelVersion::create(modelName, number, stored.value().sha256, stored.value().bytes, contract, provenance);
+    if (!checked) return checked.error();
+    const auto adopted = ModelVersion::restore(modelName, number, stored.value().sha256, stored.value().bytes, contract, provenance,
+                                               ModelStatus::Published);
+    return versions_.save(adopted);
+}
+
 Status ModelService::publish(const std::string& modelVersionId) {
     std::vector<EventPtr> events;
     {

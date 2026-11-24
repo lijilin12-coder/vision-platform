@@ -63,6 +63,7 @@ std::string shortId(const std::string& id) { return id.size() > 8 ? id.substr(0,
 void printStation(const station::StationView& v) {
     std::cout << "工位 " << v.name << "  (" << v.id << ")\n"
               << "  状态          " << v.state << "\n"
+              << "  图像源        " << (v.imageSourceKind.empty() ? "（没有绑定）" : v.imageSourceKind + "：" + v.imageSourceLocation) << "\n"
               << "  生效的上线包  " << (v.activeRelease.empty() ? "（无）" : v.activeRelease) << "\n"
               << "  待切换        "
               << (v.pendingRelease.empty() ? "（无）" : v.pendingRelease + (v.pendingReady ? "（已就绪）" : "（加载中）")) << "\n"
@@ -157,8 +158,55 @@ Status startStation(App& app, const std::string& stationId) {
 
 int cmdStationRun(App& app, std::vector<std::string> args) {
     const int repeat = std::max(1, takeIntOption(args, "--repeat", 1));
-    if (args.size() < 4) return usageError("station run <工位ID> <图像或目录>... [--repeat N]");
+    // --follow N：图像源暂时没有新图像时不退出，再等最多 N 秒（一边运行一边往目录里放图像时用）
+    const int followSeconds = std::max(0, takeIntOption(args, "--follow", 0));
+    if (args.size() < 3) return usageError("station run <工位ID> [<图像或目录>...] [--repeat N] [--follow 秒]");
     const std::string stationId = args[2];
+    const auto print = [](const station::StationInspection& v, const std::string& name) {
+        if (v.swapped) std::cout << "  —— 已切换到上线包 " << v.releaseId << " ——\n";
+        std::cout << "#" << v.sequence << " [" << v.report.verdict << "] " << name << "  (上线包 " << shortId(v.releaseId) << "，" << std::fixed
+                  << std::setprecision(2) << v.report.totalMs << " ms)\n";
+        for (const auto& reason : v.report.reasons) {
+            std::cout << "    " << (reason.pass ? "✓ " : "✗ ") << reason.nodeId << "：" << reason.text << "\n";
+        }
+        printResultItems(v.report.result);
+    };
+
+    if (args.size() == 3) {
+        // 没有给图像：从工位绑定的图像源取（STA-01）
+        if (auto st = startStation(app, stationId); !st) return fail(st.error());
+        std::map<std::string, int> tally;
+        int unreadable = 0;
+        auto idleSince = std::chrono::steady_clock::now();
+        for (;;) {
+            auto r = app.stations.inspectNext(stationId);
+            if (!r) {
+                // 一帧图像读不出来：记一笔，接着取后面的。别的错误（工位没有图像源、被停掉了）就此结束
+                if (r.error().code != "image_source.bad_frame") {
+                    (void)app.stations.stop(stationId);
+                    return fail(r.error());
+                }
+                std::cout << "  读不出来，跳过：" << r.error().message << "\n";
+                ++unreadable;
+                continue;
+            }
+            if (!r.value()) {
+                const auto idle = std::chrono::steady_clock::now() - idleSince;
+                if (idle >= std::chrono::seconds(followSeconds)) break;
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                continue;
+            }
+            idleSince = std::chrono::steady_clock::now();
+            print(*r.value(), r.value()->frameName);
+            ++tally[r.value()->report.verdict];
+        }
+        (void)app.stations.stop(stationId);
+        std::cout << "合计：OK " << tally["OK"] << "，NG " << tally["NG"] << "，ERROR " << tally["ERROR"];
+        if (unreadable > 0) std::cout << "；读不出来的图像 " << unreadable << " 幅";
+        std::cout << "\n";
+        return 0;
+    }
+
     std::vector<std::string> names;
     auto images = loadImages({args.begin() + 3, args.end()}, &names);
     if (!images) return fail(images.error());
@@ -170,13 +218,7 @@ int cmdStationRun(App& app, std::vector<std::string> args) {
             auto r = app.stations.inspect(stationId, images.value()[i]);
             if (!r) return fail(r.error());
             const auto& v = r.value();
-            if (v.swapped) std::cout << "  —— 已切换到上线包 " << v.releaseId << " ——\n";
-            std::cout << "#" << v.sequence << " [" << v.report.verdict << "] " << names[i] << "  (上线包 " << shortId(v.releaseId) << "，"
-                      << std::fixed << std::setprecision(2) << v.report.totalMs << " ms)\n";
-            for (const auto& reason : v.report.reasons) {
-                std::cout << "    " << (reason.pass ? "✓ " : "✗ ") << reason.nodeId << "：" << reason.text << "\n";
-            }
-            printResultItems(v.report.result);
+            print(v, names[i]);
             ++tally[v.report.verdict];
         }
     }
@@ -401,9 +443,62 @@ int runStationCommand(App& app, const std::vector<std::string>& rawArgs) {
         if (v) std::cout << "已回滚到上线包 " << v.value().activeRelease << (withdraw ? "，并撤回了出问题的上线包" : "") << "\n";
         return 0;
     }
+    if (sub == "bind" && args.size() >= 5) {
+        // station bind <工位ID> folder <目录>
+        const auto st = app.stations.bindImageSource(args[2], args[3], args[4]);
+        if (!st) return fail(st.error());
+        std::cout << "已绑定图像源 " << args[3] << "：" << args[4] << "\n";
+        return 0;
+    }
+    if (sub == "unbind" && args.size() >= 3) {
+        const auto st = app.stations.unbindImageSource(args[2]);
+        return st ? 0 : fail(st.error());
+    }
     if (sub == "run") return cmdStationRun(app, args);
     if (sub == "stress") return cmdStationStress(app, args);
     return usageError("station create | list | show | deploy | rollback | run | stress（详见 vision-cli help）");
+}
+
+// ---------- package ----------
+
+int runPackageCommand(App& app, const std::vector<std::string>& args) {
+    const std::string& sub = args[1];
+    const auto printManifest = [](const release::PackageManifest& m) {
+        std::cout << "方案包 " << m.packageId << "\n  方案版本 " << m.recipeVersionId << "（" << m.recipeName << "）\n  算子";
+        for (const auto& [id, major] : m.operators) std::cout << " " << id << "@v" << major;
+        std::cout << "\n";
+        for (const auto& t : m.templates) std::cout << "  匹配模板 " << t.name << "（" << t.bytes << " 字节）\n";
+        for (const auto& x : m.models) std::cout << "  模型 " << x.id << "（" << x.kind << "，" << x.bytes << " 字节）\n";
+    };
+    if (sub == "export" && args.size() >= 4) {
+        auto r = app.packages.exportPackage(args[2], args[3]);
+        if (!r) return fail(r.error());
+        std::cout << "已导出 " << args[3] << "：方案版本 " << r.value().recipeVersionId << "，匹配模板 " << r.value().templates << " 个，模型 "
+                  << r.value().models << " 个\n";
+        return 0;
+    }
+    if (sub == "import") {
+        auto r = app.packages.importPackage(args[2]);
+        if (!r) return fail(r.error());
+        const auto& v = r.value();
+        if (v.nothingNew()) {
+            std::cout << "本平台已经有这个方案包里的全部内容，没有什么要导入的\n";
+        } else {
+            std::cout << "已导入方案版本 " << v.recipeVersionId << "（" << v.recipeName << "）" << (v.recipeAdded ? "" : "：本平台已经有了") << "\n";
+            for (const auto& id : v.modelsAdded) std::cout << "  新增模型 " << id << "\n";
+        }
+        for (const auto& id : v.modelsAlreadyHere) std::cout << "  模型 " << id << " 本平台已经有了\n";
+        std::cout << v.recipeVersionId << "\n";
+        return 0;
+    }
+    if (sub == "show") {
+        auto m = app.packages.inspect(args[2]);
+        if (!m) return fail(m.error());
+        printManifest(m.value());
+        return 0;
+    }
+    std::cerr << "未知的 package 命令\n";
+    return 1;
 }
 
 }  // namespace vision::cli

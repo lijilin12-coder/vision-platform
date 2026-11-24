@@ -154,3 +154,16 @@ add_executable(http_api_tests http_api_test.cpp)
 target_link_libraries(http_api_tests PRIVATE vision_http_api vision_operators httplib::httplib GTest::gtest_main)
 vision_copy_onnxruntime(http_api_tests)
 gtest_discover_tests(http_api_tests)
+
+# ---- 图像源（STA-01）：工位绑定图像源，自己取图检测 ----
+add_executable(image_source_tests image_source_test.cpp)
+target_link_libraries(image_source_tests PRIVATE vision_platform_assembly vision_operators station_domain GTest::gtest_main)
+vision_copy_onnxruntime(image_source_tests)
+gtest_discover_tests(image_source_tests)
+
+# ---- 方案包（REL-02）：导入规则、包文件、两台“机器”之间导出和导入 ----
+add_executable(package_tests package_test.cpp)
+target_link_libraries(package_tests PRIVATE vision_platform_assembly vision_operators release_domain GTest::gtest_main)
+target_compile_definitions(package_tests PRIVATE VISION_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+vision_copy_onnxruntime(package_tests)
+gtest_discover_tests(package_tests)

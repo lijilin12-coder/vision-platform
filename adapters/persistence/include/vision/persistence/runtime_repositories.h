@@ -5,6 +5,7 @@
 
 #include <filesystem>
 
+#include "vision/release/api.h"
 #include "vision/data/domain/dataset.h"
 #include "vision/data/domain/sample.h"
 #include "vision/models/domain/model_version.h"
@@ -34,6 +35,19 @@ public:
     Status save(const station::Station& station) override;
     std::optional<station::Station> find(const station::StationId& id) override;
     std::vector<station::StationId> listIds() override;
+
+private:
+    std::filesystem::path dir_;
+};
+
+// <root>/imported-recipes/<方案版本 ID>.json
+// 从方案包导入的方案版本：只读的文档（发布语言），不是可以编辑的方案。
+class JsonImportedRecipes final : public release::ImportedRecipes {
+public:
+    explicit JsonImportedRecipes(std::filesystem::path root);
+    Status save(const authoring::RecipeVersionDocument& recipe) override;
+    std::optional<authoring::RecipeVersionDocument> find(const std::string& recipeVersionId) const override;
+    std::vector<std::string> listIds() const override;
 
 private:
     std::filesystem::path dir_;

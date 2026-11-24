@@ -82,6 +82,7 @@ class ModelFileStore final : public models::ModelFiles {
 public:
     explicit ModelFileStore(FileContentStore& store) : store_(store) {}
     Result<models::StoredModelFile> importFile(const std::string& path) override;
+    Result<models::StoredModelFile> importBytes(const std::vector<unsigned char>& bytes) override;
     std::string pathOf(const std::string& sha256) const override;
 
 private:

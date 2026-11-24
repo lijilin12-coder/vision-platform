@@ -28,6 +28,9 @@ std::vector<std::filesystem::path> expandImages(const std::vector<std::string>& 
 int runReleaseCommand(App& app, const std::vector<std::string>& args);
 int runStationCommand(App& app, const std::vector<std::string>& args);
 
+// package ...：方案包的导出和导入（见 station_commands.cpp）
+int runPackageCommand(App& app, const std::vector<std::string>& args);
+
 // golden ...、workflow ...、assist ... 三组命令（方案助手，见 assist_commands.cpp）。
 int runGoldenCommand(App& app, const std::vector<std::string>& args);
 int runWorkflowCommand(App& app, const std::vector<std::string>& args);

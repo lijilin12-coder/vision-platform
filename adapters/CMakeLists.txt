@@ -17,7 +17,7 @@ add_library(vision_persistence STATIC
   persistence/src/runtime_repositories.cpp)
 target_include_directories(vision_persistence PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/persistence/include)
 target_link_libraries(vision_persistence
-  PUBLIC authoring_domain authoring_application release_domain station_domain data_domain models_domain training_domain
+  PUBLIC authoring_domain authoring_application release_domain release_application station_domain data_domain models_domain training_domain
   PRIVATE nlohmann_json::nlohmann_json)
 
 # 日志接收器：控制台、轮转文件
@@ -91,3 +91,16 @@ if(VISION_WITH_ONNXRUNTIME)
     PUBLIC execution_application models_application
     PRIVATE vision_content onnxruntime::onnxruntime)
 endif()
+
+# 图像源：工位的图像从哪里来。现在只有“一个目录里的图像”；相机以后加在这里。
+add_library(vision_image_sources STATIC image_sources/src/folder_source.cpp)
+target_include_directories(vision_image_sources PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/image_sources/include)
+target_link_libraries(vision_image_sources PUBLIC station_application PRIVATE vision_imaging)
+
+# 方案包文件（REL-02）：把方案版本连同模板、模型打成一个 tar 文件，导出和导入。
+# 传输方式是适配器的事；导入的规则在上线管理的领域层。
+add_library(vision_exchange STATIC exchange/src/package_file.cpp)
+target_include_directories(vision_exchange PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/exchange/include)
+target_link_libraries(vision_exchange
+  PUBLIC release_application models_application catalog_application vision_content
+  PRIVATE vision_persistence nlohmann_json::nlohmann_json)

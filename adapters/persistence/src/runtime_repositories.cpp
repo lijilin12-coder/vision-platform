@@ -1,8 +1,10 @@
 #include "vision/persistence/runtime_repositories.h"
 
 #include <algorithm>
+#include <fstream>
 
 #include "json_files.h"
+#include "vision/persistence/json_repositories.h"
 
 namespace vision::persistence {
 
@@ -84,7 +86,9 @@ Status JsonStationRepository::save(const station::Station& s) {
               {"policy", {{"autoRollbackAfterErrors", snap.policy.autoRollbackAfterErrors},
                           {"historyDepth", snap.policy.historyDepth}}},
               {"consecutiveErrors", snap.consecutiveErrors},
-              {"sequence", snap.sequence}};
+              {"sequence", snap.sequence},
+              {"imageSource", snap.imageSource ? json{{"kind", snap.imageSource->kind}, {"location", snap.imageSource->location}}
+                                               : json(nullptr)}};
     return writeFileAtomically(dir_ / (snap.id + ".json"), j.dump(2));
 }
 
@@ -105,12 +109,37 @@ std::optional<station::Station> JsonStationRepository::find(const station::Stati
     snap.policy.historyDepth = j->at("policy").at("historyDepth").get<int>();
     snap.consecutiveErrors = j->at("consecutiveErrors").get<int>();
     snap.sequence = j->at("sequence").get<std::uint64_t>();
+    // 绑定图像源是后来加的：以前保存的工位没有这一项
+    if (const auto src = j->find("imageSource"); src != j->end() && src->is_object()) {
+        snap.imageSource = station::ImageSourceBinding{src->at("kind").get<std::string>(), src->at("location").get<std::string>()};
+    }
     return station::Station::restore(std::move(snap));
 } catch (const std::exception&) {
     return std::nullopt;  // POC：文件损坏视为不存在
 }
 
 std::vector<station::StationId> JsonStationRepository::listIds() { return listJsonStems(dir_); }
+
+// ---------- JsonImportedRecipes ----------
+
+JsonImportedRecipes::JsonImportedRecipes(fs::path root) : dir_(std::move(root) / "imported-recipes") {}
+
+Status JsonImportedRecipes::save(const authoring::RecipeVersionDocument& recipe) {
+    if (!safeFileName(recipe.versionId)) return Status::failure("persistence.bad_id", "方案版本 ID 不能用作文件名：" + recipe.versionId);
+    return writeFileAtomically(dir_ / (recipe.versionId + ".json"), toJson(recipe, 2));
+}
+
+std::optional<authoring::RecipeVersionDocument> JsonImportedRecipes::find(const std::string& recipeVersionId) const {
+    if (!safeFileName(recipeVersionId)) return std::nullopt;
+    std::ifstream in(dir_ / pathFromUtf8(recipeVersionId + ".json"), std::ios::binary);
+    if (!in) return std::nullopt;
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    auto doc = recipeDocumentFromJson(text);
+    if (!doc) return std::nullopt;  // 文件损坏视为不存在
+    return std::move(doc).value();
+}
+
+std::vector<std::string> JsonImportedRecipes::listIds() const { return listJsonStems(dir_); }
 
 // ---------- JsonGoldenSetRepository ----------
 

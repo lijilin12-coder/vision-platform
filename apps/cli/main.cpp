@@ -66,14 +66,23 @@ constexpr const char* kUsage = R"(用法：vision-cli [--data <目录>] <命令>
   release list
   release show <上线包ID>
   release withdraw <上线包ID>                   撤回：不允许再部署
+方案包：把方案版本连同它用到的模板、模型打成一个文件，带到另一台机器上
+  package export <方案版本ID> <文件.vpkg>       导出。方案用到的模型必须已经发布
+  package import <文件.vpkg>                    导入。之后就可以 release create <方案版本ID>、部署到工位。
+                                               本平台缺算子、或者同一个 ID 已经有不同的内容时被拒绝；重复导入不出错
+  package show <文件.vpkg>                      只看包里有什么，不导入
 工位运行（BC-5）
   station create <名称> [--auto-rollback N]     创建工位，输出工位 ID（N：连续多少次 ERROR 自动回滚，默认 3）
   station list
   station show <工位ID>
   station deploy <工位ID> <上线包ID>            部署：加载完成后，在下一次检测开始前生效
   station rollback <工位ID> [--withdraw]        回滚到上一个上线包；--withdraw 同时撤回出问题的上线包
+  station bind <工位ID> folder <目录>           给工位绑定图像源：一个目录里的图像（只能在工位停止时做）
+  station unbind <工位ID>
+  station run <工位ID> [--follow 秒]            热启动工位，从它绑定的图像源取图检测，取完为止。
+                                               --follow：暂时没有新图像时再等这么多秒（可以一边运行一边往目录里放图像）
   station run <工位ID> <图像或目录>... [--repeat N]
-                                               热启动工位，对图像逐张检测
+                                               热启动工位，对给出的图像逐张检测（不经过图像源）
   station stress <工位ID> <上线包A> <上线包B> <图像或目录> [--count N] [--deploys N] [--rollbacks N]
                                                一边连续检测，一边在两个上线包之间反复部署和回滚，输出测量结果
 方案助手（方案构建平台）
@@ -511,6 +520,7 @@ int main(int argc, char** argv) {
     }
     if (cmd == "release" && need(2)) return runReleaseCommand(app, args);
     if (cmd == "station" && need(2)) return runStationCommand(app, args);
+    if (cmd == "package" && need(3)) return runPackageCommand(app, args);
     if (cmd == "golden" && need(2)) return runGoldenCommand(app, args);
     if (cmd == "workflow" && need(2)) return runWorkflowCommand(app, args);
     if (cmd == "assist" && need(2)) return runAssistCommand(app, args);
