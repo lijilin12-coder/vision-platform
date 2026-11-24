@@ -291,7 +291,7 @@ Result<Proposal> LlmAdvisor::propose(const AdvisorView& view) {
     for (int attempt = 0; attempt <= config_.maxRetries; ++attempt) {
         if (attempt > 0) std::this_thread::sleep_for(std::chrono::milliseconds(attempt == 1 ? 1000 : 3000));
         call.attempts = attempt + 1;
-        auto response = http_.post(request);
+        auto response = http_.send(request);
         if (!response) {  // 没有收到回复：可能是暂时的，再试
             lastError = response.error().message;
             continue;

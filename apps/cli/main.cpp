@@ -95,6 +95,9 @@ constexpr const char* kUsage = R"(用法：vision-cli [--data <目录>] <命令>
   assist abandon <会话ID>
 数据（方案构建平台）
   sample import <图像或目录...> [--label ok|ng]  导入图像成为样本。样本按图像的内容识别：同一个文件换个名字再导入，还是同一个样本
+  sample generate <输出目录> [--ok N] [--ng N] [--seed N]
+                                               生成练习训练用的合成图像：<输出目录>/ok 和 <输出目录>/ng。
+                                               不合格的有三种：亮斑、深色划痕、污渍（异常检测模型事先并不知道缺陷长什么样）
   sample list | sample label <样本ID> <ok|ng>   样本 ID 可以只写开头几位
   dataset new <名称>                            输出数据集 ID
   dataset add <数据集ID> <样本ID...|--all-unassigned>
@@ -102,9 +105,12 @@ constexpr const char* kUsage = R"(用法：vision-cli [--data <目录>] <命令>
                                                含有已经留作基准的样本时拒绝；反过来，用于训练的图像也不能再放进基准图集
   dataset show <数据集版本ID>
 训练和模型仓库（方案构建平台）
-  train submit <数据集版本ID> --name <模型名> [--epochs N] [--seed N]
-                                               提交训练任务，输出任务的情况。训练完成后模型自动进入模型仓库（未发布）
+  train submit <数据集版本ID> --name <模型名> [--epochs N] [--image-size N] [--seed N] [--wait]
+                                               提交训练任务，输出任务的情况。训练完成后模型自动进入模型仓库（未发布）。
+                                               --wait：等到训练结束再返回。需要先启动训练服务（services/training），并用
+                                               --training-url 或环境变量 VISION_TRAINING_URL 告诉平台它的地址
   train status <任务ID>                         向训练后端查询一次进度并显示
+  train wait <任务ID>                           等到训练结束
   train list | train cancel <任务ID>
   model list | model show <模型版本ID> | model publish <模型版本ID>
 工具
@@ -114,6 +120,7 @@ constexpr const char* kUsage = R"(用法：vision-cli [--data <目录>] <命令>
 选项
   --data <目录>          数据目录，默认 ./vision-data
   --log-level <级别>     写入日志文件的最低级别：trace / debug / info（默认）/ warn / error / off
+  --training-url <地址>  训练服务的地址，例如 http://127.0.0.1:8765（也可以用环境变量 VISION_TRAINING_URL）
   --events               在控制台显示领域事件
   --no-core-dump         崩溃时不生成 core 文件（macOS / Linux）
 
@@ -410,6 +417,7 @@ int main(int argc, char** argv) {
     std::vector<std::string> args = utf8Args(argc, argv);
     fs::path data = "vision-data";
     bool verbose = false;
+    std::string trainingUrl;
     bool coreDumps = true;
     LogLevel logLevel = LogLevel::Info;
     for (size_t i = 0; i < args.size();) {
@@ -422,6 +430,9 @@ int main(int argc, char** argv) {
         } else if (args[i] == "--no-core-dump") {
             coreDumps = false;
             args.erase(args.begin() + i);
+        } else if (args[i] == "--training-url" && i + 1 < args.size()) {
+            trainingUrl = args[i + 1];
+            args.erase(args.begin() + i, args.begin() + i + 2);
         } else if (args[i] == "--events") {
             verbose = true;
             args.erase(args.begin() + i);
@@ -452,7 +463,11 @@ int main(int argc, char** argv) {
     for (const auto& a : args) commandLine += (commandLine.empty() ? "" : " ") + a;
     log::info("cli", "启动", {{"command", commandLine}});
 
-    App app(data);
+    // 训练服务的地址：命令行选项优先，其次是环境变量。都没有就是“没有配置训练服务”
+    if (trainingUrl.empty()) {
+        if (const char* env = std::getenv("VISION_TRAINING_URL")) trainingUrl = env;
+    }
+    App app(data, trainingUrl);
     app.verboseEvents = verbose;
     const auto& cmd = args[0];
     auto need = [&](size_t n) {

@@ -207,6 +207,23 @@ jobs:
           & $cli --data $data golden sample "$env:RUNNER_TEMP\样本基准"; Check
           $after = @(Get-ChildItem "$data\golden-sets" -Filter *.json).Count
           if ($after -ne $before + 1) { throw "基准图集没有建出来" }
+          # 练习训练用的合成图像（中文目录）；没有配置训练服务时，训练任务照样记录下来，状态是“已失败”
+          $generated = "$env:RUNNER_TEMP\合成图像"
+          & $cli --data $data sample generate $generated --ok 10 --ng 3; Check
+          if (@(Get-ChildItem "$generated\ok" -Filter *.png).Count -ne 10) { throw "合格的图像数量不对" }
+          if (@(Get-ChildItem "$generated\ng" -Filter *.png).Count -ne 3) { throw "不合格的图像数量不对" }
+          & $cli --data $data sample import "$generated\ok" --label ok; Check
+          $dataset2 = Last (& $cli --data $data dataset new 合成); Check
+          & $cli --data $data dataset add $dataset2 --all-unassigned; Check
+          $version2 = Last (& $cli --data $data dataset freeze $dataset2); Check
+          & $cli --data $data train submit $version2 --name 试一试
+          if ($LASTEXITCODE -eq 0) { throw "没有训练服务时，提交训练应该报告失败" }
+          & $cli --data $data train list; Check
+          # 训练服务的地址配了、但服务没有启动：同样是记录下来的失败，不是崩溃
+          & $cli --data $data --training-url http://127.0.0.1:9 train submit $version2 --name 试一试
+          if ($LASTEXITCODE -ne 1) { throw "连不上训练服务时，退出码应该是 1，实际是 $LASTEXITCODE" }
+          # 上一条命令按预期以 1 退出；不清零的话，这一步会把它当成自己的结果而失败
+          $global:LASTEXITCODE = 0
       - name: 编译并运行教程示例
         shell: cmd
         run: docs\tutorial\cpp\run_all.bat

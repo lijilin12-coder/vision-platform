@@ -544,7 +544,7 @@ class ScriptedLlmService final : public llm::HttpClient {
 public:
     // 每一项是大模型“说”的话；用完之后表现为断网
     explicit ScriptedLlmService(std::vector<std::string> says) : says_(std::move(says)) {}
-    Result<llm::HttpResponse> post(const llm::HttpRequest& request) override {
+    Result<llm::HttpResponse> send(const llm::HttpRequest& request) override {
         bodies.push_back(request.body);
         if (next_ >= says_.size()) return Result<llm::HttpResponse>::failure("http.unreachable", "模拟：断网");
         const std::string body = nlohmann::json{

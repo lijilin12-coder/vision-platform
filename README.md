@@ -72,6 +72,7 @@ vision-platform/
 ├── core/          # kernel（共享内核）、common、contexts/（每个限界上下文一个目录）
 ├── operators/     # 算子实现
 ├── adapters/      # 被驱动适配器：持久化、推理、图像、方案包、事件总线……
+├── services/      # 独立运行的服务：训练服务（Python）
 ├── apps/          # runtime（Linux/Windows/Mac）、harmony、cli
 ├── web/           # Web 界面
 ├── toolchain/     # 模型工具链服务

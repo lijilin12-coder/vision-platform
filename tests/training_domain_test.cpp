@@ -190,6 +190,31 @@ TEST(Split, DeterministicStratifiedAndOrderIndependent) {
 
 // ---------------- 模型版本 ----------------
 
+// 某一类样本很少时，按比例四舍五入会得到 0。只要够分，测试集和验证集各至少留一个：否则指标算不出来
+TEST(Split, FewSamplesOfAClassStillReachTestAndValidation) {
+    const auto count = [](int ok, int ng, Split which, bool wantNg) {
+        std::vector<std::pair<std::string, bool>> samples;
+        for (int i = 0; i < ok; ++i) samples.push_back({"ok" + std::to_string(i), false});
+        for (int i = 0; i < ng; ++i) samples.push_back({"ng" + std::to_string(i), true});
+        const auto splits = assignSplits(samples, SplitSpec{0.8, 0.1, 0.1, 1});
+        int n = 0;
+        for (std::size_t i = 0; i < samples.size(); ++i) n += splits[i] == which && samples[i].second == wantNg;
+        return n;
+    };
+    // 3 个不合格的：按比例各是 0.3 个 → 原来全在训练集里
+    EXPECT_EQ(count(40, 3, Split::Test, true), 1);
+    EXPECT_EQ(count(40, 3, Split::Validation, true), 1);
+    EXPECT_EQ(count(40, 3, Split::Train, true), 1);
+    // 2 个：先保证测试集；剩下的一个留在训练集
+    EXPECT_EQ(count(40, 2, Split::Test, true), 1);
+    EXPECT_EQ(count(40, 2, Split::Validation, true), 0);
+    // 只有 1 个：不够分，留在训练集
+    EXPECT_EQ(count(40, 1, Split::Train, true), 1);
+    // 比例是 0 的部分不会被硬塞
+    std::vector<std::pair<std::string, bool>> three = {{"a", true}, {"b", true}, {"c", true}};
+    for (const auto split : assignSplits(three, SplitSpec{1.0, 0.0, 0.0, 1})) EXPECT_EQ(split, Split::Train);
+}
+
 TEST(ModelVersion, CreateValidatesAndPublishIsOneWay) {
     using namespace vision::models;
     const ModelContract contract{"anomaly-autoencoder", 64, 64, 1, "reconstruction", {{"threshold", 0.02}}};

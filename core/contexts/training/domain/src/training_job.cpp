@@ -59,8 +59,12 @@ std::vector<Split> assignSplits(const std::vector<std::pair<std::string, bool>>&
         std::sort(group.begin(), group.end(), [&](std::size_t a, std::size_t b) { return samples[a].first < samples[b].first; });
         for (std::size_t i = group.size(); i > 1; --i) std::swap(group[i - 1], group[next() % i]);
         const auto n = static_cast<double>(group.size());
-        const auto testCount = static_cast<std::size_t>(std::floor(n * spec.test + 0.5));
-        const auto valCount = std::min(group.size() - testCount, static_cast<std::size_t>(std::floor(n * spec.validation + 0.5)));
+        auto testCount = static_cast<std::size_t>(std::floor(n * spec.test + 0.5));
+        auto valCount = std::min(group.size() - testCount, static_cast<std::size_t>(std::floor(n * spec.validation + 0.5)));
+        // 这一类样本很少时，按比例四舍五入会得到 0：测试集里就没有这一类了，指标也就算不出来。
+        // 所以只要比例不是 0、样本又够分，测试集和验证集各至少留一个（先保证测试集）。
+        if (spec.test > 0 && testCount == 0 && group.size() >= 2) testCount = 1;
+        if (spec.validation > 0 && valCount == 0 && group.size() >= testCount + 2) valCount = 1;
         for (std::size_t i = 0; i < group.size(); ++i) {
             result[group[i]] = i < testCount ? Split::Test : i < testCount + valCount ? Split::Validation : Split::Train;
         }
