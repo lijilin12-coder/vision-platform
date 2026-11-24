@@ -11,7 +11,7 @@
 #
 # 提供：
 #   目标 onnxruntime::onnxruntime
-#   函数 vision_copy_onnxruntime(<可执行目标>)：Windows 上把 DLL 复制到可执行文件旁边（别的平台什么也不做）
+#   函数 vision_copy_onnxruntime(<可执行目标>)：Windows 上保证 DLL 在可执行文件旁边（别的平台什么也不做）
 
 set(VISION_ONNXRUNTIME_VERSION 1.22.0)
 set(VISION_ONNXRUNTIME_SHA256 d571e63a2329baacb713f441e65ad75284de354db6e1ac435fe4bebbb417986a)
@@ -68,10 +68,21 @@ else()
     IMPORTED_SONAME libonnxruntime.so.1)
 endif()
 
+# 每个目录只复制一次：同一个目录里有好几个程序时（vision-cli 和 vision-runtime；各个测试），
+# 如果每个程序链接完都各自去复制同一个文件，并行构建时会撞在一起（2026-11-24 在 Windows 上出过：permission denied）。
+# 所以每个目录建一个“复制 DLL”的目标，这个目录里的程序都依赖它。
 function(vision_copy_onnxruntime target)
   if(WIN32)
-    add_custom_command(TARGET ${target} POST_BUILD
-      COMMAND ${CMAKE_COMMAND} -E copy_if_different ${VISION_ONNXRUNTIME_DLL} $<TARGET_FILE_DIR:${target}>
-      VERBATIM)
+    get_target_property(_dir ${target} BINARY_DIR)
+    string(MD5 _id "${_dir}")
+    set(_copy onnxruntime_dll_${_id})
+    if(NOT TARGET ${_copy})
+      add_custom_command(OUTPUT ${_dir}/onnxruntime.dll
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${VISION_ONNXRUNTIME_DLL} ${_dir}/onnxruntime.dll
+        DEPENDS ${VISION_ONNXRUNTIME_DLL}
+        VERBATIM)
+      add_custom_target(${_copy} DEPENDS ${_dir}/onnxruntime.dll)
+    endif()
+    add_dependencies(${target} ${_copy})
   endif()
 endfunction()
