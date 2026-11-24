@@ -4,6 +4,7 @@
 // 不能包含 vision/authoring/domain/ 下的任何头文件（构建系统会阻止）。
 
 #include <map>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -144,6 +145,9 @@ private:
     const catalog::OperatorCatalog& catalog_;
     EventPublisher& events_;
     TemplateStore* templateStore_ = nullptr;
+    // 服务可以被多个线程同时调用（HTTP 服务同时处理几个请求）。仓储的实现不要求线程安全，所以每个方法整个加锁。
+    // 可重入：事件处理器里可能再调用本服务。
+    mutable std::recursive_mutex mutex_;
 };
 
 }  // namespace vision::authoring

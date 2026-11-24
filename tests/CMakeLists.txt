@@ -147,3 +147,10 @@ if(VISION_WITH_ONNXRUNTIME)
   vision_copy_onnxruntime(inference_integration_tests)  # 必须在 gtest_discover_tests 之前：它在构建时就要运行这个程序
 endif()
 gtest_discover_tests(inference_integration_tests)
+
+# ---- vision-runtime 的 HTTP 接口（POC-2 第 ① 步）：启动一个真的服务，用 HTTP 客户端访问 ----
+add_executable(http_api_tests http_api_test.cpp)
+# vision_operators 必须直接链接：见 apps/CMakeLists.txt 里的说明
+target_link_libraries(http_api_tests PRIVATE vision_http_api vision_operators httplib::httplib GTest::gtest_main)
+vision_copy_onnxruntime(http_api_tests)
+gtest_discover_tests(http_api_tests)

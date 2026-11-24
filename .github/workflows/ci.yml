@@ -25,7 +25,7 @@ jobs:
       - name: 安装依赖
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q ninja-build libopencv-dev nlohmann-json3-dev libgtest-dev
+          sudo apt-get install -y -q ninja-build libopencv-dev nlohmann-json3-dev libgtest-dev libcpp-httplib-dev
       - name: 配置
         run: cmake --preset default
       - name: 编译
@@ -252,6 +252,34 @@ jobs:
           & $cli --data $data station deploy $station $release; Check
           $summary = (& $cli --data $data station run $station "$images\ok" "$images\ng" | Select-Object -Last 1); Check
           if ($summary -notmatch "OK 10，NG 6，ERROR 0") { throw "工位的检测结果不对：$summary" }
+      - name: 服务（vision-runtime）和 HTTP 接口
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+          $data = "$env:RUNNER_TEMP\服务数据"
+          $server = Start-Process -FilePath ".\build\apps\vision-runtime.exe" -ArgumentList "--data", $data, "--port", "8759" -PassThru -NoNewWindow
+          try {
+            $base = "http://127.0.0.1:8759/api"
+            $up = $false
+            foreach ($i in 1..50) {
+              try { Invoke-RestMethod "$base/health" | Out-Null; $up = $true; break } catch { Start-Sleep -Milliseconds 200 }
+            }
+            if (-not $up) { throw "服务没有启动起来" }
+            $operators = (Invoke-RestMethod "$base/operators").operators
+            if ($operators.Count -lt 18) { throw "算子目录不完整：只有 $($operators.Count) 个" }
+            $body = [System.Text.Encoding]::UTF8.GetBytes('{"name":"接口建的方案"}')
+            $recipe = Invoke-RestMethod "$base/recipes" -Method Post -ContentType "application/json" -Body $body
+            $added = Invoke-RestMethod "$base/recipes/$($recipe.id)/nodes" -Method Post -ContentType "application/json" -Body '{"operatorId":"vision.to_gray"}'
+            if ($added.nodes.Count -ne 1) { throw "加节点之后应该有 1 个节点" }
+            # 命令行用同一个数据目录，看得到服务建的方案
+            $shown = & .\build\apps\vision-cli.exe --data $data recipe show $recipe.id
+            if ($LASTEXITCODE -ne 0) { throw "命令行看不到服务建的方案" }
+            Write-Host ($shown -join "`n")
+            if (-not (($shown -join "`n") -match "接口建的方案")) { throw "方案的中文名称不对" }
+          } finally {
+            Stop-Process -Id $server.Id -Force
+          }
       - name: 编译并运行教程示例
         shell: cmd
         run: docs\tutorial\cpp\run_all.bat

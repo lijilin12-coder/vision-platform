@@ -14,6 +14,7 @@
 | OpenCV | 4.x（core、imgproc、imgcodecs） | 只有算子和适配器使用 |
 | nlohmann-json | 3.x | JSON 仓储 |
 | GoogleTest | 1.10+ | 测试 |
+| cpp-httplib | 0.14+ | `vision-runtime` 的 HTTP 服务 |
 
 ### ONNX Runtime（自动下载）
 
@@ -74,7 +75,7 @@ wsl --install -d Ubuntu-22.04
 ## Linux（Ubuntu / Debian）
 
 ```bash
-sudo apt-get install -y cmake ninja-build g++ libopencv-dev nlohmann-json3-dev libgtest-dev
+sudo apt-get install -y cmake ninja-build g++ libopencv-dev nlohmann-json3-dev libgtest-dev libcpp-httplib-dev
 ```
 
 然后使用 `default` 预设：

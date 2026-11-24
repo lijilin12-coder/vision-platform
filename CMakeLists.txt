@@ -22,6 +22,22 @@ include(cmake/VisionBoundaries.cmake)
 find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs)
 find_package(nlohmann_json 3 REQUIRED)
 
+# cpp-httplib：vision-runtime 的 HTTP 服务（只有一个头文件）。
+# vcpkg 带 CMake 配置；Ubuntu 的包没有，这里自己补一个目标。
+find_package(httplib CONFIG QUIET)
+if(NOT TARGET httplib::httplib)
+  find_path(HTTPLIB_INCLUDE_DIR httplib.h REQUIRED)
+  find_package(Threads REQUIRED)
+  add_library(httplib::httplib INTERFACE IMPORTED)
+  target_include_directories(httplib::httplib SYSTEM INTERFACE ${HTTPLIB_INCLUDE_DIR})
+  target_link_libraries(httplib::httplib INTERFACE Threads::Threads)
+  # Ubuntu 把它打包成了“头文件 + 编译好的库”，不是纯头文件：找到库就链接上
+  find_library(HTTPLIB_LIBRARY cpp-httplib)
+  if(HTTPLIB_LIBRARY)
+    target_link_libraries(httplib::httplib INTERFACE ${HTTPLIB_LIBRARY})
+  endif()
+endif()
+
 if(VISION_WITH_ONNXRUNTIME)
   include(cmake/OnnxRuntime.cmake)
 else()

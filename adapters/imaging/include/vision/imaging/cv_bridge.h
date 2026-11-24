@@ -4,6 +4,7 @@
 
 #include <opencv2/core.hpp>
 #include <string>
+#include <vector>
 
 #include "vision/common/result.h"
 #include "vision/kernel/image.h"
@@ -18,6 +19,10 @@ Result<Image> fromMat(const cv::Mat& mat);
 
 // 图像文件读写
 Result<Image> loadImage(const std::string& path);
+// 内存里的编解码：图像不一定来自文件（比如通过 HTTP 上传的）。
+// decodeImage 认得 PNG、JPEG、BMP 等常见格式；encodePng 是无损的。
+Result<Image> decodeImage(const std::vector<unsigned char>& bytes);
+Result<std::vector<unsigned char>> encodePng(const Image& image);
 Status saveImage(const std::string& path, const Image& image);
 
 }  // namespace vision::imaging
