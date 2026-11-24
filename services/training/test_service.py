@@ -80,6 +80,23 @@ class TrainerTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "只会训练"):
                 trainer.train({"config": {"modelKind": "other"}, "samples": samples}, Path(tmp) / "out")
 
+    def test_threshold_for_overlapping_scores_balances_both_kinds_of_error(self):
+        # 合格 10 个、不合格 4 个，得分有重叠。旧的规则（合格最高分 × 1.5）会把阈值放到 0.9，一个不合格的都检不出来
+        ok = [0.10, 0.12, 0.15, 0.18, 0.20, 0.22, 0.25, 0.30, 0.35, 0.60]
+        ng = [0.28, 0.50, 0.70, 0.80]
+        threshold, (miss, false_alarm) = trainer.best_threshold(ok, ng)
+        self.assertLess(threshold, 0.60)
+        self.assertLessEqual(miss, 0.25)
+        self.assertLessEqual(false_alarm, 0.3)
+        # 按比例算而不是按个数算：否则“全部判合格”（只错 4 个）会胜出
+        self.assertLess(miss, 1.0)
+        # 并列时取较低的阈值：宁可多报
+        threshold, _ = trainer.best_threshold([0.1, 0.2], [0.5, 0.6])
+        self.assertAlmostEqual(threshold, 0.35)
+        # 完全反过来的得分（模型比瞎猜还差）也不会出错，只是两种错误率很难看
+        threshold, (miss, false_alarm) = trainer.best_threshold([0.8, 0.9], [0.1, 0.2])
+        self.assertGreaterEqual(miss + false_alarm, 1.0)
+
     def test_stops_when_cancelled(self):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(trainer.Cancelled):

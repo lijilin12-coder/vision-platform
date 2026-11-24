@@ -16,6 +16,8 @@ MVTec AD 是异常检测最常用的公开数据集（需要自己到官网申�
 它只是替你敲这几条命令：sample import（合格的、不合格的各一次）→ dataset new → dataset add → dataset freeze。
 之后：vision-cli train submit <数据集版本ID> --name bottle-anomaly --image-size 256 --wait
 
+在真实的 MVTec AD 上验证过（2026-11-24，bottle、leather、screw 三个类别）。
+
 注意：平台会自己把这些图像重新划分成训练集、验证集、测试集（分层、可重现），不沿用 MVTec 自带的 train / test 目录。
 所以这里得到的指标不能和论文里的数字直接比较。
 """

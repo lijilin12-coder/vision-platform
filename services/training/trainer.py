@@ -102,6 +102,24 @@ def auroc(ok_scores: list[float], ng_scores: list[float]) -> float | None:
     return wins / (len(ok_scores) * len(ng_scores))
 
 
+def best_threshold(ok_scores: list[float], ng_scores: list[float]) -> tuple[float, tuple[float, float]]:
+    """两类得分有重叠时的阈值：让“漏检率 + 误报率”最小。返回 (阈值, (漏检率, 误报率))。
+
+    两种错误各自按比例算，不按个数：不合格的图像通常比合格的少得多，按个数算的话，
+    “全部判合格”就是错得最少的，那样的阈值没有用。
+    候选的位置是相邻两个得分的中点。并列时取较低的阈值——宁可多报，不要漏。
+    """
+    values = sorted(set(ok_scores) | set(ng_scores))
+    candidates = [(a + b) / 2 for a, b in zip(values, values[1:])] or [values[0]]
+    best = None
+    for t in candidates:
+        miss = sum(s <= t for s in ng_scores) / len(ng_scores)
+        false_alarm = sum(s > t for s in ok_scores) / len(ok_scores)
+        if best is None or miss + false_alarm < best[1][0] + best[1][1] - 1e-12:
+            best = (t, (miss, false_alarm))
+    return best
+
+
 def train(request: dict, out_dir: Path, progress=lambda fraction: None, cancelled=lambda: False) -> dict:
     """训练并导出。返回 {"report": ..., "output": ...}。出问题时抛异常，信息是给人看的。"""
     started = time.time()
@@ -169,20 +187,30 @@ def train(request: dict, out_dir: Path, progress=lambda fraction: None, cancelle
     # 训练集里不合格的图像没有用来训练（自编码器只学合格的），可以拿来帮忙定阈值
     seen_ng = scores(groups.get(("train", True), [])) + val_ng
 
-    # 建议的阈值：合格图像的得分上面留一些余量。
-    # 定阈值只用训练集和验证集；测试集留着最后看一眼，不参与任何决定。
+    # 建议的阈值。定阈值只用训练集和验证集；测试集留着最后看一眼，不参与任何决定。
     reference_ok = train_scores + val_ok
     ok_max = max(reference_ok)
     threshold = ok_max * 1.5
     notes = []
-    if seen_ng:
-        ng_min = min(seen_ng)
-        if ng_min > ok_max:
-            threshold = (ok_max * ng_min) ** 0.5  # 两边能分开：取中间（几何平均，因为得分跨的数量级大）
-        else:
-            notes.append("训练集和验证集里，有不合格的图像得分不比合格的高：这个模型分不开它们")
-    else:
+    expected = None  # 两类分不开时：在这个阈值上，预计的漏检率和误报率
+    if not seen_ng:
         notes.append("训练集和验证集里没有不合格的图像：阈值只根据合格图像的得分定，没有验证过")
+    elif min(seen_ng) > ok_max:
+        # 两边能分开：取中间（几何平均，因为得分跨的数量级大）
+        threshold = (ok_max * min(seen_ng)) ** 0.5
+    else:
+        # 两边分不开：没有哪个阈值能全对。找一个“漏检率和误报率加起来最小”的位置。
+        # （2026-11-24 以前这里简单地取合格最高分的 1.5 倍——在真实数据上，这等于一个不合格的都检不出来。）
+        # 合格的一侧优先用验证集：训练集里的合格图像模型见过，得分偏低，拿它们定阈值会偏紧、到了新图像上误报多。
+        ok_side = val_ok if len(val_ok) >= 5 else reference_ok
+        threshold, expected = best_threshold(ok_side, seen_ng)
+        notes.append(
+            "合格和不合格的图像得分有重叠，这个模型分不开它们。阈值取在两种错误加起来最少的位置："
+            f"在定阈值用的图像上，漏检 {expected[0] * 100:.0f}%、误报 {expected[1] * 100:.0f}%"
+        )
+        if expected[0] + expected[1] > 0.5:
+            # 两种错误率加起来超过一半：和随便猜差不了多少。直接说，别让人以为这个模型能用
+            notes.append("效果很差，不建议使用这个模型：这种小模型看不出这类产品上的缺陷")
 
     metrics = {
         "train_loss": loss_value,
@@ -194,6 +222,9 @@ def train(request: dict, out_dir: Path, progress=lambda fraction: None, cancelle
     }
     if seen_ng:
         metrics["ng_score_min"] = min(seen_ng)
+    if expected is not None:
+        metrics["threshold_miss_rate"] = expected[0]
+        metrics["threshold_false_alarm_rate"] = expected[1]
     for name, ok, ng in (("val", val_ok, val_ng), ("test", test_ok, test_ng)):
         value = auroc(ok, ng)
         if value is not None:
