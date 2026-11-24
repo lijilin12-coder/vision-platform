@@ -12,7 +12,9 @@ curl http://127.0.0.1:8750/api/health
 
 > **没有登录和权限。** 默认只监听本机（`127.0.0.1`）。不要用 `--host` 让它监听不可信的网络。
 
-现在只有方案编排和调试运行这一部分的接口；上线包、工位、训练、模型的接口以后再加。
+`web/dist` 存在的话（界面编译好了，见 [web/README.md](../../web/README.md)），服务同时把界面交给浏览器：打开 http://127.0.0.1:8750/ 就是方案编辑器。
+
+现在只有方案编排和调试运行这一部分的接口；上线包、工位、训练的接口以后再加。
 
 ## 1. 约定
 
@@ -62,6 +64,8 @@ curl http://127.0.0.1:8750/api/health
 | 请求 | 说明 |
 |---|---|
 | `POST /api/images` | 请求体是图像文件的内容（PNG、JPEG、BMP）。回复 `imageId`（内容的哈希）、`width`、`height`、`channels`。同一幅图像传几次，`imageId` 都一样 |
+| `GET /api/images/{imageId}` | 取回上传过的图像（PNG） |
+| `GET /api/models` | 模型仓库里的模型版本：`id`、`status`、`kind`（界面里“模型”参数的下拉列表用） |
 | `POST /api/recipes/{id}/debug-runs` | 请求体 `{"imageId": "…"}`。用草稿当前的样子运行一次 |
 | `GET /api/debug-runs/{run}/outputs/{node}/{port}` | 取一个图像或区域输出，PNG。区域是黑白图（选中的像素是白的） |
 

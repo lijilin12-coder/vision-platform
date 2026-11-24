@@ -29,6 +29,10 @@ public:
     void serve();
     void stop();
 
+    // 让服务同时提供界面的文件（web/dist 那个目录）：浏览器打开 http://<地址>/ 就是界面。
+    // 目录不存在时返回 false，接口照常可用。要在 serve() 之前调用。
+    bool serveWebFiles(const std::string& directory);
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

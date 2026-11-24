@@ -411,9 +411,34 @@ void ApiServer::Impl::routes() {
     server.Post("/api/recipes/" + id + "/debug-runs", [this](const Request& q, Response& s) { debugRun(q, s); });
     server.Get("/api/debug-runs/" + id + "/outputs/" + id + "/" + id, [this](const Request& q, Response& s) { debugOutput(q, s); });
 
+    // 取回上传过的图像（界面要把原图显示出来）。图像 ID 是内容的哈希，同一个 ID 的内容永远不变
+    server.Get("/api/images/" + id, [this](const Request& req, Response& res) {
+        auto bytes = platform.contentStore.get(req.matches[1]);
+        if (!bytes) return reply(res, 404, {{"code", "api.image_not_found"}, {"message", "找不到图像"}});
+        auto image = imaging::decodeImage(bytes.value());
+        if (!image) return replyError(res, image.error());
+        auto png = imaging::encodePng(image.value());  // 统一转成 PNG：浏览器不一定认 BMP
+        if (!png) return replyError(res, png.error());
+        res.set_header("Cache-Control", "private, max-age=86400, immutable");
+        res.set_content(reinterpret_cast<const char*>(png.value().data()), png.value().size(), "image/png");
+    });
+
+    // ---- 模型仓库（只读）：界面里“模型”这种参数要一个可以选的列表 ----
+    server.Get("/api/models", [this](const Request&, Response& res) {
+        json list = json::array();
+        for (const auto& modelId : platform.models.listModelVersions()) {
+            auto v = platform.models.getModelVersion(modelId);
+            if (!v) continue;
+            list.push_back({{"id", v.value().id}, {"status", v.value().status}, {"kind", v.value().contract.kind},
+                            {"inputWidth", v.value().contract.inputWidth}, {"inputHeight", v.value().contract.inputHeight},
+                            {"numbers", v.value().contract.numbers}});
+        }
+        reply(res, 200, {{"models", std::move(list)}});
+    });
+
     // ---- 兜底 ----
     server.set_payload_max_length(kMaxUploadBytes);
-    server.set_error_handler([](const Request&, Response& res) {
+    server.set_error_handler([](const Request& req, Response& res) {
         // 路由自己已经写了回复内容的（上面的各种出错回复），不要盖掉
         if (!res.body.empty()) return;
         if (res.status == 413) {
@@ -421,6 +446,10 @@ void ApiServer::Impl::routes() {
             return reply(res, 413, {{"code", "api.too_large"},
                                     {"message", "请求体太大（上限 64 MB）。如果内容并不大：请求头 Content-Type 不要用表单类型，"
                                                 "上传图像写 image/png 之类，JSON 写 application/json"}});
+        }
+        if (req.path.rfind("/api/", 0) != 0) {
+            res.set_content("没有这个页面。界面的文件是不是还没有编译？见 web/README.md", "text/plain; charset=utf-8");
+            return;
         }
         reply(res, res.status == 200 ? 404 : res.status, {{"code", "api.no_such_endpoint"}, {"message", "没有这个接口"}});
     });
@@ -447,6 +476,11 @@ int ApiServer::bind(const std::string& host, int port) {
 }
 
 void ApiServer::serve() { impl_->server.listen_after_bind(); }
+
+bool ApiServer::serveWebFiles(const std::string& directory) {
+    // 只把这一个目录交出去；HTTP 库会拒绝带 .. 的路径
+    return impl_->server.set_mount_point("/", directory);
+}
 void ApiServer::stop() { impl_->server.stop(); }
 
 }  // namespace vision::runtime
