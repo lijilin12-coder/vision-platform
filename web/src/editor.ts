@@ -289,6 +289,17 @@ export function createEditor(client: PlatformClient, options: { autoRunDelayMs?:
       });
     },
 
+    // 把刚发布的方案版本做成上线包（之后就可以在“工位”页面里部署）
+    async createRelease() {
+      const versionId = state.publishedVersionId;
+      if (!versionId) return;
+      await attempt(async () => {
+        const releaseId = await client.createRelease(versionId);
+        state.publishedVersionId = null;
+        state.notice = `已做成上线包 ${releaseId.slice(0, 8)}。到“工位”页面里部署它`;
+      });
+    },
+
     dismiss() {
       state.error = null;
       state.notice = null;

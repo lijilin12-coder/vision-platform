@@ -8,6 +8,7 @@
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 
+#include "station_runner.h"
 #include "vision/common/id.h"
 #include "vision/imaging/cv_bridge.h"
 
@@ -188,9 +189,10 @@ std::optional<double> numberField(const json& body, const char* name, Response& 
 }  // namespace
 
 struct ApiServer::Impl {
-    explicit Impl(platform::Platform& p) : platform(p) {}
+    explicit Impl(platform::Platform& p) : platform(p), runner(p) {}
 
     platform::Platform& platform;
+    platform::StationRunner runner;  // 让工位持续运行（界面上的“开始 / 停止”）
     httplib::Server server;
 
     // 调试运行的结果：只是给界面看的临时东西，不是领域里的概念，所以放在这里的内存里，不进仓储
@@ -420,6 +422,129 @@ void ApiServer::Impl::routes() {
         auto png = imaging::encodePng(image.value());  // 统一转成 PNG：浏览器不一定认 BMP
         if (!png) return replyError(res, png.error());
         res.set_header("Cache-Control", "private, max-age=86400, immutable");
+        res.set_content(reinterpret_cast<const char*>(png.value().data()), png.value().size(), "image/png");
+    });
+
+    // ---- 上线包 ----
+    server.Get("/api/releases", [this](const Request&, Response& res) {
+        json list = json::array();
+        for (const auto& releaseId : platform.releases.listReleases()) {
+            auto m = platform.releases.getManifest(releaseId);
+            if (!m) continue;
+            // 方案的名称：给人看的。方案版本找不到时（不应该发生）留空
+            std::string recipeName;
+            if (auto doc = platform.recipeSource.find(m.value().recipeVersionId)) recipeName = doc.value().recipeName;
+            list.push_back({{"id", releaseId}, {"recipeVersionId", m.value().recipeVersionId}, {"recipeName", recipeName},
+                            {"withdrawn", m.value().withdrawn}});
+        }
+        reply(res, 200, {{"releases", std::move(list)}});
+    });
+    server.Post("/api/releases", [this](const Request& req, Response& res) {
+        const auto body = bodyObject(req, res);
+        if (!body) return;
+        const auto version = textField(*body, "recipeVersionId", res);
+        if (!version) return;
+        auto release = platform.releases.createRelease(*version);
+        if (!release) return replyError(res, release.error());
+        reply(res, 201, {{"releaseId", release.value()}});
+    });
+
+    // ---- 工位 ----
+    // 工位的当前状态 + 它有没有在持续运行、检测了多少。?after=N：只要序号大于 N 的检测记录
+    const auto stationJson = [this](const std::string& stationId, std::uint64_t after) -> Result<json> {
+        auto view = platform.stations.getStation(stationId);
+        if (!view) return view.error();
+        const auto& v = view.value();
+        const auto s = runner.status(stationId, after);
+        json recent = json::array();
+        for (const auto& r : s.recent) {
+            json reasons = json::array();
+            for (const auto& reason : r.reasons) reasons.push_back({{"nodeId", reason.nodeId}, {"pass", reason.pass}, {"text", reason.text}});
+            recent.push_back({{"sequence", r.sequence}, {"frameName", r.frameName}, {"verdict", r.verdict}, {"releaseId", r.releaseId},
+                              {"swapped", r.swapped}, {"totalMs", r.totalMs}, {"reasons", std::move(reasons)},
+                              {"result", resultJson(r.result)}});
+        }
+        return json{{"id", v.id}, {"name", v.name}, {"state", v.state}, {"activeRelease", v.activeRelease},
+                    {"pendingRelease", v.pendingRelease}, {"pendingReady", v.pendingReady}, {"releaseHistory", v.releaseHistory},
+                    {"consecutiveErrors", v.consecutiveErrors}, {"sequence", v.sequence},
+                    {"imageSource", {{"kind", v.imageSourceKind}, {"location", v.imageSourceLocation}}},
+                    {"runner", {{"running", s.running}, {"idle", s.idle}, {"ok", s.ok}, {"ng", s.ng}, {"error", s.error},
+                                {"unreadable", s.unreadable}, {"stoppedReason", s.stoppedReason}}},
+                    {"recent", std::move(recent)}};
+    };
+    const auto replyStation = [stationJson](Response& res, const std::string& stationId, const Status& st = Status::success(),
+                                            std::uint64_t after = 0) {
+        if (!st) return replyError(res, st.error());
+        auto j = stationJson(stationId, after);
+        if (!j) return replyError(res, j.error());
+        reply(res, 200, j.value());
+    };
+    server.Get("/api/stations", [this, stationJson](const Request&, Response& res) {
+        json list = json::array();
+        for (const auto& stationId : platform.stations.listStations()) {
+            // 列表里不带检测记录：给一个很大的 after
+            if (auto j = stationJson(stationId, ~std::uint64_t{0})) list.push_back(std::move(j).value());
+        }
+        reply(res, 200, {{"stations", std::move(list)}});
+    });
+    server.Post("/api/stations", [this, replyStation](const Request& req, Response& res) {
+        const auto body = bodyObject(req, res);
+        if (!body) return;
+        const auto name = textField(*body, "name", res);
+        if (!name) return;
+        auto station = platform.stations.createStation(*name);
+        if (!station) return replyError(res, station.error());
+        replyStation(res, station.value());
+    });
+    server.Get("/api/stations/" + id, [replyStation](const Request& req, Response& res) {
+        std::uint64_t after = 0;
+        try {
+            if (req.has_param("after")) after = std::stoull(req.get_param_value("after"));
+        } catch (const std::exception&) {
+            return replyBadRequest(res, "after 必须是一个数字");
+        }
+        replyStation(res, req.matches[1], Status::success(), after);
+    });
+    server.Post("/api/stations/" + id + "/deploy", [this, replyStation](const Request& req, Response& res) {
+        const auto body = bodyObject(req, res);
+        if (!body) return;
+        const auto release = textField(*body, "releaseId", res);
+        if (!release) return;
+        replyStation(res, req.matches[1], platform.stations.deploy(req.matches[1], *release));
+    });
+    server.Post("/api/stations/" + id + "/rollback", [this, replyStation](const Request& req, Response& res) {
+        replyStation(res, req.matches[1], platform.stations.rollback(req.matches[1]));
+    });
+    // 图像源：请求体 {"kind": "folder", "location": "某个目录"}。只能在工位停止时换（S7）
+    server.Put("/api/stations/" + id + "/image-source", [this, replyStation](const Request& req, Response& res) {
+        const auto body = bodyObject(req, res);
+        if (!body) return;
+        const auto kind = textField(*body, "kind", res);
+        if (!kind) return;
+        const auto location = textField(*body, "location", res);
+        if (!location) return;
+        replyStation(res, req.matches[1], platform.stations.bindImageSource(req.matches[1], *kind, *location));
+    });
+    // 开始 / 停止持续运行：工位从自己的图像源取图、检测
+    server.Post("/api/stations/" + id + "/start", [this, replyStation](const Request& req, Response& res) {
+        const std::string stationId = req.matches[1];
+        auto view = platform.stations.getStation(stationId);
+        if (!view) return replyError(res, view.error());
+        if (view.value().imageSourceKind.empty()) {
+            return reply(res, 422, {{"code", "station.no_image_source"}, {"message", "工位还没有绑定图像源"}});
+        }
+        replyStation(res, stationId, runner.start(stationId));
+    });
+    server.Post("/api/stations/" + id + "/stop", [this, replyStation](const Request& req, Response& res) {
+        replyStation(res, req.matches[1], runner.stop(req.matches[1]));
+    });
+    // 最近检测的那一帧图像
+    server.Get("/api/stations/" + id + "/frame", [this](const Request& req, Response& res) {
+        const Image frame = runner.latestFrame(req.matches[1]);
+        if (frame.empty()) return reply(res, 404, {{"code", "api.no_frame"}, {"message", "这个工位还没有检测过图像"}});
+        auto png = imaging::encodePng(frame);
+        if (!png) return replyError(res, png.error());
+        res.set_header("Cache-Control", "no-store");
         res.set_content(reinterpret_cast<const char*>(png.value().data()), png.value().size(), "image/png");
     });
 

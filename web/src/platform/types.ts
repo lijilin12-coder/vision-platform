@@ -142,6 +142,40 @@ export interface ModelInfo {
   kind: string;
 }
 
+export interface Release {
+  id: string;
+  recipeVersionId: string;
+  recipeName: string;
+  withdrawn: boolean;
+}
+
+// 工位上的一次检测
+export interface InspectionRecord {
+  sequence: number;
+  frameName: string;
+  verdict: "OK" | "NG" | "ERROR";
+  releaseId: string;
+  swapped: boolean; // 这次检测开始前发生了热切换
+  totalMs: number;
+  reasons: { nodeId: string; pass: boolean; text: string }[];
+  result: { defects: Defect[]; measurements: Measurement[]; poses: PoseResult[] };
+}
+
+export interface Station {
+  id: string;
+  name: string;
+  state: "stopped" | "running" | "paused" | "faulted";
+  activeRelease: string;
+  pendingRelease: string;
+  pendingReady: boolean;
+  releaseHistory: string[];
+  consecutiveErrors: number;
+  sequence: number;
+  imageSource: { kind: string; location: string };
+  runner: { running: boolean; idle: boolean; ok: number; ng: number; error: number; unreadable: number; stoppedReason: string };
+  recent: InspectionRecord[];
+}
+
 // 后端拒绝了一个操作（规则不允许、找不到……）。message 是给人看的，原样来自后端
 export class PlatformError extends Error {
   constructor(

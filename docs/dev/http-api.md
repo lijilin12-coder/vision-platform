@@ -14,7 +14,7 @@ curl http://127.0.0.1:8750/api/health
 
 `web/dist` 存在的话（界面编译好了，见 [web/README.md](../../web/README.md)），服务同时把界面交给浏览器：打开 http://127.0.0.1:8750/ 就是方案编辑器。
 
-现在只有方案编排和调试运行这一部分的接口；上线包、工位、训练的接口以后再加。
+有方案编排、调试运行、上线包、工位的接口；训练、方案助手、方案包的接口以后再加。
 
 ## 1. 约定
 
@@ -68,6 +68,26 @@ curl http://127.0.0.1:8750/api/health
 | `GET /api/models` | 模型仓库里的模型版本：`id`、`status`、`kind`（界面里“模型”参数的下拉列表用） |
 | `POST /api/recipes/{id}/debug-runs` | 请求体 `{"imageId": "…"}`。用草稿当前的样子运行一次 |
 | `GET /api/debug-runs/{run}/outputs/{node}/{port}` | 取一个图像或区域输出，PNG。区域是黑白图（选中的像素是白的） |
+
+### 上线包和工位
+
+| 请求 | 请求体 | 说明 |
+|---|---|---|
+| `GET /api/releases` | | 上线包：`id`、`recipeVersionId`、`recipeName`、`withdrawn` |
+| `POST /api/releases` | `{"recipeVersionId": "…@v1"}` | 用一个已发布的方案版本做成上线包。方案版本加载不了（例如用了没发布的模型）时被拒绝 |
+| `GET /api/stations` | | 所有工位的状态（不带检测记录） |
+| `POST /api/stations` | `{"name": "一号工位"}` | 新建 |
+| `GET /api/stations/{id}?after=N` | | 一个工位的状态，加上序号大于 N 的检测记录。界面隔半秒问一次，每次只取新的 |
+| `PUT /api/stations/{id}/image-source` | `{"kind": "folder", "location": "某个目录"}` | 绑定图像源。只能在工位停止时做 |
+| `POST /api/stations/{id}/deploy` | `{"releaseId": "…"}` | 部署：后台加载，下一次检测开始前生效 |
+| `POST /api/stations/{id}/rollback` | | 回滚到上一个上线包 |
+| `POST /api/stations/{id}/start`、`/stop` | | 开始 / 停止持续运行：工位从自己的图像源取图、检测 |
+| `GET /api/stations/{id}/frame` | | 最近检测的那一帧图像（PNG） |
+
+工位的回复里：`state`（工位的状态）、`activeRelease`、`pendingRelease` 和 `pendingReady`（待切换的上线包、加载好了没有）、
+`runner`（有没有在持续运行、是不是在等新图像、OK / NG / ERROR 各多少次）、`recent`（检测记录：序号、图像名、判定、原因、结果项、用的上线包、是不是刚发生了切换）。
+
+服务只在内存里给每个工位留最近 100 条检测记录；服务重启后就没有了（检测记录的保存还没有做）。
 
 调试运行的回复：
 

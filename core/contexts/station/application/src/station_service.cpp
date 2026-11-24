@@ -393,7 +393,7 @@ Result<StationInspection> StationService::inspect(const std::string& stationId, 
         auto report = impl_->execution.inspect(loaded->content.recipe, frame, execution::RunPurpose::Production);
         if (report) {
             outcome = toOutcome(report.value().verdict);
-            result = StationInspection{std::move(report).value(), ticket.releaseId, ticket.sequence, ticket.swapped, swapMicros};
+            result = StationInspection{std::move(report).value(), ticket.releaseId, ticket.sequence, ticket.swapped, swapMicros, {}, {}};
         } else {
             result = report.error();
         }
@@ -478,6 +478,7 @@ Result<std::optional<StationInspection>> StationService::inspectNext(const std::
     auto inspected = inspect(stationId, frame.image);
     if (!inspected) return inspected.error();
     inspected.value().frameName = std::move(frame.name);
+    inspected.value().frame = std::move(frame.image);
     return std::optional<StationInspection>{std::move(inspected).value()};
 }
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, reactive, ref } from "vue";
 import { useEditor } from "../useEditor";
 
 // 预览：选中节点的输出图像；没有选中时是送进去的原图。上面叠着这次检测发现的缺陷（框）和定位到的位置（十字）。
@@ -20,6 +20,50 @@ const shown = computed(() => {
 });
 
 const defects = computed(() => state.run?.result.defects ?? []);
+
+// ---- 用鼠标画 ROI ----
+// 选中一个节点、点“画 ROI”，然后在图像上拖出一个矩形：松开鼠标时把它设成这个节点的 ROI。
+// 坐标是图像上的像素（不是屏幕上的）：按图像在屏幕上的显示大小换算回去。
+const selectedNode = computed(() => state.recipe?.nodes.find((n) => n.id === state.selectedNodeId) ?? null);
+const canHaveRoi = computed(() => (selectedNode.value ? (editor.operatorOf(selectedNode.value.id)?.inputs.length ?? 0) > 0 : false));
+const drawing = ref(false);
+const drag = reactive({ active: false, x0: 0, y0: 0, x1: 0, y1: 0 });
+const overlay = ref<SVGSVGElement | null>(null);
+
+function toImage(event: PointerEvent) {
+  const box = overlay.value!.getBoundingClientRect();
+  const clamp = (v: number, max: number) => Math.min(Math.max(v, 0), max);
+  return {
+    x: clamp(((event.clientX - box.left) / box.width) * state.image!.width, state.image!.width),
+    y: clamp(((event.clientY - box.top) / box.height) * state.image!.height, state.image!.height),
+  };
+}
+function onDown(event: PointerEvent) {
+  if (!drawing.value) return;
+  const p = toImage(event);
+  Object.assign(drag, { active: true, x0: p.x, y0: p.y, x1: p.x, y1: p.y });
+  overlay.value!.setPointerCapture(event.pointerId); // 拖出图像外面也继续收到鼠标的位置
+}
+function onMove(event: PointerEvent) {
+  if (!drag.active) return;
+  const p = toImage(event);
+  drag.x1 = p.x;
+  drag.y1 = p.y;
+}
+function onUp() {
+  if (!drag.active) return;
+  drag.active = false;
+  drawing.value = false;
+  const r = dragRect.value;
+  // 太小的当作误点，不改 ROI
+  if (selectedNode.value && r.width >= 4 && r.height >= 4) void editor.setRoi(selectedNode.value.id, r);
+}
+const dragRect = computed(() => ({
+  x: Math.round(Math.min(drag.x0, drag.x1)),
+  y: Math.round(Math.min(drag.y0, drag.y1)),
+  width: Math.round(Math.abs(drag.x1 - drag.x0)),
+  height: Math.round(Math.abs(drag.y1 - drag.y0)),
+}));
 const poses = computed(() => (state.run?.result.poses ?? []).filter((p) => p.found));
 </script>
 
@@ -31,10 +75,26 @@ const poses = computed(() => (state.run?.result.poses ?? []).filter((p) => p.fou
           {{ shown.label }}
           <span class="muted" v-if="state.lastRunMs !== null">· 改动到预览更新 {{ state.lastRunMs }} ms</span>
           <span class="muted" v-if="state.running">· 运行中…</span>
+          <span class="roi-tools" v-if="canHaveRoi">
+            <button :class="{ primary: drawing }" data-draw-roi @click="drawing = !drawing">{{ drawing ? "在图像上拖出一个矩形…" : "画 ROI" }}</button>
+            <button v-if="selectedNode?.roi" data-clear-roi @click="editor.setRoi(selectedNode!.id, null)">清除 ROI</button>
+          </span>
         </div>
         <div class="frame">
           <img :src="shown.url" :alt="shown.label" data-preview />
-          <svg :viewBox="`0 0 ${state.image.width} ${state.image.height}`" preserveAspectRatio="none">
+          <svg
+            ref="overlay"
+            :viewBox="`0 0 ${state.image.width} ${state.image.height}`"
+            preserveAspectRatio="none"
+            :class="{ drawing }"
+            data-overlay
+            @pointerdown="onDown"
+            @pointermove="onMove"
+            @pointerup="onUp"
+          >
+            <!-- 选中节点的 ROI（虚线）；正在拖的矩形（实线） -->
+            <rect v-if="selectedNode?.roi && !drag.active" v-bind="selectedNode.roi" class="roi" data-roi />
+            <rect v-if="drag.active" v-bind="dragRect" class="roi dragging" />
             <rect v-for="(d, i) in defects" :key="'d' + i" :x="d.left - 2" :y="d.top - 2" :width="d.width + 4" :height="d.height + 4" class="defect">
               <title>{{ d.category }}：面积 {{ d.area }}</title>
             </rect>
@@ -87,6 +147,11 @@ const poses = computed(() => (state.run?.result.poses ?? []).filter((p) => p.fou
 .frame { position: relative; align-self: flex-start; max-width: 100%; min-height: 0; flex: 0 1 auto; display: flex; }
 .frame img { display: block; max-width: 100%; max-height: 100%; object-fit: contain; background: #000; }
 .frame svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.frame svg.drawing { pointer-events: all; cursor: crosshair; }
+.roi { fill: rgba(250, 204, 21, 0.08); stroke: #facc15; stroke-width: 2; stroke-dasharray: 6 4; vector-effect: non-scaling-stroke; }
+.roi.dragging { stroke-dasharray: none; fill: rgba(250, 204, 21, 0.18); }
+.roi-tools { float: right; display: inline-flex; gap: 6px; font-weight: 400; }
+.roi-tools button { padding: 1px 8px; }
 .defect { fill: none; stroke: #ff3b30; stroke-width: 2; vector-effect: non-scaling-stroke; pointer-events: all; }
 .pose line { stroke: #22d3ee; stroke-width: 2; vector-effect: non-scaling-stroke; }
 .empty { flex: 1; display: flex; align-items: center; justify-content: center; }

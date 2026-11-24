@@ -13,7 +13,7 @@
 // 环境变量 SCREENSHOT=<目录> 时，把几个关键时刻的画面存成图片。
 
 import { execFileSync, spawn } from "node:child_process";
-import { mkdtempSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { copyFileSync, mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -172,6 +172,97 @@ try {
   await page.selectOption("[data-recipe-select]", { label: "界面搭的亮斑检测" });
   await page.waitForFunction(() => document.querySelectorAll("[data-node]").length === 5);
   check((await page.locator(".vue-flow__edge").count()) === 4, "刷新后重新打开：5 个节点、4 条连线都在");
+
+  console.log("用鼠标画 ROI");
+  await page.setInputFiles("[data-file]", join(images, "ng_02_three_spots.png")); // 3 个亮斑，分别在 (170,160) (260,205) (350,250)
+  await page.waitForFunction(() => document.querySelector("[data-verdict]")?.textContent === "NG");
+  await page.click('[data-node="n3"]');
+  await page.click("[data-draw-roi]");
+  const frame = await page.locator("[data-overlay]").boundingBox();
+  const at = (x, y) => [frame.x + (x / 640) * frame.width, frame.y + (y / 480) * frame.height];
+  // 只框住左上的那一个亮斑：图像上 (120,110) 到 (220,190)
+  await page.mouse.move(...at(120, 110));
+  await page.mouse.down();
+  await page.mouse.move(...at(180, 150), { steps: 5 });
+  await page.mouse.move(...at(220, 190), { steps: 5 });
+  await page.mouse.up();
+  await page.waitForSelector("[data-roi]");
+  const roi = await page.evaluate(() => {
+    const r = document.querySelector("[data-roi]");
+    return ["x", "y", "width", "height"].map((k) => Number(r.getAttribute(k)));
+  });
+  check(Math.abs(roi[0] - 120) <= 3 && Math.abs(roi[1] - 110) <= 3 && Math.abs(roi[2] - 100) <= 4 && Math.abs(roi[3] - 80) <= 4,
+        `画出来的 ROI 是图像上的像素坐标：x ${roi[0]} y ${roi[1]} 宽 ${roi[2]} 高 ${roi[3]}`);
+  await page.waitForFunction(() => document.querySelectorAll("svg .defect").length === 1);
+  check((await page.locator(".result").textContent()).includes("1 处"), "只在 ROI 里找：缺陷从 3 处变成 1 处");
+  await shot("4-roi");
+  await page.click("[data-clear-roi]");
+  await page.waitForFunction(() => document.querySelectorAll("svg .defect").length === 3);
+  check((await page.locator("[data-roi]").count()) === 0, "清除 ROI：又是 3 处");
+
+  console.log("工位页面：发布 → 做成上线包 → 部署 → 开始 → 运行中换上线包");
+  await page.click("[data-publish]");
+  await page.waitForSelector("[data-make-release]");
+  await page.click("[data-make-release]");
+  await page.waitForFunction(() => document.querySelector("[data-notice]")?.textContent.includes("已做成上线包"));
+  // 再做一个宽松的版本（最多允许 5 个亮斑），也做成上线包
+  await page.click('[data-node="n5"]');
+  const maxCount = page.locator('[data-param="maxCount"] input');
+  await maxCount.fill("5");
+  await maxCount.press("Tab");
+  await page.waitForFunction(() => document.querySelector("[data-verdict]")?.textContent === "OK");
+  await page.click("[data-publish]");
+  await page.waitForSelector("[data-make-release]");
+  await page.click("[data-make-release]");
+  await page.waitForFunction(() => !document.querySelector("[data-make-release]"));
+
+  await page.click('[data-tab="stations"]');
+  await page.fill("[data-station-name]", "一号工位");
+  await page.click("[data-station-new]");
+  await page.waitForSelector("[data-station-state]");
+  check((await page.locator("[data-station-release] option").count()) === 3, "两个上线包都在可以部署的列表里");
+  // 还没部署就点开始：后端拒绝，原因显示出来
+  const lineImages = join(work, "来料");
+  mkdirSync(lineImages);
+  copyFileSync(join(images, "ng_02_three_spots.png"), join(lineImages, "1.png"));
+  await page.fill("[data-station-folder]", lineImages);
+  await page.click("[data-station-bind]");
+  await page.click("[data-station-start]");
+  await page.waitForSelector("[data-station-error]");
+  check((await page.textContent("[data-station-error]")).includes("上线包"), "没有部署就开始：显示了后端的原因");
+  await page.click("[data-station-error]");
+  // 部署严格的那个，开始。列表的顺序不固定，按方案的版本号选：
+  // 前面“发布”那一步发过 v1（没有做成上线包），所以严格的是 v2，宽松的是 v3
+  const optionFor = async (version) => {
+    const labels = await page.locator("[data-station-release] option").allTextContents();
+    const found = labels.find((l) => l.includes(` ${version}（`));
+    if (!found) throw new Error(`下拉框里没有 ${version} 的上线包：${JSON.stringify(labels)}`);
+    return found;
+  };
+  await page.selectOption("[data-station-release]", { label: await optionFor("v2") });
+  await page.click("[data-station-deploy]");
+  await page.waitForFunction(() => !document.querySelector("[data-station-active]")?.textContent.includes("无") || document.body.textContent.includes("已就绪"));
+  await page.click("[data-station-start]");
+  await page.waitForFunction(() => document.querySelector("[data-count-ng]")?.textContent.trim() === "NG 1");
+  check((await page.textContent("[data-station-state]")) === "运行中", "工位在运行，第一幅图像判 NG");
+  await page.waitForFunction(() => document.querySelector("[data-station-frame]")?.complete && document.querySelector("[data-station-frame]").naturalWidth === 640);
+  check((await page.locator(".overlay .defect").count()) === 3, "最近一帧显示出来了，上面有 3 个缺陷框");
+  // 运行中部署宽松的那个；放进一幅新图像 → 检测开始前切换 → 同样的图像这次是 OK
+  await page.selectOption("[data-station-release]", { label: await optionFor("v3") });
+  await page.click("[data-station-deploy]");
+  await page.waitForFunction(() => document.body.textContent.includes("已就绪"));
+  copyFileSync(join(images, "ng_02_three_spots.png"), join(lineImages, "2.png"));
+  await page.waitForFunction(() => document.querySelector("[data-count-ok]")?.textContent.trim() === "OK 1");
+  check((await page.locator("[data-swapped]").count()) === 1, "运行中换了上线包：记录里标出了从哪一次开始切换");
+  check((await page.locator("[data-record]").count()) === 2, "两次检测都在记录里");
+  await shot("5-station");
+  await page.click("[data-station-rollback]");
+  copyFileSync(join(images, "ng_02_three_spots.png"), join(lineImages, "3.png"));
+  await page.waitForFunction(() => document.querySelector("[data-count-ng]")?.textContent.trim() === "NG 2");
+  check(true, "回滚之后，同样的图像又判 NG");
+  await page.click("[data-station-stop]");
+  await page.waitForFunction(() => document.querySelector("[data-station-state]")?.textContent === "已停止");
+  check(true, "停止");
 
   check(consoleErrors.length === 0, `浏览器控制台没有报错${consoleErrors.length ? "：" + consoleErrors.slice(0, 3).join(" | ") : ""}`);
 } finally {
