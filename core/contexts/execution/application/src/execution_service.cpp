@@ -24,19 +24,19 @@ public:
                       std::map<std::string, std::shared_ptr<const InferenceModel>> models)
         : op_(std::move(op)), sig_(std::move(sig)), templates_(std::move(templates)), models_(std::move(models)) {}
 
-    Result<PortValues> run(const PortValues& inputs, const ParamMap& params, const std::optional<Roi>& roi) override {
+    Result<NodeOutput> run(const PortValues& inputs, const ParamMap& params, const std::optional<Roi>& roi) override {
         catalog::OpContext ctx(inputs, params, roi, &templates_, &models_);
         try {
             if (auto st = op_->execute(ctx); !st) return st.error();
         } catch (const std::exception& e) {
-            return Result<PortValues>::failure("execution.operator_exception", std::string("算子异常：") + e.what());
+            return Result<NodeOutput>::failure("execution.operator_exception", std::string("算子异常：") + e.what());
         }
         for (const auto& out : sig_.outputs) {
             if (ctx.outputs().count(out.name) == 0) {
-                return Result<PortValues>::failure("execution.missing_output", "算子没有产出端口 " + out.name);
+                return Result<NodeOutput>::failure("execution.missing_output", "算子没有产出端口 " + out.name);
             }
         }
-        return std::move(ctx.outputs());
+        return NodeOutput{std::move(ctx.outputs()), std::move(ctx.resultItems())};
     }
 
 private:
@@ -298,6 +298,7 @@ struct ExecutionService::Impl {
         r.purpose = toString(inspection.purpose());
         r.verdict = toString(inspection.verdict().kind);
         for (const auto& reason : inspection.verdict().reasons) r.reasons.push_back({reason.nodeId, reason.pass, reason.text});
+        r.result = inspection.result();
         const auto& steps = plan.value()->steps();
         for (size_t i = 0; i < steps.size(); ++i) {
             const auto& e = inspection.nodeExecutions()[i];

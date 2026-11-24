@@ -45,6 +45,15 @@ public:
         j.pass = in.value() >= lo && in.value() <= hi;
         j.reason = ctx.text("label") + " " + text(in.value()) + (unit.empty() ? "" : " " + unit) + "，允许 " + text(lo) + " ~ " + text(hi);
         ctx.setOutput("judgement", j);
+        // 结果项：一个测量值。名称就是参数里的 label，同名的测量值可以跨检测放在一起看趋势
+        Measurement m;
+        m.name = ctx.text("label");
+        m.value = in.value();
+        m.unit = unit;
+        m.lower = lo;
+        m.upper = hi;
+        m.pass = j.pass;
+        ctx.reportMeasurement(std::move(m));
         return Status::success();
     }
 };

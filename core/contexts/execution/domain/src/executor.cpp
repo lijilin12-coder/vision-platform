@@ -28,6 +28,7 @@ Result<NodeOutputs> Executor::run(const ExecutionPlan& plan, const Image& frame,
     std::vector<PortValues> outputs(steps.size());
     std::vector<bool> succeeded(steps.size(), false);
     std::vector<VerdictReason> reasons;
+    ResultItems items;
 
     for (size_t i = 0; i < steps.size(); ++i) {
         const PlanStep& step = steps[i];
@@ -62,7 +63,20 @@ Result<NodeOutputs> Executor::run(const ExecutionPlan& plan, const Image& frame,
             } else {
                 auto res = step.runner->run(inputs, step.node.params, step.node.roi);
                 if (res) {
-                    outputs[i] = std::move(res).value();
+                    outputs[i] = std::move(res.value().ports);
+                    // 收集这个节点上报的结果项，记上是谁报的。走到这里节点一定是成功的（I5）
+                    for (auto& d : res.value().items.defects) {
+                        d.nodeId = step.node.id;
+                        items.defects.push_back(std::move(d));
+                    }
+                    for (auto& m : res.value().items.measurements) {
+                        m.nodeId = step.node.id;
+                        items.measurements.push_back(std::move(m));
+                    }
+                    for (auto& p : res.value().items.poses) {
+                        p.nodeId = step.node.id;
+                        items.poses.push_back(std::move(p));
+                    }
                 } else {
                     exec.status = NodeStatus::Failed;
                     exec.message = res.error().message;
@@ -86,7 +100,7 @@ Result<NodeOutputs> Executor::run(const ExecutionPlan& plan, const Image& frame,
         if (auto st = inspection.recordNode(exec); !st) return st.error();
     }
 
-    if (auto st = inspection.complete(judge_.judge(inspection.nodeExecutions(), reasons)); !st) return st.error();
+    if (auto st = inspection.complete(judge_.judge(inspection.nodeExecutions(), reasons), std::move(items)); !st) return st.error();
 
     NodeOutputs result;
     for (size_t i = 0; i < steps.size(); ++i) result[steps[i].node.id] = std::move(outputs[i]);

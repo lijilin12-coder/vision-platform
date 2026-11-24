@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "vision/kernel/model.h"
+#include "vision/kernel/result_items.h"
 #include "vision/authoring/api.h"  // 只用到发布语言 RecipeVersionDocument
 #include "vision/catalog/api.h"
 #include "vision/common/domain_event.h"
@@ -43,6 +44,8 @@ struct InspectionReport {
     std::string purpose;
     std::string verdict;  // OK / NG / ERROR
     std::vector<ReasonReport> reasons;
+    // 结果项（docs/ddd/10-result-items.md）：发现的缺陷、量出的测量值、定位的结果。判定为 ERROR 时也可能有一部分
+    ResultItems result;
     std::vector<NodeReport> nodes;
     double totalMs = 0;
 };

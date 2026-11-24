@@ -16,8 +16,9 @@ namespace {
 class FakeRunner final : public NodeRunner {
 public:
     FakeRunner(OperatorSignature sig, int blobCount, bool fail) : sig_(std::move(sig)), blobs_(blobCount), fail_(fail) {}
-    Result<PortValues> run(const PortValues&, const ParamMap&, const std::optional<Roi>&) override {
-        if (fail_) return Result<PortValues>::failure("fake", "模拟失败");
+    Result<NodeOutput> run(const PortValues&, const ParamMap&, const std::optional<Roi>&) override {
+        // 失败的节点也“上报”过一个缺陷：它不应该出现在检测结果里（I5）
+        if (fail_) return Result<NodeOutput>::failure("fake", "模拟失败");
         PortValues out;
         for (const auto& o : sig_.outputs) {
             switch (o.type) {
@@ -30,7 +31,21 @@ public:
                 default: out[o.name] = 0.0;
             }
         }
-        return out;
+        // 判定节点（有 Judgement 输出的）上报结果项：每个连通块一个缺陷，外加一个测量值
+        NodeOutput result{std::move(out), {}};
+        if (sig_.contributesToVerdict()) {
+            for (int i = 0; i < blobs_; ++i) {
+                Defect d;
+                d.category = "亮斑";
+                d.area = 10.0 * (i + 1);
+                result.items.defects.push_back(d);
+            }
+            Measurement m;
+            m.name = "个数";
+            m.value = blobs_;
+            result.items.measurements.push_back(m);
+        }
+        return result;
     }
 
 private:
@@ -101,6 +116,55 @@ TEST(Inspection, I2_FailedNodeRequiresError) {
     EXPECT_TRUE(i.complete(Verdict{VerdictKind::Error, {}}).ok());
 }
 
+// I5：结果项只能来自执行成功的节点
+TEST(Inspection, I5_ResultItemsMustComeFromSucceededNodes) {
+    const auto withDefectFrom = [](const std::string& nodeId) {
+        ResultItems items;
+        Defect d;
+        d.nodeId = nodeId;
+        items.defects.push_back(d);
+        return items;
+    };
+    {
+        auto i = Inspection::start("i-1", InspectionPurpose::Production, "r@v1", {"n1", "n2"});
+        ASSERT_TRUE(i.recordNode({"n1", NodeStatus::Succeeded, 0, ""}).ok());
+        ASSERT_TRUE(i.recordNode({"n2", NodeStatus::Failed, 0, "坏了"}).ok());
+        // 来自失败的节点、来自不存在的节点、没有写是谁报的：都不行
+        for (const char* bad : {"n2", "n9", ""}) {
+            const auto st = i.complete(Verdict{VerdictKind::Error, {}}, withDefectFrom(bad));
+            ASSERT_FALSE(st.ok()) << bad;
+            EXPECT_EQ(st.error().code, "execution.result_inconsistent");
+        }
+        EXPECT_FALSE(i.completed());  // 被拒绝的完成不留痕迹
+        // 成功的节点报的可以留下，哪怕这次检测整体是 ERROR
+        ASSERT_TRUE(i.complete(Verdict{VerdictKind::Error, {}}, withDefectFrom("n1")).ok());
+        EXPECT_EQ(i.result().defects.size(), 1u);
+    }
+    {
+        // 测量值、位姿同样检查；完成的事件里带着结果项
+        auto i = Inspection::start("i-2", InspectionPurpose::Production, "r@v1", {"n1"});
+        ASSERT_TRUE(i.recordNode({"n1", NodeStatus::Succeeded, 0, ""}).ok());
+        ResultItems items;
+        Measurement m;
+        m.nodeId = "n7";
+        items.measurements.push_back(m);
+        EXPECT_FALSE(i.complete(Verdict{}, items).ok());
+        items.measurements[0].nodeId = "n1";
+        PoseResult p;
+        p.nodeId = "n7";
+        items.poses.push_back(p);
+        EXPECT_FALSE(i.complete(Verdict{}, items).ok());
+        items.poses[0].nodeId = "n1";
+        ASSERT_TRUE(i.complete(Verdict{}, items).ok());
+        const auto events = i.pullEvents();
+        ASSERT_EQ(events.size(), 1u);
+        const auto* completed = dynamic_cast<const InspectionCompleted*>(events[0].get());
+        ASSERT_NE(completed, nullptr);
+        EXPECT_EQ(completed->result.measurements.size(), 1u);
+        EXPECT_EQ(completed->result.poses.size(), 1u);
+    }
+}
+
 TEST(Inspection, I3_CompleteOnlyOnceAndThenImmutable) {
     auto i = Inspection::start("i-1", InspectionPurpose::Production, "r@v1", {"n1"});
     EXPECT_FALSE(i.complete(Verdict{}).ok()) << "还有节点没执行，不能完成";
@@ -145,6 +209,24 @@ TEST(Executor, NgWithReasonWhenDefectsFound) {
     EXPECT_EQ(i.verdict().kind, VerdictKind::Ng);
     ASSERT_EQ(i.verdict().reasons.size(), 1u);
     EXPECT_EQ(i.verdict().reasons[0].text, "缺陷 3 处");
+    // 结果项：判定节点上报的 3 个缺陷和 1 个测量值进了检测结果，记着是哪个节点报的
+    ASSERT_EQ(i.result().defects.size(), 3u);
+    EXPECT_EQ(i.result().defects[0].nodeId, plan.nodeOrder().back());
+    EXPECT_EQ(i.result().defects[2].area, 30.0);
+    ASSERT_EQ(i.result().measurements.size(), 1u);
+    EXPECT_EQ(i.result().measurements[0].nodeId, plan.nodeOrder().back());
+}
+
+// 判定节点被跳过（上游失败）时，它没有运行，自然也没有结果项
+TEST(Executor, SkippedNodesContributeNoResultItems) {
+    FakeFactory f;
+    f.blobs = 3;
+    f.failOperator = "test.threshold";
+    auto plan = ExecutionPlanner(f).plan(pipelineSpec()).value();
+    auto i = Inspection::start("i-1", InspectionPurpose::Production, "r@v1", plan.nodeOrder());
+    ASSERT_TRUE(Executor().run(plan, frame(), i).ok());
+    EXPECT_EQ(i.verdict().kind, VerdictKind::Error);
+    EXPECT_TRUE(i.result().empty());
 }
 
 TEST(Executor, FailureSkipsDownstreamAndGivesError) {

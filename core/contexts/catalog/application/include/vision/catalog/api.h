@@ -13,6 +13,7 @@
 #include "vision/kernel/geometry.h"
 #include "vision/kernel/match_template.h"
 #include "vision/kernel/model.h"
+#include "vision/kernel/result_items.h"
 #include "vision/kernel/signature.h"
 #include "vision/kernel/value.h"
 
@@ -67,6 +68,13 @@ public:
         return Result<const InferenceModel*>::failure("operator.model", "模型参数 " + param + " 还没有设置");
     }
 
+    // 上报结果项（docs/ddd/10-result-items.md）：这次检测发现的缺陷、量出的测量值、定位的结果。
+    // 只有“知道含义”的算子才上报；节点失败时，它上报过的结果项全部作废。
+    void reportDefect(Defect defect) { items_.defects.push_back(std::move(defect)); }
+    void reportMeasurement(Measurement measurement) { items_.measurements.push_back(std::move(measurement)); }
+    void reportPose(PoseResult pose) { items_.poses.push_back(std::move(pose)); }
+    ResultItems& resultItems() { return items_; }
+
     void setOutput(const std::string& name, Value value) { outputs_[name] = std::move(value); }
     std::map<std::string, Value>& outputs() { return outputs_; }
 
@@ -77,6 +85,7 @@ private:
     const std::map<std::string, MatchTemplateData>* templates_;
     const std::map<std::string, std::shared_ptr<const InferenceModel>>* models_;
     std::map<std::string, Value> outputs_;
+    ResultItems items_;
 };
 
 // 算子：一种算法能力（策略模式）。算子属于通用域的封装，不使用 DDD 战术模式。

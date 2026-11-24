@@ -166,6 +166,14 @@ TEST_F(HttpApi, BuildRunAndLookAtIntermediateResults) {
     EXPECT_FALSE(run.body["reasons"][0]["pass"].get<bool>());
     ASSERT_EQ(run.body["nodes"].size(), 5u);
     for (const auto& n : run.body["nodes"]) EXPECT_EQ(n["status"], "succeeded");
+    // 结果项：3 个缺陷，类别是判定节点的 label，位置就是亮斑的位置
+    const auto& defects = run.body["result"]["defects"];
+    ASSERT_EQ(defects.size(), 3u);
+    EXPECT_EQ(defects[0]["nodeId"], "n5");
+    EXPECT_FALSE(defects[0]["category"].get<std::string>().empty());
+    EXPECT_NEAR(defects[0]["centerY"].get<double>(), 240.0, 1.0);
+    EXPECT_GT(defects[0]["area"].get<double>(), 100);
+    EXPECT_TRUE(run.body["result"]["measurements"].empty());
     // 数字、连通块的值直接在结果里
     const auto& blobNode = run.body["nodes"][3];
     EXPECT_EQ(blobNode["outputs"]["count"]["value"], 3);
