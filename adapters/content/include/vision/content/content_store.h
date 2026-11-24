@@ -13,7 +13,10 @@
 #include "vision/common/result.h"
 #include "vision/data/api.h"
 #include "vision/execution/api.h"
+#include "vision/models/api.h"
 #include "vision/release/api.h"
+#include "vision/training/api.h"
+#include "vision/training/domain/training_job.h"
 
 namespace vision::content {
 
@@ -70,6 +73,53 @@ public:
 
 private:
     data::DataService& data_;
+};
+
+// ---------- 训练闭环的几个接缝（POC-13）----------
+
+// 模型文件进内容仓库。实现模型仓库的 ModelFiles 端口。
+class ModelFileStore final : public models::ModelFiles {
+public:
+    explicit ModelFileStore(FileContentStore& store) : store_(store) {}
+    Result<models::StoredModelFile> importFile(const std::string& path) override;
+    std::string pathOf(const std::string& sha256) const override;
+
+private:
+    FileContentStore& store_;
+};
+
+// 训练要用的数据集版本 → 数据上下文
+class DataDatasetSource final : public training::DatasetSource {
+public:
+    explicit DataDatasetSource(const data::DataService& data) : data_(data) {}
+    Result<training::DatasetInfo> load(const std::string& datasetVersionId) override;
+
+private:
+    const data::DataService& data_;
+};
+
+// 训练出来的模型 → 模型仓库
+class RepositoryModelImporter final : public training::ModelImporter {
+public:
+    explicit RepositoryModelImporter(models::ModelService& models) : models_(models) {}
+    Result<std::string> importTrained(const training::TrainedModel& model) override;
+
+private:
+    models::ModelService& models_;
+};
+
+// 没有配置训练后端时用的占位实现：任何训练都无法开始，并且说明原因。
+// 这样没有训练服务的机器上，其余功能照常可用；提交的训练任务会以“已失败”记录下来。
+class NoTrainingBackend final : public training::TrainingBackend {
+public:
+    std::string name() const override { return "none"; }
+    Result<std::string> start(const training::TrainingRequest&) override {
+        return Result<std::string>::failure("training.no_backend", "这台机器没有配置训练服务");
+    }
+    Result<training::BackendProgress> poll(const std::string&) override {
+        return Result<training::BackendProgress>::failure("training.no_backend", "这台机器没有配置训练服务");
+    }
+    Status cancel(const std::string&) override { return Status::success(); }
 };
 
 }  // namespace vision::content

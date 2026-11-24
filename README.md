@@ -55,7 +55,7 @@ VID=$(./build/apps/vision-cli recipe publish $RID)
 | [docs/poc/poc-11-report.md](docs/poc/poc-11-report.md) | POC-11 结论报告：方案助手的最小闭环（不用大模型） |
 | [docs/poc/poc-12-report.md](docs/poc/poc-12-report.md) | POC-12 结论报告：大模型顾问（DeepSeek 实测） |
 | [docs/poc/hardening-report.md](docs/poc/hardening-report.md) | 方案助手的加固阶段：解决“达标的参数贴着边界” |
-| [docs/poc/poc-13-report.md](docs/poc/poc-13-report.md) | POC-13 训练闭环（进行中）：第 1 步 样本、数据集版本、规则 N1 |
+| [docs/poc/poc-13-report.md](docs/poc/poc-13-report.md) | POC-13 训练闭环（进行中）：第 1 步 样本、数据集版本、规则 N1；第 2 步 训练任务和模型仓库 |
 | [docs/poc/locating-report.md](docs/poc/locating-report.md) | 定位算子实测：模板匹配的精度和耗时、对齐对测量精度的影响 |
 | [docs/dev/build.md](docs/dev/build.md) | 构建与运行 |
 | [docs/dev/operators.md](docs/dev/operators.md) | 算子一览：17 个算子各自解决什么问题、怎么搭配 |

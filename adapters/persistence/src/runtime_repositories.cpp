@@ -234,4 +234,111 @@ std::optional<data::DatasetVersion> JsonDatasetRepository::findVersion(const std
     return std::nullopt;
 }
 
+// ---------- JsonModelVersionRepository ----------
+
+JsonModelVersionRepository::JsonModelVersionRepository(fs::path root) : dir_(std::move(root) / "model-versions") {}
+
+Status JsonModelVersionRepository::save(const models::ModelVersion& v) {
+    if (!safeFileName(v.id())) return Status::failure("persistence.bad_id", "模型版本 ID 不能用作文件名：" + v.id());
+    const auto& c = v.contract();
+    const auto& p = v.provenance();
+    const json j = {{"schema", "vision.model-version/0.1"},
+                    {"model", v.modelName()},
+                    {"number", v.number()},
+                    {"sha256", v.contentHash()},
+                    {"bytes", v.bytes()},
+                    {"status", v.status() == models::ModelStatus::Published ? "published" : "unpublished"},
+                    {"contract", {{"kind", c.kind}, {"inputWidth", c.inputWidth}, {"inputHeight", c.inputHeight},
+                                  {"inputChannels", c.inputChannels}, {"output", c.output}, {"numbers", c.numbers}}},
+                    {"provenance", {{"kind", p.kind}, {"trainingJob", p.trainingJobId}, {"datasetVersion", p.datasetVersionId},
+                                    {"split", p.split}, {"backend", p.backend}}}};
+    return writeFileAtomically(dir_ / (v.id() + ".json"), j.dump(2));
+}
+
+std::optional<models::ModelVersion> JsonModelVersionRepository::find(const std::string& id) try {
+    if (!safeFileName(id)) return std::nullopt;
+    auto j = readJson(dir_ / (id + ".json"));
+    if (!j) return std::nullopt;
+    const json& c = j->at("contract");
+    const json& p = j->at("provenance");
+    return models::ModelVersion::restore(
+        j->at("model").get<std::string>(), j->at("number").get<int>(), j->at("sha256").get<std::string>(), j->at("bytes").get<long long>(),
+        {c.at("kind").get<std::string>(), c.at("inputWidth").get<int>(), c.at("inputHeight").get<int>(), c.at("inputChannels").get<int>(),
+         c.at("output").get<std::string>(), c.at("numbers").get<std::map<std::string, double>>()},
+        {p.at("kind").get<std::string>(), p.at("trainingJob").get<std::string>(), p.at("datasetVersion").get<std::string>(),
+         p.at("split").get<std::string>(), p.at("backend").get<std::string>()},
+        j->at("status").get<std::string>() == "published" ? models::ModelStatus::Published : models::ModelStatus::Unpublished);
+} catch (const std::exception&) {
+    return std::nullopt;
+}
+
+std::vector<std::string> JsonModelVersionRepository::listIds() { return listJsonStems(dir_); }
+
+// ---------- JsonTrainingJobRepository ----------
+
+JsonTrainingJobRepository::JsonTrainingJobRepository(fs::path root) : dir_(std::move(root) / "training-jobs") {}
+
+Status JsonTrainingJobRepository::save(const training::TrainingJob& job) {
+    const training::JobState& s = job.state();
+    if (!safeFileName(s.id)) return Status::failure("persistence.bad_id", "训练任务 ID 不能用作文件名：" + s.id);
+    json j = {{"schema", "vision.training-job/0.1"},
+              {"id", s.id},
+              {"datasetVersion", s.datasetVersionId},
+              {"config", {{"modelKind", s.config.modelKind}, {"modelName", s.config.modelName}, {"settings", s.config.settings}}},
+              {"split", {{"train", s.split.train}, {"validation", s.split.validation}, {"test", s.split.test}, {"seed", s.split.seed}}},
+              {"backend", s.backend},
+              {"backendTicket", s.backendTicket},
+              {"status", training::toString(s.status)},
+              {"failure", s.failure},
+              {"modelVersion", s.modelVersionId},
+              {"report", nullptr},
+              {"output", nullptr}};
+    if (s.report) j["report"] = {{"metrics", s.report->metrics}, {"seconds", s.report->seconds}, {"notes", s.report->notes}};
+    if (s.output) {
+        j["output"] = {{"modelFile", s.output->modelFile}, {"contractKind", s.output->contractKind}, {"inputWidth", s.output->inputWidth},
+                       {"inputHeight", s.output->inputHeight}, {"inputChannels", s.output->inputChannels},
+                       {"outputMeaning", s.output->outputMeaning}, {"numbers", s.output->numbers}};
+    }
+    return writeFileAtomically(dir_ / (s.id + ".json"), j.dump(2));
+}
+
+std::optional<training::TrainingJob> JsonTrainingJobRepository::find(const training::TrainingJobId& id) try {
+    if (!safeFileName(id)) return std::nullopt;
+    auto read = readJson(dir_ / (id + ".json"));
+    if (!read) return std::nullopt;
+    const json& j = *read;
+    training::JobState s;
+    s.id = j.at("id").get<std::string>();
+    s.datasetVersionId = j.at("datasetVersion").get<std::string>();
+    s.config = {j.at("config").at("modelKind").get<std::string>(), j.at("config").at("modelName").get<std::string>(),
+                j.at("config").at("settings").get<std::map<std::string, double>>()};
+    s.split = {j.at("split").at("train").get<double>(), j.at("split").at("validation").get<double>(), j.at("split").at("test").get<double>(),
+               j.at("split").at("seed").get<unsigned>()};
+    s.backend = j.at("backend").get<std::string>();
+    s.backendTicket = j.at("backendTicket").get<std::string>();
+    const std::string status = j.at("status").get<std::string>();
+    for (const auto candidate : {training::JobStatus::Submitted, training::JobStatus::Running, training::JobStatus::Completed,
+                                 training::JobStatus::Failed, training::JobStatus::Cancelled}) {
+        if (status == training::toString(candidate)) s.status = candidate;
+    }
+    s.failure = j.at("failure").get<std::string>();
+    s.modelVersionId = j.at("modelVersion").get<std::string>();
+    if (!j.at("report").is_null()) {
+        const json& r = j.at("report");
+        s.report = training::TrainingReport{r.at("metrics").get<std::map<std::string, double>>(), r.at("seconds").get<double>(),
+                                            r.at("notes").get<std::string>()};
+    }
+    if (!j.at("output").is_null()) {
+        const json& o = j.at("output");
+        s.output = training::TrainingOutput{o.at("modelFile").get<std::string>(), o.at("contractKind").get<std::string>(),
+                                            o.at("inputWidth").get<int>(), o.at("inputHeight").get<int>(), o.at("inputChannels").get<int>(),
+                                            o.at("outputMeaning").get<std::string>(), o.at("numbers").get<std::map<std::string, double>>()};
+    }
+    return training::TrainingJob::restore(std::move(s));
+} catch (const std::exception&) {
+    return std::nullopt;
+}
+
+std::vector<training::TrainingJobId> JsonTrainingJobRepository::listIds() { return listJsonStems(dir_); }
+
 }  // namespace vision::persistence

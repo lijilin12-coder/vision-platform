@@ -1,5 +1,6 @@
 #include "vision/content/content_store.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
@@ -179,5 +180,42 @@ Result<data::StoredFile> SampleFiles::importFile(const std::string& path) {
 }
 
 std::string SampleFiles::pathOf(const std::string& sha256) const { return pathToUtf8(store_.pathOf(sha256)); }
+
+// ---------------- 训练闭环 ----------------
+
+Result<models::StoredModelFile> ModelFileStore::importFile(const std::string& path) {
+    using R = Result<models::StoredModelFile>;
+    std::ifstream in(pathFromUtf8(path), std::ios::binary);
+    if (!in) return R::failure("content.read", "无法读取模型文件 " + path);
+    const std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    if (bytes.empty()) return R::failure("content.empty", "模型文件是空的：" + path);
+    auto hash = store_.put(bytes);
+    if (!hash) return hash.error();
+    return models::StoredModelFile{hash.value(), static_cast<long long>(bytes.size())};
+}
+
+std::string ModelFileStore::pathOf(const std::string& sha256) const { return pathToUtf8(store_.pathOf(sha256)); }
+
+Result<training::DatasetInfo> DataDatasetSource::load(const std::string& datasetVersionId) {
+    auto version = data_.getDatasetVersion(datasetVersionId);
+    if (!version) return version.error();
+    std::vector<std::string> ids;
+    for (const auto& e : version.value().entries) ids.push_back(e.sampleId);
+    // T-2：提交时再问一次，这些样本里现在有没有留作基准的
+    const auto benchmark = data_.benchmarkSamplesAmong(ids);
+    training::DatasetInfo info;
+    info.datasetVersionId = version.value().id;
+    info.frozen = true;  // 数据上下文里，有版本号的就是已经冻结的；没有冻结的数据集根本取不到版本
+    for (const auto& e : version.value().entries) {
+        info.samples.push_back({e.sampleId, e.label == "ng", std::find(benchmark.begin(), benchmark.end(), e.sampleId) != benchmark.end(),
+                                e.contentPath});
+    }
+    return info;
+}
+
+Result<std::string> RepositoryModelImporter::importTrained(const training::TrainedModel& m) {
+    return models_.importModel(m.modelName, m.modelFile, {m.contractKind, m.inputWidth, m.inputHeight, m.inputChannels, m.outputMeaning, m.numbers},
+                               {"trained", m.trainingJobId, m.datasetVersionId, m.split, m.backend});
+}
 
 }  // namespace vision::content

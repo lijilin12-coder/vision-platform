@@ -9,6 +9,8 @@ target_link_libraries(vision-cli PRIVATE
   vision_assist_adapters
   vision_content
   data_application
+  models_application
+  training_application
   vision_llm
   catalog_application
   vision_operators

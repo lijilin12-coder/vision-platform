@@ -7,9 +7,11 @@
 
 #include "vision/data/domain/dataset.h"
 #include "vision/data/domain/sample.h"
+#include "vision/models/domain/model_version.h"
 #include "vision/release/domain/golden_set.h"
 #include "vision/release/domain/release.h"
 #include "vision/station/domain/station.h"
+#include "vision/training/domain/training_job.h"
 
 namespace vision::persistence {
 
@@ -74,6 +76,30 @@ public:
 
 private:
     std::filesystem::path dir_, versionsDir_;
+};
+
+// <root>/model-versions/<模型名>@v<N>.json。只有模型版本的信息；模型文件在内容仓库里
+class JsonModelVersionRepository final : public models::ModelVersionRepository {
+public:
+    explicit JsonModelVersionRepository(std::filesystem::path root);
+    Status save(const models::ModelVersion& version) override;
+    std::optional<models::ModelVersion> find(const std::string& versionId) override;
+    std::vector<std::string> listIds() override;
+
+private:
+    std::filesystem::path dir_;
+};
+
+// <root>/training-jobs/<任务ID>.json
+class JsonTrainingJobRepository final : public training::TrainingJobRepository {
+public:
+    explicit JsonTrainingJobRepository(std::filesystem::path root);
+    Status save(const training::TrainingJob& job) override;
+    std::optional<training::TrainingJob> find(const training::TrainingJobId& id) override;
+    std::vector<training::TrainingJobId> listIds() override;
+
+private:
+    std::filesystem::path dir_;
 };
 
 }  // namespace vision::persistence

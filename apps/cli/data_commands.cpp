@@ -109,4 +109,93 @@ int runDatasetCommand(App& app, const std::vector<std::string>& args) {
     return 1;
 }
 
+namespace {
+
+void printJob(const training::JobView& v) {
+    std::cout << v.id << "  " << v.status;
+    if (v.status == "running") std::cout << "  " << static_cast<int>(v.progress * 100) << "%";
+    std::cout << "\n  数据集版本 " << v.datasetVersionId << "，划分 " << v.split << "，模型 " << v.modelName << "（" << v.modelKind
+              << "），训练后端 " << v.backend << "\n";
+    if (!v.failure.empty()) std::cout << "  失败原因：" << v.failure << "\n";
+    for (const auto& [name, value] : v.metrics) std::cout << "  " << name << " = " << value << "\n";
+    if (!v.modelVersionId.empty()) std::cout << "  模型版本 " << v.modelVersionId << "\n";
+}
+
+}  // namespace
+
+int runTrainCommand(App& app, const std::vector<std::string>& args) {
+    const std::string& sub = args[1];
+    if (sub == "submit" && args.size() >= 3) {
+        // train submit <数据集版本ID> --name <模型名> [--epochs N] [--seed N]
+        training::SubmitRequest request;
+        request.datasetVersionId = args[2];
+        for (std::size_t i = 3; i + 1 < args.size(); i += 2) {
+            try {
+                if (args[i] == "--name") request.modelName = args[i + 1];
+                else if (args[i] == "--epochs") request.settings["epochs"] = std::stod(args[i + 1]);
+                else if (args[i] == "--seed") request.seed = static_cast<unsigned>(std::stoul(args[i + 1]));
+            } catch (const std::exception&) {
+                std::cerr << args[i] << " 后面必须是数字\n";
+                return 1;
+            }
+        }
+        auto job = app.training.submit(request);
+        if (!job) return fail(job.error());
+        printJob(app.training.getJob(job.value()).value());
+        return 0;
+    }
+    if (sub == "status" && args.size() >= 3) {
+        auto view = app.training.refresh(args[2]);  // 顺便向训练后端问一次进度
+        if (!view) return fail(view.error());
+        printJob(view.value());
+        return 0;
+    }
+    if (sub == "cancel" && args.size() >= 3) {
+        const auto st = app.training.cancel(args[2]);
+        return st ? 0 : fail(st.error());
+    }
+    if (sub == "list") {
+        for (const auto& id : app.training.listJobs()) {
+            const auto v = app.training.getJob(id).value();
+            std::cout << v.id << "  " << v.status << "  " << v.modelName << "  " << v.modelVersionId << "\n";
+        }
+        return 0;
+    }
+    std::cerr << "未知的 train 命令\n";
+    return 1;
+}
+
+int runModelCommand(App& app, const std::vector<std::string>& args) {
+    const std::string& sub = args[1];
+    if (sub == "list") {
+        for (const auto& id : app.models.listModelVersions()) {
+            const auto v = app.models.getModelVersion(id).value();
+            std::cout << v.id << "  " << v.status << "  " << v.contract.kind << "  " << v.provenance.kind << "\n";
+        }
+        return 0;
+    }
+    if (sub == "show" && args.size() >= 3) {
+        auto view = app.models.getModelVersion(args[2]);
+        if (!view) return fail(view.error());
+        const auto& v = view.value();
+        std::cout << v.id << "  " << v.status << "  " << v.bytes << " 字节  " << shortId(v.sha256) << "\n";
+        std::cout << "  契约：" << v.contract.kind << "，输入 " << v.contract.inputWidth << "×" << v.contract.inputHeight << "×"
+                  << v.contract.inputChannels << "，输出 " << v.contract.output << "\n";
+        for (const auto& [name, value] : v.contract.numbers) std::cout << "    " << name << " = " << value << "\n";
+        if (v.provenance.kind == "trained") {
+            std::cout << "  来源：训练任务 " << v.provenance.trainingJobId << "，数据集版本 " << v.provenance.datasetVersionId << "，划分 "
+                      << v.provenance.split << "，训练后端 " << v.provenance.backend << "\n";
+        } else {
+            std::cout << "  来源：手工导入\n";
+        }
+        return 0;
+    }
+    if (sub == "publish" && args.size() >= 3) {
+        const auto st = app.models.publish(args[2]);
+        return st ? 0 : fail(st.error());
+    }
+    std::cerr << "未知的 model 命令\n";
+    return 1;
+}
+
 }  // namespace vision::cli
