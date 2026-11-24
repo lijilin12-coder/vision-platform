@@ -222,6 +222,8 @@ jobs:
           # 训练服务的地址配了、但服务没有启动：同样是记录下来的失败，不是崩溃
           & $cli --data $data --training-url http://127.0.0.1:9 train submit $version2 --name 试一试
           if ($LASTEXITCODE -ne 1) { throw "连不上训练服务时，退出码应该是 1，实际是 $LASTEXITCODE" }
+          # 上一条命令按预期以 1 退出；不清零的话，这一步会把它当成自己的结果而失败
+          $global:LASTEXITCODE = 0
       - name: 模型在检测引擎里运行（ONNX Runtime）
         shell: pwsh
         run: |
