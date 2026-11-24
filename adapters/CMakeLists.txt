@@ -91,3 +91,8 @@ if(VISION_WITH_ONNXRUNTIME)
     PUBLIC execution_application models_application
     PRIVATE vision_content onnxruntime::onnxruntime)
 endif()
+
+# 图像源：工位的图像从哪里来。现在只有“一个目录里的图像”；相机以后加在这里。
+add_library(vision_image_sources STATIC image_sources/src/folder_source.cpp)
+target_include_directories(vision_image_sources PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/image_sources/include)
+target_link_libraries(vision_image_sources PUBLIC station_application PRIVATE vision_imaging)

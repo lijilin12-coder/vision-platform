@@ -27,6 +27,13 @@ struct StationPolicy {
     int historyDepth = 5;             // 最多记住多少个可以回滚到的上线包
 };
 
+// 值对象：图像源的绑定——这个工位的图像从哪里来（术语表：图像源）。
+// 工位只记“哪一种、在哪里”；真正去取图像的东西是应用层的端口 ImageSource，由适配器实现。
+struct ImageSourceBinding {
+    std::string kind;      // 哪一种图像源，例如 "folder"（一个目录里的图像）
+    std::string location;  // 在哪里。对 folder 来说是目录的路径
+};
+
 // 值对象：待切换的上线包
 struct PendingRelease {
     ReleaseId releaseId;
@@ -51,6 +58,7 @@ struct StationSnapshot {
     StationPolicy policy;
     int consecutiveErrors = 0;
     std::uint64_t sequence = 0;
+    std::optional<ImageSourceBinding> imageSource;
 };
 
 // 聚合根：工位（docs/ddd/05-tactical-design.md §5.1）。
@@ -62,6 +70,7 @@ struct StationSnapshot {
 //      工位没有在运行时，就绪的待切换上线包在 start() 时生效
 //   S4 回滚的目标必须在历史中存在
 //   S5 每次检测开始时确定它使用的上线包，此后不再变化
+//   S7 图像源只能在工位停止时绑定、更换、解除（运行中换图像源，等于检测对象在半路上变了）
 //   另：一个工位同一时刻只进行一次检测（D5-4）
 //
 // POC-9 没有实现的部分：相机与标定档案、质量偏离监控（S6）。
@@ -80,6 +89,10 @@ public:
     Status markPendingReady(const ReleaseId& release);
     Status markPendingFailed(const ReleaseId& release, const std::string& reason);
     Status rollback(bool withdrawRequested);
+
+    // ---- 图像源（S7）----
+    Status bindImageSource(ImageSourceBinding binding);
+    Status unbindImageSource();
 
     // ---- 生命周期 ----
     Status start();
@@ -101,6 +114,7 @@ public:
     const StationPolicy& policy() const { return policy_; }
     int consecutiveErrors() const { return consecutiveErrors_; }
     std::uint64_t sequence() const { return sequence_; }
+    const std::optional<ImageSourceBinding>& imageSource() const { return imageSource_; }
 
     // 自上次调用以来，需要持久化的状态有没有变化。应用层据此决定要不要保存。
     // （每次检测都会让序号加一，但只为这个不值得写一次磁盘。）
@@ -122,6 +136,7 @@ private:
     StationPolicy policy_;
     int consecutiveErrors_ = 0;
     std::uint64_t sequence_ = 0;
+    std::optional<ImageSourceBinding> imageSource_;
     bool inspecting_ = false;  // 有一次检测正在进行（不持久化）
     bool dirty_ = false;
 };
@@ -219,6 +234,13 @@ public:
     virtual Status save(const Station& station) = 0;
     virtual std::optional<Station> find(const StationId& id) = 0;
     virtual std::vector<StationId> listIds() = 0;
+};
+
+struct StationImageSourceBound final : DomainEvent {
+    std::string stationId, kind, location;  // kind 为空表示解除了绑定
+    StationImageSourceBound(std::string id, std::string k, std::string l)
+        : stationId(std::move(id)), kind(std::move(k)), location(std::move(l)) {}
+    const char* name() const override { return "StationImageSourceBound"; }
 };
 
 }  // namespace vision::station

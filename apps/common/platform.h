@@ -17,6 +17,7 @@
 #include "vision/content/content_store.h"
 #include "vision/eventbus/in_memory_event_bus.h"
 #include "vision/execution/api.h"
+#include "vision/image_sources/folder_source.h"
 #ifdef VISION_WITH_ONNXRUNTIME
 #include "vision/inference_onnx/onnx_model_source.h"
 #endif
@@ -70,6 +71,7 @@ struct Platform {
     AuthoringRecipeSource recipeSource;
     release::ReleaseService releases;
     ExecutionLoadCheck loadCheck;
+    image_sources::ImageSources imageSources;  // 工位的图像从哪里来（现在只有“目录”这一种）
     station::StationService stations;
 
     // ---- 以下只属于方案构建平台（ADR-28）：基准图集、工作流、方案助手 ----
@@ -150,6 +152,7 @@ struct Platform {
         // 匹配模板：方案编排往内容仓库里存，检测引擎从内容仓库里取
         authoring.useTemplateStore(templates);
         execution.useTemplateSource(templates);
+        stations.useImageSources(imageSources);
         releases.useLoadCheck(loadCheck);
 #ifdef VISION_WITH_ONNXRUNTIME
         execution.useModelSource(modelSource);

@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -32,6 +33,32 @@ struct StationView {
     std::vector<std::string> releaseHistory;  // 从旧到新
     int consecutiveErrors = 0;
     std::uint64_t sequence = 0;
+    std::string imageSourceKind, imageSourceLocation;  // 没有绑定图像源时为空
+};
+
+// ===== 端口：图像源 =====
+// 工位的图像从哪里来。现在只有“一个目录里的图像”这一种实现；相机以后是另一种实现，工位这边不用改。
+
+struct Frame {
+    Image image;
+    std::string name;  // 这一帧的名字，给人看的（对目录来说是文件名）
+};
+
+class ImageSource {
+public:
+    virtual ~ImageSource() = default;
+    // 取下一帧。
+    //   有图像        → 返回它
+    //   现在没有新的   → 返回空（不是出错：目录里的图像都处理过了，或者相机还没有拍下一张）
+    //   这一帧坏了     → 返回失败（文件损坏、相机出错）。再调用会接着取后面的，不会卡在坏的那一帧上
+    virtual Result<std::optional<Frame>> next() = 0;
+};
+
+class ImageSourceFactory {
+public:
+    virtual ~ImageSourceFactory() = default;
+    // 按“种类 + 位置”打开一个图像源。种类不认识、位置不存在时返回失败。
+    virtual Result<std::unique_ptr<ImageSource>> open(const std::string& kind, const std::string& location) = 0;
 };
 
 // 一次产线检测的结果
@@ -41,6 +68,7 @@ struct StationInspection {
     std::uint64_t sequence = 0;  // 本工位的第几次检测
     bool swapped = false;        // 这次检测开始前是否发生了热切换
     double swapMicros = 0;       // 热切换本身花的时间（没有切换时为 0）
+    std::string frameName;       // 图像来自图像源时：这一帧的名字
 };
 
 // 应用服务。线程模型：
@@ -72,6 +100,16 @@ public:
 
     // 对一帧图像做一次产线检测。
     Result<StationInspection> inspect(const std::string& stationId, const Image& frame);
+
+    // ---- 图像源（STA-01）----
+    // 用到图像源的功能需要它；组装根传入。
+    void useImageSources(ImageSourceFactory& factory);
+    // 给工位绑定图像源。只能在工位停止时做（S7）；位置不存在、种类不认识时被拒绝，不会留下一个打不开的绑定。
+    Status bindImageSource(const std::string& stationId, const std::string& kind, const std::string& location);
+    Status unbindImageSource(const std::string& stationId);
+    // 从工位绑定的图像源取下一帧并检测。图像源现在没有新的图像时返回空。
+    // 图像源在工位启动后第一次取图时打开，工位停止时关闭——所以停止再启动，目录里的图像会从头再来一遍。
+    Result<std::optional<StationInspection>> inspectNext(const std::string& stationId);
 
     Result<StationView> getStation(const std::string& stationId);
     std::vector<std::string> listStations();

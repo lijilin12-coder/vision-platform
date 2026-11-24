@@ -154,3 +154,9 @@ add_executable(http_api_tests http_api_test.cpp)
 target_link_libraries(http_api_tests PRIVATE vision_http_api vision_operators httplib::httplib GTest::gtest_main)
 vision_copy_onnxruntime(http_api_tests)
 gtest_discover_tests(http_api_tests)
+
+# ---- 图像源（STA-01）：工位绑定图像源，自己取图检测 ----
+add_executable(image_source_tests image_source_test.cpp)
+target_link_libraries(image_source_tests PRIVATE vision_platform_assembly vision_operators station_domain GTest::gtest_main)
+vision_copy_onnxruntime(image_source_tests)
+gtest_discover_tests(image_source_tests)

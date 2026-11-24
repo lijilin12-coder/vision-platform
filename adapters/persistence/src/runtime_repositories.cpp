@@ -84,7 +84,9 @@ Status JsonStationRepository::save(const station::Station& s) {
               {"policy", {{"autoRollbackAfterErrors", snap.policy.autoRollbackAfterErrors},
                           {"historyDepth", snap.policy.historyDepth}}},
               {"consecutiveErrors", snap.consecutiveErrors},
-              {"sequence", snap.sequence}};
+              {"sequence", snap.sequence},
+              {"imageSource", snap.imageSource ? json{{"kind", snap.imageSource->kind}, {"location", snap.imageSource->location}}
+                                               : json(nullptr)}};
     return writeFileAtomically(dir_ / (snap.id + ".json"), j.dump(2));
 }
 
@@ -105,6 +107,10 @@ std::optional<station::Station> JsonStationRepository::find(const station::Stati
     snap.policy.historyDepth = j->at("policy").at("historyDepth").get<int>();
     snap.consecutiveErrors = j->at("consecutiveErrors").get<int>();
     snap.sequence = j->at("sequence").get<std::uint64_t>();
+    // 绑定图像源是后来加的：以前保存的工位没有这一项
+    if (const auto src = j->find("imageSource"); src != j->end() && src->is_object()) {
+        snap.imageSource = station::ImageSourceBinding{src->at("kind").get<std::string>(), src->at("location").get<std::string>()};
+    }
     return station::Station::restore(std::move(snap));
 } catch (const std::exception&) {
     return std::nullopt;  // POC：文件损坏视为不存在

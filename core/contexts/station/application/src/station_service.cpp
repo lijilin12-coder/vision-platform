@@ -43,6 +43,10 @@ StationView toView(const Station& s) {
     v.releaseHistory = s.releaseHistory();
     v.consecutiveErrors = s.consecutiveErrors();
     v.sequence = s.sequence();
+    if (s.imageSource()) {
+        v.imageSourceKind = s.imageSource()->kind;
+        v.imageSourceLocation = s.imageSource()->location;
+    }
     return v;
 }
 
@@ -58,6 +62,9 @@ struct StationService::Impl {
         Station station;
         std::map<ReleaseId, LoadedPtr> loaded;
         int loadsInFlight = 0;
+        // 打开着的图像源。只在持有 inspectMutex 时使用（取图和检测是同一件事的两步）
+        std::unique_ptr<ImageSource> source;
+        bool closeSource = false;  // 工位停止过：下一次取图前要重新打开。由 stateMutex 保护
     };
     using EntryPtr = std::shared_ptr<Entry>;
 
@@ -71,6 +78,7 @@ struct StationService::Impl {
     std::mutex repositoryMutex;  // 仓储的实现不要求线程安全
     std::mutex loadersMutex;
     std::vector<std::future<void>> loaders;
+    ImageSourceFactory* imageSources = nullptr;
 
     Impl(StationRepository& r, release::ReleaseService& rel, execution::ExecutionService& ex, EventPublisher& ev)
         : repository(r), releases(rel), execution(ex), events(ev) {}
@@ -321,7 +329,15 @@ Status StationService::resume(const std::string& stationId) {
 }
 
 Status StationService::stop(const std::string& stationId) {
-    return impl_->command(stationId, [](Station& s) { return s.stop(); });
+    auto e = impl_->entry(stationId);
+    if (!e) return e.error();
+    const Status st = impl_->command(stationId, [](Station& s) { return s.stop(); });
+    if (st) {
+        // 图像源不能在这里直接关：可能有一次检测正拿着它。记下来，下一次取图前重新打开
+        std::lock_guard<std::mutex> lock(e.value()->stateMutex);
+        e.value()->closeSource = true;
+    }
+    return st;
 }
 
 Status StationService::rollback(const std::string& stationId, bool withdraw) {
@@ -390,6 +406,77 @@ Result<StationInspection> StationService::inspect(const std::string& stationId, 
     }
     impl_->publish(pulled);
     return result;
+}
+
+// ---------------- 图像源 ----------------
+
+void StationService::useImageSources(ImageSourceFactory& factory) { impl_->imageSources = &factory; }
+
+Status StationService::bindImageSource(const std::string& stationId, const std::string& kind, const std::string& location) {
+    if (impl_->imageSources == nullptr) return Status::failure("station.no_image_sources", "这个程序没有配置图像源");
+    // 先试着打开一次：打不开的（目录不存在、种类不认识）现在就拒绝，而不是等到工位启动之后
+    if (auto opened = impl_->imageSources->open(kind, location); !opened) return opened.error();
+    auto e = impl_->entry(stationId);
+    if (!e) return e.error();
+    const Status st = impl_->command(stationId, [&](Station& s) { return s.bindImageSource({kind, location}); });
+    if (st) {
+        std::lock_guard<std::mutex> lock(e.value()->stateMutex);
+        e.value()->closeSource = true;  // 换了图像源：原来打开着的那个不能再用
+    }
+    return st;
+}
+
+Status StationService::unbindImageSource(const std::string& stationId) {
+    auto e = impl_->entry(stationId);
+    if (!e) return e.error();
+    const Status st = impl_->command(stationId, [](Station& s) { return s.unbindImageSource(); });
+    if (st) {
+        std::lock_guard<std::mutex> lock(e.value()->stateMutex);
+        e.value()->closeSource = true;
+    }
+    return st;
+}
+
+Result<std::optional<StationInspection>> StationService::inspectNext(const std::string& stationId) {
+    using R = Result<std::optional<StationInspection>>;
+    auto e = impl_->entry(stationId);
+    if (!e) return e.error();
+    auto& entry = *e.value();
+
+    Frame frame;
+    {
+        // 取图也在“一次只进行一个”的范围里：两个线程同时取，会各拿到一帧，顺序就乱了。
+        // 取完就放开；接下来的 inspect 会自己再拿这把锁。
+        std::lock_guard<std::mutex> inspecting(entry.inspectMutex);
+        std::optional<ImageSourceBinding> binding;
+        {
+            std::lock_guard<std::mutex> lock(entry.stateMutex);
+            if (entry.station.state() != StationState::Running) {
+                return R::failure("station.not_running",
+                                  std::string("工位没有在运行（当前状态：") + toString(entry.station.state()) + "）");
+            }
+            binding = entry.station.imageSource();
+            if (entry.closeSource) {
+                entry.source.reset();
+                entry.closeSource = false;
+            }
+        }
+        if (!binding) return R::failure("station.no_image_source", "工位还没有绑定图像源");
+        if (!entry.source) {
+            if (impl_->imageSources == nullptr) return R::failure("station.no_image_sources", "这个程序没有配置图像源");
+            auto opened = impl_->imageSources->open(binding->kind, binding->location);
+            if (!opened) return opened.error();
+            entry.source = std::move(opened).value();
+        }
+        auto next = entry.source->next();
+        if (!next) return next.error();
+        if (!next.value()) return std::optional<StationInspection>{};  // 现在没有新的图像
+        frame = std::move(*next.value());
+    }
+    auto inspected = inspect(stationId, frame.image);
+    if (!inspected) return inspected.error();
+    inspected.value().frameName = std::move(frame.name);
+    return std::optional<StationInspection>{std::move(inspected).value()};
 }
 
 Result<StationView> StationService::getStation(const std::string& stationId) {
