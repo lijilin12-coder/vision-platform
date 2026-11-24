@@ -227,7 +227,7 @@ v0.1 中仍然有效的决策保留编号；作废的标注说明。
 | ADR-06 | 方案格式 JSON + `schemaVersion` | 有效 |
 | ADR-07 | 界面使用 Web（Vue 3 + TS + Vue Flow + Konva + Naive UI） | 有效 |
 | ADR-08 | 鸿蒙端：ArkUI 原生外壳 + ArkWeb 嵌入 Web 界面 | 有效 |
-| ADR-09 | ~~Mac 端本地 HTTP + WS~~ → 改为：Linux / Windows 上的 vision-runtime 提供 HTTP + WS；macOS 和 Windows 都是开发机 | **修订** |
+| ADR-09 | Linux / Windows 上的 vision-runtime 提供 HTTP 接口；需要“服务 → 界面”推送时用 SSE，**不引入 WebSocket**（2026-11-24 修订，原为 HTTP + WS；理由见 poc/poc-2-plan.md §6） | **修订** |
 | ADR-10 | 鸿蒙端桥接方式 | 待 POC |
 | ADR-11 | 推理后端接口：ONNX Runtime / MindSpore Lite | 有效，待 POC |
 | ADR-12 | 测试：GoogleTest + 图像回归测试（基准图集） | 有效 |
