@@ -15,6 +15,9 @@ namespace vision::cli {
 // 组装好的整个平台（和 vision-runtime 共用，见 apps/common/platform.h）
 using App = platform::Platform;
 
+// 显示一次检测的结果项（缺陷、测量值、位姿）。缺陷很多时只列前几个。
+void printResultItems(const ResultItems& result);
+
 // 报告命令失败：写日志、在控制台显示，返回退出码 1。
 int fail(const Error& e);
 

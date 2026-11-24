@@ -33,6 +33,20 @@ public:
         j.pass = count <= limit;
         j.reason = label + " " + std::to_string(count) + " 处，上限 " + std::to_string(limit) + " 处";
         ctx.setOutput("judgement", j);
+        // 结果项：到了这里，这些连通块就有了含义——它们是“缺陷”，类别是参数里起的名字。
+        // 不管判定合不合格都上报：个数没超上限时，它们仍然是被发现的缺陷，只是数量可以接受。
+        for (const auto& b : in.value()) {
+            Defect d;
+            d.category = label;
+            d.centerX = b.centerX;
+            d.centerY = b.centerY;
+            d.left = b.left;
+            d.top = b.top;
+            d.width = b.width;
+            d.height = b.height;
+            d.area = b.area;
+            ctx.reportDefect(std::move(d));
+        }
         return Status::success();
     }
 };

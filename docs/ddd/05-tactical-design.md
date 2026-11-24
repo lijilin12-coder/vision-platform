@@ -154,6 +154,7 @@ Inspection（聚合根）
 | I2 | 有节点执行失败时，依赖它的下游节点为 Skipped，判定为 ERROR |
 | I3 | 判定只在完成时设置一次；完成后整个聚合不可修改 |
 | I4 | 判定为 NG 时，至少有一条不合格的判定依据 |
+| I5 | 结果项只能来自执行成功的节点（2026-11-24 新增，见 [10-result-items.md](10-result-items.md)） |
 
 **事件**：`InspectionStarted`、`NodeExecuted`、`NodeFailed`、`InspectionCompleted`（带判定、判定依据、结果项、图像引用、上线包、标定档案）、`InspectionTimedOut`。
 

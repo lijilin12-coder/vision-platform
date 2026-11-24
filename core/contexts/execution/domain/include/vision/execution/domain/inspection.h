@@ -5,6 +5,7 @@
 
 #include "vision/common/domain_event.h"
 #include "vision/common/result.h"
+#include "vision/kernel/result_items.h"
 
 namespace vision::execution {
 
@@ -45,6 +46,7 @@ struct Verdict {
 //   I2 有节点执行失败时，判定必须为 ERROR
 //   I3 判定只在完成时设置一次；完成后整个聚合不可修改
 //   I4 判定为 NG 时，至少有一条不合格的判定依据
+//   I5 结果项只能来自执行成功的节点（失败的节点上报过的东西不可信，不能进检测结果）
 //   另：完成时，计划中的每个节点都必须有执行记录
 class Inspection : public EventRecorder {
 public:
@@ -52,7 +54,8 @@ public:
                             std::vector<std::string> plannedOrder);
 
     Status recordNode(NodeExecution execution);
-    Status complete(Verdict verdict);
+    // result：这次检测的结果项（缺陷、测量值、位姿）。和判定一样，只在完成时设置一次。
+    Status complete(Verdict verdict, ResultItems result = {});
 
     const std::string& id() const { return id_; }
     InspectionPurpose purpose() const { return purpose_; }
@@ -60,6 +63,7 @@ public:
     bool completed() const { return completed_; }
     const std::vector<NodeExecution>& nodeExecutions() const { return executions_; }
     const Verdict& verdict() const { return verdict_; }
+    const ResultItems& result() const { return result_; }
 
 private:
     Inspection() = default;
@@ -70,6 +74,7 @@ private:
     std::vector<std::string> plannedOrder_;
     std::vector<NodeExecution> executions_;
     Verdict verdict_;
+    ResultItems result_;
     bool completed_ = false;
 };
 
@@ -79,8 +84,9 @@ struct InspectionCompleted final : DomainEvent {
     std::string recipeVersionId;
     InspectionPurpose purpose;
     Verdict verdict;
-    InspectionCompleted(std::string id, std::string rv, InspectionPurpose p, Verdict v)
-        : inspectionId(std::move(id)), recipeVersionId(std::move(rv)), purpose(p), verdict(std::move(v)) {}
+    ResultItems result;
+    InspectionCompleted(std::string id, std::string rv, InspectionPurpose p, Verdict v, ResultItems r = {})
+        : inspectionId(std::move(id)), recipeVersionId(std::move(rv)), purpose(p), verdict(std::move(v)), result(std::move(r)) {}
     const char* name() const override { return "InspectionCompleted"; }
 };
 

@@ -176,6 +176,7 @@ int cmdStationRun(App& app, std::vector<std::string> args) {
             for (const auto& reason : v.report.reasons) {
                 std::cout << "    " << (reason.pass ? "✓ " : "✗ ") << reason.nodeId << "：" << reason.text << "\n";
             }
+            printResultItems(v.report.result);
             ++tally[v.report.verdict];
         }
     }

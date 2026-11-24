@@ -120,6 +120,25 @@ json outputJson(const Value& value) {
     return std::visit(Visitor{}, value);
 }
 
+json resultJson(const ResultItems& result) {
+    json defects = json::array(), measurements = json::array(), poses = json::array();
+    for (const auto& d : result.defects) {
+        defects.push_back({{"nodeId", d.nodeId}, {"category", d.category}, {"centerX", d.centerX}, {"centerY", d.centerY},
+                           {"left", d.left}, {"top", d.top}, {"width", d.width}, {"height", d.height}, {"area", d.area}});
+    }
+    for (const auto& m : result.measurements) {
+        json j = {{"nodeId", m.nodeId}, {"name", m.name}, {"value", m.value}, {"unit", m.unit}, {"pass", m.pass}};
+        if (m.lower) j["lower"] = *m.lower;
+        if (m.upper) j["upper"] = *m.upper;
+        measurements.push_back(std::move(j));
+    }
+    for (const auto& p : result.poses) {
+        poses.push_back({{"nodeId", p.nodeId}, {"found", p.found}, {"score", p.score}, {"x", p.pose.x}, {"y", p.pose.y},
+                         {"angle", p.pose.angle}, {"referenceX", p.pose.referenceX}, {"referenceY", p.pose.referenceY}});
+    }
+    return {{"defects", std::move(defects)}, {"measurements", std::move(measurements)}, {"poses", std::move(poses)}};
+}
+
 // ---------- 回复 ----------
 
 void reply(Response& res, int status, const json& body) {
@@ -258,7 +277,7 @@ void ApiServer::Impl::debugRun(const Request& req, Response& res) {
         while (runs.size() > kKeptDebugRuns) runs.pop_front();
     }
     reply(res, 201, {{"runId", runId}, {"verdict", report.verdict}, {"totalMs", report.totalMs}, {"reasons", std::move(reasons)},
-                     {"nodes", std::move(nodes)}});
+                     {"result", resultJson(report.result)}, {"nodes", std::move(nodes)}});
 }
 
 void ApiServer::Impl::debugOutput(const Request& req, Response& res) {

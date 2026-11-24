@@ -56,7 +56,7 @@ Status Inspection::recordNode(NodeExecution execution) {
     return Status::success();
 }
 
-Status Inspection::complete(Verdict verdict) {
+Status Inspection::complete(Verdict verdict, ResultItems result) {
     // I3：只能完成一次
     if (completed_) return Status::failure("execution.completed", "检测已经完成");
     if (executions_.size() != plannedOrder_.size()) {
@@ -74,10 +74,23 @@ Status Inspection::complete(Verdict verdict) {
         return Status::failure("execution.verdict_inconsistent", "判定为 NG，但没有不合格的判定依据");
     }
 
+    // I5：结果项只能来自执行成功的节点
+    const auto fromSucceededNode = [this](const std::string& nodeId) {
+        return std::any_of(executions_.begin(), executions_.end(),
+                           [&](const NodeExecution& e) { return e.nodeId == nodeId && e.status == NodeStatus::Succeeded; });
+    };
+    const auto allFrom = [&](const auto& items) {
+        return std::all_of(items.begin(), items.end(), [&](const auto& item) { return fromSucceededNode(item.nodeId); });
+    };
+    if (!allFrom(result.defects) || !allFrom(result.measurements) || !allFrom(result.poses)) {
+        return Status::failure("execution.result_inconsistent", "结果项必须来自执行成功的节点");
+    }
+
     verdict_ = std::move(verdict);
+    result_ = std::move(result);
     completed_ = true;
     if (purpose_ != InspectionPurpose::Debug) {
-        record(std::make_shared<InspectionCompleted>(id_, recipeVersionId_, purpose_, verdict_));
+        record(std::make_shared<InspectionCompleted>(id_, recipeVersionId_, purpose_, verdict_, result_));
     }
     return Status::success();
 }

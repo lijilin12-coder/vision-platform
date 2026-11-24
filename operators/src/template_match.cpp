@@ -73,6 +73,8 @@ public:
         ctx.setOutput("pose", pose);
         ctx.setOutput("score", score);
         ctx.setOutput("found", found);
+        // 结果项：定位的结果。没找到也上报（found = false），下游才知道“这一次没定位上”
+        ctx.reportPose(PoseResult{"", pose, found, score});
         return Status::success();
     }
 };

@@ -123,6 +123,7 @@ int w = t.value().sourceWidth;               // 样图的尺寸：模板只适�
 | 取灰度图像输入，不是灰度就报错 | `auto in = grayInput(ctx, "image", "operator.xxx", "算子的中文名");`（同上） |
 | 把参数变成奇数（很多 OpenCV 函数要求核的大小是奇数） | `int size = oddSize(ctx.number("size"));`（同上） |
 | 输出判定依据 | `ctx.setOutput("judgement", Judgement{pass, "原因说明"});` |
+| 上报结果项（缺陷、测量值、位姿） | `ctx.reportDefect(d);`、`ctx.reportMeasurement(m);`、`ctx.reportPose(p);`——只有“知道含义”的算子才上报，见 [结果项](../ddd/10-result-items.md) |
 
 **判定依据很重要**：方案至少要有一个节点输出 `Judgement`，否则不能发布（发布规则 P5）。原因说明要让操作员看得懂，比如“亮斑 2 处，上限 0 处”，而不是“count=2”。
 

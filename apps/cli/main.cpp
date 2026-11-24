@@ -187,11 +187,47 @@ std::string paramText(const ParamValue& v) {
     return std::get<std::string>(v);
 }
 
+}  // namespace
+
+namespace vision::cli {
+
+void printResultItems(const ResultItems& result) {
+    const auto number = [](double v) {
+        std::ostringstream os;
+        os << std::fixed << std::setprecision(1) << v;
+        return os.str();
+    };
+    constexpr std::size_t kShown = 5;
+    for (std::size_t i = 0; i < result.defects.size() && i < kShown; ++i) {
+        const auto& d = result.defects[i];
+        std::cout << "    缺陷 " << d.category << "：位置 (" << number(d.centerX) << ", " << number(d.centerY) << ")，大小 " << d.width
+                  << "×" << d.height << "，面积 " << number(d.area) << "\n";
+    }
+    if (result.defects.size() > kShown) std::cout << "    ……还有 " << result.defects.size() - kShown << " 个缺陷\n";
+    for (const auto& m : result.measurements) {
+        std::cout << "    测量 " << m.name << " = " << number(m.value) << (m.unit.empty() ? "" : " " + m.unit) << (m.pass ? "" : "（超出范围）")
+                  << "\n";
+    }
+    for (const auto& p : result.poses) {
+        if (p.found) {
+            std::cout << "    位姿 (" << number(p.pose.x) << ", " << number(p.pose.y) << ")，旋转 " << number(p.pose.angle) << "°，相似度 "
+                      << number(p.score * 100) << "%\n";
+        } else {
+            std::cout << "    位姿 没有找到（最好的相似度 " << number(p.score * 100) << "%）\n";
+        }
+    }
+}
+
+}  // namespace vision::cli
+
+namespace {
+
 void printReport(const execution::InspectionReport& r, const std::string& source) {
     std::cout << "[" << r.verdict << "] " << source << "  (" << r.totalMs << " ms)\n";
     for (const auto& reason : r.reasons) {
         std::cout << "    " << (reason.pass ? "✓ " : "✗ ") << reason.nodeId << "：" << reason.text << "\n";
     }
+    cli::printResultItems(r.result);
     for (const auto& n : r.nodes) {
         std::cout << "      " << n.nodeId << " " << n.operatorId << " " << n.status << " " << n.durationMs << " ms";
         if (!n.message.empty()) std::cout << "  " << n.message;

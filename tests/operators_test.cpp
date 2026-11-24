@@ -22,6 +22,7 @@ Region regionOf(const cv::Mat& mask) { return Region::fromMask(gray(mask)).value
 struct OpRun {
     Status status = Status::success();
     std::map<std::string, Value> outputs;
+    ResultItems items;  // 算子上报的结果项
 
     template <typename T>
     const T& get(const std::string& port) const { return std::get<T>(outputs.at(port)); }
@@ -49,6 +50,7 @@ OpRun run(const std::string& id, const std::map<std::string, Value>& inputs, con
     OpRun r;
     r.status = op.value()->execute(ctx);
     r.outputs = ctx.outputs();
+    r.items = ctx.resultItems();
     return r;
 }
 
@@ -459,6 +461,11 @@ TEST(TemplateMatchOp, FindsShiftedAndRotatedPart) {
         EXPECT_NEAR(p.x, moved.x, 0.8) << "角度 " << c.angle;
         EXPECT_NEAR(p.y, moved.y, 0.8) << "角度 " << c.angle;
         EXPECT_NEAR(p.angle, c.angle, 1.0) << "角度 " << c.angle;
+        // 结果项：同一个位姿也作为定位的结果上报
+        ASSERT_EQ(r.items.poses.size(), 1u);
+        EXPECT_TRUE(r.items.poses[0].found);
+        EXPECT_DOUBLE_EQ(r.items.poses[0].pose.x, p.x);
+        EXPECT_DOUBLE_EQ(r.items.poses[0].score, r.get<double>("score"));
     }
 }
 
@@ -491,6 +498,9 @@ TEST(TemplateMatchOp, NotFoundIsNotAnError) {
     const Pose p = r.get<Pose>("pose");
     EXPECT_DOUBLE_EQ(p.x, p.referenceX);  // 没找到时不乱给位置：对齐算子拿到它等于什么都不做
     EXPECT_DOUBLE_EQ(p.angle, 0);
+    // 没找到也上报，标明没找到：下游才知道“这一次没定位上”
+    ASSERT_EQ(r.items.poses.size(), 1u);
+    EXPECT_FALSE(r.items.poses[0].found);
 }
 
 TEST(TemplateMatchOp, RoiRestrictsTheSearchAndPositionsStayInImageCoordinates) {
@@ -637,4 +647,49 @@ TEST(LocatingMeasurement, AccuracyAndCost) {
         std::cout << "[测量] 2592×1944，小模板 150×110，角度 ±15°：模板匹配 " << ms << " ms；位置误差 "
                   << std::hypot(p.x - moved.x, p.y - moved.y) << " 像素，角度误差 " << std::abs(p.angle - 7) << "°\n";
     }
+}
+
+// ---------------- 结果项（docs/ddd/10-result-items.md）----------------
+
+TEST(ResultItems, JudgeCountReportsEveryBlobAsADefectWithItsCategory) {
+    BlobList blobs(2);
+    blobs[0] = Blob{120.0, 50.5, 60.5, 45, 55, 12, 11};
+    blobs[1] = Blob{30.0, 200.0, 80.0, 197, 77, 6, 6};
+    // 超过上限：不合格，两个缺陷都上报
+    OpRun r = run("vision.judge_count", {{"blobs", blobs}}, {{"maxCount", 0.0}, {"label", std::string("亮斑")}});
+    ASSERT_TRUE(r.status.ok());
+    EXPECT_FALSE(r.get<Judgement>("judgement").pass);
+    ASSERT_EQ(r.items.defects.size(), 2u);
+    EXPECT_EQ(r.items.defects[0].category, "亮斑");
+    EXPECT_DOUBLE_EQ(r.items.defects[0].centerX, 50.5);
+    EXPECT_EQ(r.items.defects[0].left, 45);
+    EXPECT_EQ(r.items.defects[0].width, 12);
+    EXPECT_DOUBLE_EQ(r.items.defects[1].area, 30.0);
+    EXPECT_TRUE(r.items.defects[0].nodeId.empty());  // 是谁报的由检测引擎填，算子不管
+    // 没超过上限：合格，但缺陷照样上报（它们被发现了，只是数量可以接受）
+    r = run("vision.judge_count", {{"blobs", blobs}}, {{"maxCount", 5.0}});
+    EXPECT_TRUE(r.get<Judgement>("judgement").pass);
+    EXPECT_EQ(r.items.defects.size(), 2u);
+    // 没有连通块：没有缺陷
+    EXPECT_TRUE(run("vision.judge_count", {{"blobs", BlobList{}}}).items.empty());
+}
+
+TEST(ResultItems, JudgeRangeReportsAMeasurementWithItsLimits) {
+    const ParamMap params = {{"min", 395.0}, {"max", 405.0}, {"label", std::string("宽度")}, {"unit", std::string("像素")}};
+    OpRun r = run("vision.judge_range", {{"value", 400.5}}, params);
+    ASSERT_TRUE(r.status.ok());
+    ASSERT_EQ(r.items.measurements.size(), 1u);
+    const Measurement& m = r.items.measurements[0];
+    EXPECT_EQ(m.name, "宽度");
+    EXPECT_DOUBLE_EQ(m.value, 400.5);
+    EXPECT_EQ(m.unit, "像素");
+    EXPECT_DOUBLE_EQ(*m.lower, 395.0);
+    EXPECT_DOUBLE_EQ(*m.upper, 405.0);
+    EXPECT_TRUE(m.pass);
+    r = run("vision.judge_range", {{"value", 410.0}}, params);
+    EXPECT_FALSE(r.items.measurements[0].pass);
+    // 算子自己失败（范围写反了）时什么都不上报
+    r = run("vision.judge_range", {{"value", 1.0}}, {{"min", 5.0}, {"max", 1.0}});
+    EXPECT_FALSE(r.status.ok());
+    EXPECT_TRUE(r.items.empty());
 }

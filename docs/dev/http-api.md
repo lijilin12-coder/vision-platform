@@ -73,6 +73,14 @@ curl http://127.0.0.1:8750/api/health
   "verdict": "NG",
   "totalMs": 5.2,
   "reasons": [{"nodeId": "n5", "pass": false, "text": "缺陷 3 处，上限 0 处"}],
+  "result": {
+    "defects": [{"nodeId": "n5", "category": "缺陷", "centerX": 170, "centerY": 160,
+                 "left": 164, "top": 154, "width": 13, "height": 13, "area": 113}],
+    "measurements": [{"nodeId": "n7", "name": "宽度", "value": 400.5, "unit": "像素",
+                      "lower": 395, "upper": 405, "pass": true}],
+    "poses": [{"nodeId": "n3", "found": true, "score": 0.98, "x": 321.4, "y": 240.2, "angle": 3.1,
+               "referenceX": 320, "referenceY": 240}]
+  },
   "nodes": [
     {"nodeId": "n3", "operatorId": "vision.threshold", "status": "succeeded", "durationMs": 0.4, "message": "",
      "outputs": {"region": {"type": "region", "hasImage": true, "width": 640, "height": 480,
@@ -84,6 +92,7 @@ curl http://127.0.0.1:8750/api/health
 }
 ```
 
+- `result` 是这次检测的**结果项**：发现的缺陷、量出的测量值、定位的结果（[说明](../ddd/10-result-items.md)）。缺陷的坐标是上报它的节点看到的图像上的坐标。
 - 数字、布尔值、文本、判定依据、位姿、连通块的值直接在 `value` 里；图像和区域给一个 `imageUrl`，需要时再去取。
 - 某个节点失败时：它的 `status` 是 `failed`，`message` 里是原因；它上游的节点照常有输出，下游的是 `skipped`。
 - **服务只保留最近 8 次调试运行的输出。** 更早的 `imageUrl` 会得到 404（`api.run_not_found`），重新运行一次即可。

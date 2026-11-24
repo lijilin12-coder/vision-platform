@@ -14,6 +14,7 @@
 #include "vision/kernel/geometry.h"
 #include "vision/kernel/match_template.h"
 #include "vision/kernel/model.h"
+#include "vision/kernel/result_items.h"
 #include "vision/kernel/signature.h"
 #include "vision/kernel/value.h"
 
@@ -46,10 +47,16 @@ struct PlanSpec {
 
 using PortValues = std::map<std::string, Value>;
 
+// 一个节点运行一次的产出：各个输出端口的值，加上它上报的结果项
+struct NodeOutput {
+    PortValues ports;
+    ResultItems items;
+};
+
 class NodeRunner {
 public:
     virtual ~NodeRunner() = default;
-    virtual Result<PortValues> run(const PortValues& inputs, const ParamMap& params,
+    virtual Result<NodeOutput> run(const PortValues& inputs, const ParamMap& params,
                                    const std::optional<Roi>& roi) = 0;
 };
 
