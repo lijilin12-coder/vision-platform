@@ -21,9 +21,9 @@ import sys
 import time
 from pathlib import Path
 
+import cv2
 import numpy as np
 import torch
-from PIL import Image
 from torch import nn
 
 MODEL_KIND = "anomaly-autoencoder"
@@ -64,17 +64,34 @@ class AnomalyScorer(nn.Module):
         self.pool = nn.AvgPool2d(smooth, stride=1, padding=smooth // 2)
 
     def forward(self, image):
-        error = (image - self.autoencoder(image)) ** 2
+        # 差异取绝对值，不取平方：平方会把“一个很亮的像素”（比如一粒灰尘）放得很大，
+        # 盖过“一小片不太亮的区域”（比如污渍）。绝对值再在小范围里取平均，看重的是“成片的差异”。
+        error = torch.abs(image - self.autoencoder(image))
         anomaly_map = self.pool(error)
         score = torch.amax(anomaly_map, dim=(1, 2, 3))
         return score, anomaly_map
 
 
 def load_image(path: str, size: int) -> np.ndarray:
-    """读图像 → 灰度 → 缩放到 size×size → 0～1 的浮点数。使用模型时必须做同样的预处理（写进了模型契约）。"""
-    with Image.open(path) as im:
-        im = im.convert("L").resize((size, size), Image.BILINEAR)
-        return np.asarray(im, dtype=np.float32) / 255.0
+    """读图像 → 灰度 → 缩放到 size×size → 0～1 的浮点数。
+
+    使用模型时必须做【完全一样】的预处理，否则得分对不上（实测：缩放的算法不同，合格图像的得分就能差出 70%）。
+    所以这里用 OpenCV，和平台里的推理算子是同一个库、同一种算法：
+      彩色转灰度  cvtColor(BGR2GRAY)
+      缩放        resize(INTER_AREA)   —— 缩小时对覆盖到的像素取平均
+      归一化      除以 255
+    平台里对应的代码在推理算子里；改这里就必须同时改那里。
+    """
+    # 不用 cv2.imread：它在 Windows 上打不开带中文的路径
+    image = cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+    if image is None:
+        raise ValueError("不是能识别的图像文件")
+    if image.dtype != np.uint8:
+        raise ValueError("只支持每通道 8 位的图像")
+    if image.ndim == 3:
+        image = cv2.cvtColor(image, cv2.COLOR_BGRA2GRAY if image.shape[2] == 4 else cv2.COLOR_BGR2GRAY)
+    image = cv2.resize(image, (size, size), interpolation=cv2.INTER_AREA)
+    return image.astype(np.float32) / 255.0
 
 
 def auroc(ok_scores: list[float], ng_scores: list[float]) -> float | None:
@@ -92,7 +109,7 @@ def train(request: dict, out_dir: Path, progress=lambda fraction: None, cancelle
     if config.get("modelKind") != MODEL_KIND:
         raise ValueError(f"这个训练服务只会训练 {MODEL_KIND}，不认识 {config.get('modelKind')!r}")
     settings = config.get("settings", {})
-    epochs = int(settings.get("epochs", 40))
+    epochs = int(settings.get("epochs", 120))
     size = int(settings.get("imageSize", 128))
     batch_size = int(settings.get("batchSize", 16))
     if size % 8 != 0 or size < 32:

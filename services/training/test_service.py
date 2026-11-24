@@ -15,8 +15,8 @@ import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
+import cv2
 import numpy as np
-from PIL import Image
 
 import server
 import trainer
@@ -33,7 +33,7 @@ def make_images(folder: Path, ok: int = 16, ng: int = 4) -> list[dict]:
             x, y = rng.integers(8, 44, 2)
             image[y:y + 10, x:x + 10] = 230
         path = folder / f"{i}.png"
-        Image.fromarray(image.clip(0, 255).astype(np.uint8)).save(path)
+        cv2.imwrite(str(path), image.clip(0, 255).astype(np.uint8))
         split = "test" if i % 4 == 3 else "val" if i % 4 == 2 else "train"
         samples.append({"sampleId": str(i), "ng": is_ng, "split": split, "path": str(path)})
     return samples

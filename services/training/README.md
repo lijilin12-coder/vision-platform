@@ -18,7 +18,7 @@ cd services/training
 python3 -m venv .venv
 source .venv/bin/activate            # Windows：.venv\Scripts\activate
 pip install torch --index-url https://download.pytorch.org/whl/cpu   # 只含 CPU 的版本，小得多；Mac 上直接 pip install torch
-pip install numpy pillow onnx
+pip install numpy opencv-python-headless onnx
 python server.py --port 8765 --work-dir ./work
 ```
 
@@ -34,7 +34,7 @@ $CLI sample import /tmp/surface/ng --label ng
 $CLI dataset new 表面                                  # 输出数据集 ID
 $CLI dataset add <数据集ID> --all-unassigned
 $CLI dataset freeze <数据集ID>                         # 输出数据集版本 ID
-$CLI train submit <数据集版本ID> --name surface-anomaly --epochs 40 --image-size 256 --wait
+$CLI train submit <数据集版本ID> --name surface-anomaly --epochs 120 --image-size 256 --wait
 $CLI model list
 ```
 
@@ -56,7 +56,9 @@ docker run --rm -p 8765:8765 \
 ## 3. 模型是什么样的
 
 - **输入** `image`：`[N, 1, S, S]`，float32，灰度，0～1。S 是训练时的 `imageSize`（默认 128，必须是 8 的倍数）。
-  图像先转灰度，再缩放到 S×S——**使用模型时必须做同样的预处理**（尺寸写在模型契约里）。
+  图像先转灰度（`cvtColor`），再缩放到 S×S（`resize`，`INTER_AREA`），再除以 255。
+  **使用模型时必须做完全一样的预处理**：训练服务和平台里的推理算子用的都是 OpenCV 的同一种算法。
+  （实测过：训练时用另一个库缩放，同一幅合格图像的得分差了 70%，直接越过了阈值。）
 - **输出** `score`：`[N]`，这幅图像的异常得分，越大越不正常。
 - **输出** `map`：`[N, 1, S, S]`，每个位置的异常程度。
 
@@ -70,12 +72,12 @@ docker run --rm -p 8765:8765 \
 
 | 请求 | 作用 |
 |---|---|
-| `POST /jobs` | 提交。请求体：`{"config": {"modelKind": "anomaly-autoencoder", "settings": {"epochs": 40, "imageSize": 256}}, "samples": [{"sampleId": "...", "ng": false, "split": "train", "path": "/绝对路径/图像"}]}`。返回 `{"ticket": "..."}` |
+| `POST /jobs` | 提交。请求体：`{"config": {"modelKind": "anomaly-autoencoder", "settings": {"epochs": 120, "imageSize": 256}}, "samples": [{"sampleId": "...", "ng": false, "split": "train", "path": "/绝对路径/图像"}]}`。返回 `{"ticket": "..."}` |
 | `GET /jobs/<ticket>` | 查询。`{"state": "running"或"completed"或"failed", "progress": 0.4, "failure": "", "report": {...}, "output": {...}}` |
 | `DELETE /jobs/<ticket>` | 取消 |
 | `GET /health` | 服务是否活着 |
 
-设置（`settings`）：`epochs`（默认 40）、`imageSize`（默认 128）、`batchSize`（默认 16）、`seed`（默认 1）。
+设置（`settings`）：`epochs`（默认 120）、`imageSize`（默认 128）、`batchSize`（默认 16）、`seed`（默认 1）。
 
 样本划到哪一部分（`split`）是**平台决定的**，训练服务只照着用：这样划分方式记录在训练任务里，可以重现（不变量 T-3）。
 

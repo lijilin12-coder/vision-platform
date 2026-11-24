@@ -20,7 +20,7 @@ ARG PIP_INDEX=https://pypi.org/simple
 
 WORKDIR /app
 RUN pip install --no-cache-dir torch --index-url ${TORCH_INDEX} \
- && pip install --no-cache-dir numpy pillow onnx --index-url ${PIP_INDEX}
+ && pip install --no-cache-dir numpy opencv-python-headless onnx --index-url ${PIP_INDEX}
 COPY trainer.py server.py ./
 
 EXPOSE 8765

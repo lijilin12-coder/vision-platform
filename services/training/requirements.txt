@@ -4,5 +4,5 @@
 # 有 NVIDIA 显卡时直接 pip install torch 即可。
 torch>=2.2
 numpy
-pillow
+opencv-python-headless
 onnx
