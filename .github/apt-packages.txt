@@ -1,0 +1,6 @@
+# Linux 自动构建要安装的软件包，一行一个。改了这个文件，软件包缓存会重新建立。
+ninja-build
+libopencv-dev
+nlohmann-json3-dev
+libgtest-dev
+libcpp-httplib-dev

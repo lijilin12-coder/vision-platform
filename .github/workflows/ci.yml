@@ -19,16 +19,25 @@ jobs:
   linux:
     name: Linux (GCC)
     runs-on: ubuntu-24.04
-    timeout-minutes: 40   # 正常 10 分钟左右；留出软件源慢的余量
+    timeout-minutes: 60   # 正常 10 分钟左右；软件包缓存还没有建起来、软件源又慢的那一次需要很久
     steps:
       - uses: actions/checkout@v4
+      # 构建机用的软件源有时很慢（2026-11-24：每秒三百多 KB，OpenCV 的依赖有上百个包，光下载就超过了任务的时限）。
+      # 所以把下载好的软件包（.deb 文件）缓存起来：软件包的清单不变，以后的构建就不用再下载。
+      - name: 恢复软件包缓存
+        uses: actions/cache@v4
+        with:
+          path: ~/apt-archives
+          key: apt-ubuntu-24.04-${{ hashFiles('.github/apt-packages.txt') }}
       - name: 安装依赖
         run: |
-          # 构建机用的软件源有时很慢，甚至下载到一半停住。一个包 20 秒没有动静就放弃、换下一个源重试，
-          # 而不是一直等到整个任务超时（2026-11-24 连续两次因此失败）。
-          APT="-o Acquire::Retries=5 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20"
+          mkdir -p ~/apt-archives/partial
+          # 一个包 20 秒没有动静就放弃、换下一个源重试，而不是一直等到整个任务超时
+          APT="-o Acquire::Retries=5 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o Dir::Cache::Archives=$HOME/apt-archives"
           sudo apt-get $APT update -q
-          sudo apt-get $APT install -y -q ninja-build libopencv-dev nlohmann-json3-dev libgtest-dev libcpp-httplib-dev
+          sudo apt-get $APT install -y -q $(grep -v '^#' .github/apt-packages.txt)
+          # apt 是以 root 的身份写这些文件的；改回来，缓存才存得进去
+          sudo chown -R "$USER" ~/apt-archives
       - name: 配置
         run: cmake --preset default
       - name: 编译
