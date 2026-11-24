@@ -36,11 +36,32 @@ Result<Image> loadImage(const std::string& path) {
     if (!in) return Result<Image>::failure("imaging.read", "无法打开图像文件：" + path);
     const std::vector<uchar> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     if (bytes.empty()) return Result<Image>::failure("imaging.read", "图像文件为空：" + path);
-    cv::Mat m = cv::imdecode(bytes, cv::IMREAD_UNCHANGED);
-    if (m.empty()) return Result<Image>::failure("imaging.read", "无法解码图像：" + path);
+    auto image = decodeImage(bytes);
+    if (!image) return Result<Image>::failure("imaging.read", "无法解码图像：" + path);
+    return image;
+}
+
+Result<Image> decodeImage(const std::vector<unsigned char>& bytes) {
+    if (bytes.empty()) return Result<Image>::failure("imaging.read", "图像内容为空");
+    cv::Mat m;
+    try {
+        m = cv::imdecode(bytes, cv::IMREAD_UNCHANGED);
+    } catch (const cv::Exception&) {
+        // 内容损坏得很特别时 OpenCV 会抛异常，而不是返回空
+    }
+    if (m.empty()) return Result<Image>::failure("imaging.read", "无法解码图像：不是能识别的图像格式");
     if (m.depth() != CV_8U) m.convertTo(m, CV_8U);
     if (m.channels() == 4) cv::cvtColor(m, m, cv::COLOR_BGRA2BGR);
     return fromMat(m);
+}
+
+Result<std::vector<unsigned char>> encodePng(const Image& image) {
+    using R = Result<std::vector<unsigned char>>;
+    if (image.empty()) return R::failure("imaging.empty", "图像为空");
+    std::vector<unsigned char> bytes;
+    // 压缩级别 1：比默认的（3）快不少，文件稍大。这里的图像是给界面预览的，快更要紧
+    if (!cv::imencode(".png", view(image), bytes, {cv::IMWRITE_PNG_COMPRESSION, 1})) return R::failure("imaging.write", "图像编码失败");
+    return bytes;
 }
 
 Status saveImage(const std::string& path, const Image& image) {

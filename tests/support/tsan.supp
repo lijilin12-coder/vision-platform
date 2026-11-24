@@ -1,0 +1,19 @@
+# ThreadSanitizer 的抑制规则：只屏蔽第三方库内部的报告，我们自己的代码不在其中。
+#
+#   TSAN_OPTIONS="suppressions=tests/support/tsan.supp" ./build-tsan/tests/http_api_tests
+#
+# 为什么需要：系统自带的 OpenCV 用 TBB 做内部的多线程，而 TBB 没有用 ThreadSanitizer 编译，
+# 它内部的同步 ThreadSanitizer 看不见，于是把 OpenCV 的工作线程之间正常的协作报成数据竞争。
+# GDAL（OpenCV 读写图像时用到）内部的加锁顺序也会被报成“可能死锁”。
+called_from_lib:libtbb.so
+called_from_lib:libopencv_core.so
+called_from_lib:libopencv_imgproc.so
+called_from_lib:libopencv_imgcodecs.so
+race:libtbb.so
+race:libopencv_core.so
+race:libopencv_imgproc.so
+deadlock:libgdal.so
+# 线程结束时 OpenCV 清理自己的线程局部数据（那把锁是 libopencv_core 里分配的）。
+# 上面的规则让 ThreadSanitizer 没看见加锁，只看见了解锁，于是报“解了一把没锁的锁”。
+mutex:__nptl_deallocate_tsd
+mutex:nptl_deallocate_tsd

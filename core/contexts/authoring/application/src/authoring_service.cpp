@@ -1,3 +1,4 @@
+#include <mutex>
 #include "vision/authoring/api.h"
 #include "vision/authoring/domain/repositories.h"
 #include "vision/catalog/api.h"
@@ -50,6 +51,7 @@ Status AuthoringService::modify(const std::string& recipeId, Fn&& fn) {
 }
 
 Result<std::string> AuthoringService::createRecipe(const std::string& name) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (name.empty()) return Result<std::string>::failure("authoring.recipe_name", "方案必须有名称");
     Recipe recipe = Recipe::create(newUuid(), name);
     if (auto st = recipes_.save(recipe); !st) return st.error();
@@ -58,6 +60,7 @@ Result<std::string> AuthoringService::createRecipe(const std::string& name) {
 }
 
 Result<std::string> AuthoringService::addNode(const std::string& recipeId, const std::string& operatorId) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     // 从算子目录取签名快照（D5-1）。这是跨上下文协作：只通过 catalog 的公开接口。
     auto meta = catalog_.find(operatorId);
     if (!meta) return Result<std::string>::failure("authoring.operator_not_found", "找不到算子 " + operatorId);
@@ -73,10 +76,12 @@ Result<std::string> AuthoringService::addNode(const std::string& recipeId, const
 }
 
 Status AuthoringService::removeNode(const std::string& recipeId, const std::string& nodeId) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     return modify(recipeId, [&](Recipe& r) { return r.removeNode(nodeId); });
 }
 
 Status AuthoringService::connect(const std::string& recipeId, const std::string& from, const std::string& to) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     auto f = PortRef::parse(from);
     if (!f) return f.error();
     auto t = PortRef::parse(to);
@@ -85,6 +90,7 @@ Status AuthoringService::connect(const std::string& recipeId, const std::string&
 }
 
 Status AuthoringService::disconnect(const std::string& recipeId, const std::string& from, const std::string& to) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     auto f = PortRef::parse(from);
     if (!f) return f.error();
     auto t = PortRef::parse(to);
@@ -94,19 +100,23 @@ Status AuthoringService::disconnect(const std::string& recipeId, const std::stri
 
 Status AuthoringService::setParam(const std::string& recipeId, const std::string& nodeId, const std::string& param,
                                   const ParamValue& value) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     return modify(recipeId, [&](Recipe& r) { return r.setParam(nodeId, param, value); });
 }
 
 Status AuthoringService::setRoi(const std::string& recipeId, const std::string& nodeId, const Roi& roi) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     return modify(recipeId, [&](Recipe& r) { return r.setRoi(nodeId, RoiSpec::absolute(roi)); });
 }
 
 Status AuthoringService::clearRoi(const std::string& recipeId, const std::string& nodeId) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     return modify(recipeId, [&](Recipe& r) { return r.setRoi(nodeId, RoiSpec::none()); });
 }
 
 Result<std::string> AuthoringService::defineNamedRegion(const std::string& recipeId, const std::string& name,
                                                         const Roi& roi) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     std::string regionId;
     auto st = modify(recipeId, [&](Recipe& r) -> Status {
         auto res = r.defineNamedRegion(name, roi);
@@ -120,15 +130,18 @@ Result<std::string> AuthoringService::defineNamedRegion(const std::string& recip
 
 Status AuthoringService::useNamedRegion(const std::string& recipeId, const std::string& nodeId,
                                         const std::string& regionId) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     return modify(recipeId, [&](Recipe& r) { return r.setRoi(nodeId, RoiSpec::named(regionId)); });
 }
 
 Status AuthoringService::removeNamedRegion(const std::string& recipeId, const std::string& regionId) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     return modify(recipeId, [&](Recipe& r) { return r.removeNamedRegion(regionId); });
 }
 
 Result<std::string> AuthoringService::createMatchTemplate(const std::string& recipeId, const std::string& name,
                                                           const Image& source, int x, int y, int width, int height) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     using R = Result<std::string>;
     if (templateStore_ == nullptr) return R::failure("authoring.no_template_store", "这个程序没有配置保存模板的地方");
     if (source.empty()) return R::failure("authoring.template_size", "样图是空的");
@@ -159,15 +172,18 @@ Result<std::string> AuthoringService::createMatchTemplate(const std::string& rec
 
 Status AuthoringService::renameMatchTemplate(const std::string& recipeId, const std::string& templateId,
                                              const std::string& name) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     return modify(recipeId, [&](Recipe& r) { return r.renameMatchTemplate(templateId, name); });
 }
 
 Status AuthoringService::removeMatchTemplate(const std::string& recipeId, const std::string& templateId) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     // 只删引用，不删内容：已发布的方案版本可能还在用同一份内容
     return modify(recipeId, [&](Recipe& r) { return r.removeMatchTemplate(templateId); });
 }
 
 Result<std::string> AuthoringService::publish(const std::string& recipeId) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     auto recipe = recipes_.find(recipeId);
     if (!recipe) return notFound(recipeId).error();
 
@@ -181,6 +197,7 @@ Result<std::string> AuthoringService::publish(const std::string& recipeId) {
 }
 
 Status AuthoringService::deprecateVersion(const std::string& versionId) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     auto id = RecipeVersionId::parse(versionId);
     if (!id) return id.error();
     auto version = versions_.find(id.value());
@@ -192,6 +209,7 @@ Status AuthoringService::deprecateVersion(const std::string& versionId) {
 }
 
 Result<DraftView> AuthoringService::getDraft(const std::string& recipeId) const {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     auto recipe = recipes_.find(recipeId);
     if (!recipe) return notFound(recipeId).error();
     DraftView view{recipe->id(), recipe->name(), {}, {}, {}};
@@ -204,6 +222,7 @@ Result<DraftView> AuthoringService::getDraft(const std::string& recipeId) const 
 }
 
 Result<RecipeVersionDocument> AuthoringService::getVersionDocument(const std::string& versionId) const {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     auto id = RecipeVersionId::parse(versionId);
     if (!id) return id.error();
     auto version = versions_.find(id.value());
@@ -223,6 +242,7 @@ Result<RecipeVersionDocument> AuthoringService::getVersionDocument(const std::st
 }
 
 Result<RecipeVersionDocument> AuthoringService::getDraftDocument(const std::string& recipeId) const {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     auto recipe = recipes_.find(recipeId);
     if (!recipe) return notFound(recipeId).error();
     // 借用 RecipeVersion 的 ROI 展开逻辑，但不发布、不保存
@@ -239,6 +259,6 @@ Result<RecipeVersionDocument> AuthoringService::getDraftDocument(const std::stri
     return doc;
 }
 
-std::vector<std::string> AuthoringService::listRecipes() const { return recipes_.listIds(); }
+std::vector<std::string> AuthoringService::listRecipes() const { std::lock_guard<std::recursive_mutex> lock(mutex_); return recipes_.listIds(); }
 
 }  // namespace vision::authoring
