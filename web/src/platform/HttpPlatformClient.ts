@@ -1,6 +1,6 @@
 import type { PlatformClient } from "./PlatformClient";
 import { PlatformError } from "./types";
-import type { DebugRun, ModelInfo, OperatorMeta, ParamValue, Recipe, RecipeSummary, Release, Roi, Station, UploadedImage } from "./types";
+import type { DebugRun, ModelInfo, OperatorMeta, ParamValue, Recipe, RecipeSummary, QualitySummary, RecordQuery, Release, Roi, SavedRecord, Station, UploadedImage } from "./types";
 
 // PlatformClient 的 HTTP 实现：对着 vision-runtime 的接口（docs/dev/http-api.md）。
 // 整个界面里，只有这个文件发 HTTP 请求。
@@ -116,6 +116,16 @@ export class HttpPlatformClient implements PlatformClient {
   }
   stopStation(stationId: string) {
     return this.request<Station>("POST", `/api/stations/${stationId}/stop`, {});
+  }
+  async listRecords(stationId: string, query: RecordQuery = {}) {
+    const params = new URLSearchParams();
+    if (query.verdict) params.set("verdict", query.verdict);
+    if (query.before) params.set("before", query.before);
+    if (query.limit) params.set("limit", String(query.limit));
+    return (await this.request<{ records: SavedRecord[] }>("GET", `/api/stations/${stationId}/records?${params}`)).records;
+  }
+  getSummary(stationId: string) {
+    return this.request<QualitySummary>("GET", `/api/stations/${stationId}/summary`);
   }
   stationFrameUrl(stationId: string, sequence: number) {
     return `${this.base}/api/stations/${stationId}/frame?s=${sequence}`;

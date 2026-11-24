@@ -1,6 +1,7 @@
 #include "vision/persistence/runtime_repositories.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <fstream>
 
 #include "json_files.h"
@@ -140,6 +141,212 @@ std::optional<authoring::RecipeVersionDocument> JsonImportedRecipes::find(const 
 }
 
 std::vector<std::string> JsonImportedRecipes::listIds() const { return listJsonStems(dir_); }
+
+// ---------- JsonlInspectionRecordRepository ----------
+
+namespace {
+
+json resultToJson(const ResultItems& r) {
+    json defects = json::array(), measurements = json::array(), poses = json::array();
+    for (const auto& d : r.defects) {
+        defects.push_back({{"node", d.nodeId}, {"category", d.category}, {"cx", d.centerX}, {"cy", d.centerY}, {"left", d.left},
+                           {"top", d.top}, {"width", d.width}, {"height", d.height}, {"area", d.area}});
+    }
+    for (const auto& m : r.measurements) {
+        json j = {{"node", m.nodeId}, {"name", m.name}, {"value", m.value}, {"unit", m.unit}, {"pass", m.pass}};
+        if (m.lower) j["lower"] = *m.lower;
+        if (m.upper) j["upper"] = *m.upper;
+        measurements.push_back(std::move(j));
+    }
+    for (const auto& p : r.poses) {
+        poses.push_back({{"node", p.nodeId}, {"found", p.found}, {"score", p.score}, {"x", p.pose.x}, {"y", p.pose.y},
+                         {"angle", p.pose.angle}, {"rx", p.pose.referenceX}, {"ry", p.pose.referenceY}});
+    }
+    return {{"defects", std::move(defects)}, {"measurements", std::move(measurements)}, {"poses", std::move(poses)}};
+}
+
+ResultItems resultFromJson(const json& j) {
+    ResultItems r;
+    for (const auto& d : j.at("defects")) {
+        Defect x;
+        x.nodeId = d.at("node").get<std::string>();
+        x.category = d.at("category").get<std::string>();
+        x.centerX = d.at("cx").get<double>();
+        x.centerY = d.at("cy").get<double>();
+        x.left = d.at("left").get<int>();
+        x.top = d.at("top").get<int>();
+        x.width = d.at("width").get<int>();
+        x.height = d.at("height").get<int>();
+        x.area = d.at("area").get<double>();
+        r.defects.push_back(std::move(x));
+    }
+    for (const auto& m : j.at("measurements")) {
+        Measurement x;
+        x.nodeId = m.at("node").get<std::string>();
+        x.name = m.at("name").get<std::string>();
+        x.value = m.at("value").get<double>();
+        x.unit = m.at("unit").get<std::string>();
+        x.pass = m.at("pass").get<bool>();
+        if (m.contains("lower")) x.lower = m.at("lower").get<double>();
+        if (m.contains("upper")) x.upper = m.at("upper").get<double>();
+        r.measurements.push_back(std::move(x));
+    }
+    for (const auto& p : j.at("poses")) {
+        PoseResult x;
+        x.nodeId = p.at("node").get<std::string>();
+        x.found = p.at("found").get<bool>();
+        x.score = p.at("score").get<double>();
+        x.pose = Pose{p.at("x").get<double>(), p.at("y").get<double>(), p.at("angle").get<double>(), p.at("rx").get<double>(),
+                      p.at("ry").get<double>()};
+        r.poses.push_back(std::move(x));
+    }
+    return r;
+}
+
+// 一行文字 → 一条记录。这一行坏了（写到一半断电）就返回空，别的行不受影响
+std::optional<quality::InspectionRecord> recordFromLine(const std::string& line) {
+    try {
+        const json j = json::parse(line);
+        quality::InspectionRecord::Fields f;
+        f.id = j.at("id").get<std::string>();
+        f.stationId = j.at("station").get<std::string>();
+        f.timeMs = j.at("timeMs").get<std::int64_t>();
+        f.sequence = j.at("sequence").get<std::uint64_t>();
+        f.releaseId = j.at("release").get<std::string>();
+        f.recipeVersionId = j.at("recipeVersion").get<std::string>();
+        f.frameName = j.at("frame").get<std::string>();
+        f.imageSha256 = j.at("image").get<std::string>();
+        f.verdict = j.at("verdict").get<std::string>();
+        for (const auto& r : j.at("reasons")) {
+            f.reasons.push_back({r.at("node").get<std::string>(), r.at("pass").get<bool>(), r.at("text").get<std::string>()});
+        }
+        f.result = resultFromJson(j.at("result"));
+        f.totalMs = j.at("totalMs").get<double>();
+        f.swapped = j.at("swapped").get<bool>();
+        auto record = quality::InspectionRecord::create(std::move(f));
+        if (!record) return std::nullopt;
+        return std::move(record).value();
+    } catch (const std::exception&) {
+        return std::nullopt;
+    }
+}
+
+// 文件里的全部记录，按写入的顺序（从旧到新）
+std::vector<quality::InspectionRecord> readRecords(const fs::path& file) {
+    std::vector<quality::InspectionRecord> records;
+    std::ifstream in(file, std::ios::binary);
+    std::string line;
+    while (std::getline(in, line)) {
+        if (line.empty()) continue;
+        if (auto r = recordFromLine(line)) records.push_back(std::move(*r));
+    }
+    return records;
+}
+
+// 毫秒时间 → "2026-11-24"（UTC）
+std::string dayOf(std::int64_t timeMs) {
+    const std::int64_t days = timeMs / 86400000;
+    // 公历日期的换算（Howard Hinnant 的算法）：不依赖系统的时区设置
+    const std::int64_t z = days + 719468;
+    const std::int64_t era = (z >= 0 ? z : z - 146096) / 146097;
+    const std::int64_t doe = z - era * 146097;
+    const std::int64_t yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    const std::int64_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    const std::int64_t mp = (5 * doy + 2) / 153;
+    const int day = static_cast<int>(doy - (153 * mp + 2) / 5 + 1);
+    const int month = static_cast<int>(mp < 10 ? mp + 3 : mp - 9);
+    const int year = static_cast<int>(yoe + era * 400 + (month <= 2 ? 1 : 0));
+    char buffer[40];
+    std::snprintf(buffer, sizeof buffer, "%04d-%02d-%02d", year, month, day);
+    return buffer;
+}
+
+}  // namespace
+
+JsonlInspectionRecordRepository::JsonlInspectionRecordRepository(fs::path root) : dir_(std::move(root) / "inspection-records") {}
+
+Status JsonlInspectionRecordRepository::append(const quality::InspectionRecord& record) {
+    const auto& f = record.fields();
+    if (!safeFileName(f.stationId)) return Status::failure("persistence.bad_id", "工位 ID 不能用作目录名：" + f.stationId);
+    json reasons = json::array();
+    for (const auto& r : f.reasons) reasons.push_back({{"node", r.nodeId}, {"pass", r.pass}, {"text", r.text}});
+    const json j = {{"id", f.id}, {"station", f.stationId}, {"timeMs", f.timeMs}, {"sequence", f.sequence}, {"release", f.releaseId},
+                    {"recipeVersion", f.recipeVersionId}, {"frame", f.frameName}, {"image", f.imageSha256}, {"verdict", f.verdict},
+                    {"reasons", std::move(reasons)}, {"result", resultToJson(f.result)}, {"totalMs", f.totalMs}, {"swapped", f.swapped}};
+    const fs::path dir = dir_ / pathFromUtf8(f.stationId);
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    // 追加一行。dump 不会产生换行，所以一行就是一条记录；文字里不是合法 UTF-8 的地方换成替代符号，而不是抛异常
+    const fs::path file = dir / (dayOf(f.timeMs) + ".jsonl");
+    // 上一次写到一半就断电了的话，文件的最后一行是残缺的、没有换行符。
+    // 先补一个换行，不然这一条会接在那半行后面，两条一起作废。
+    bool torn = false;
+    {
+        std::ifstream last(file, std::ios::binary | std::ios::ate);
+        if (last && last.tellg() > 0) {
+            last.seekg(-1, std::ios::end);
+            torn = last.get() != '\n';
+        }
+    }
+    std::ofstream out(file, std::ios::binary | std::ios::app);
+    if (torn) out << '\n';
+    out << j.dump(-1, ' ', false, json::error_handler_t::replace) << '\n';
+    out.flush();
+    if (!out) return Status::failure("persistence.write", "检测记录写不进去（磁盘满了？）");
+    return Status::success();
+}
+
+std::vector<fs::path> JsonlInspectionRecordRepository::files(const std::string& stationId) const {
+    std::vector<fs::path> found;
+    if (!safeFileName(stationId)) return found;
+    std::error_code ec;
+    for (fs::directory_iterator it(dir_ / pathFromUtf8(stationId), ec), end; !ec && it != end; it.increment(ec)) {
+        if (it->path().extension() == ".jsonl") found.push_back(it->path());
+    }
+    std::sort(found.begin(), found.end(), std::greater<>());  // 文件名是日期：倒序就是从新到旧
+    return found;
+}
+
+std::vector<quality::InspectionRecord> JsonlInspectionRecordRepository::query(const std::string& stationId,
+                                                                               const quality::RecordFilter& filter) {
+    std::vector<quality::InspectionRecord> result;
+    for (const auto& file : files(stationId)) {
+        auto records = readRecords(file);
+        // 同一个文件里按编号从新到旧（时钟往回走过的话，写入的顺序不一定就是编号的顺序）
+        std::sort(records.begin(), records.end(), [](const auto& a, const auto& b) { return a->id > b->id; });
+        for (auto& r : records) {
+            if (!filter.beforeId.empty() && r->id >= filter.beforeId) continue;
+            if (!filter.verdict.empty() && r->verdict != filter.verdict) continue;
+            result.push_back(std::move(r));
+            if (static_cast<int>(result.size()) >= filter.limit) return result;
+        }
+    }
+    return result;
+}
+
+std::optional<quality::InspectionRecord> JsonlInspectionRecordRepository::find(const std::string& stationId, const std::string& recordId) {
+    // 编号的前 13 位是时间：直接知道它在哪一天的文件里
+    std::int64_t timeMs = 0;
+    try {
+        timeMs = std::stoll(recordId.substr(0, 13));
+    } catch (const std::exception&) {
+        return std::nullopt;
+    }
+    if (!safeFileName(stationId)) return std::nullopt;
+    for (auto& r : readRecords(dir_ / pathFromUtf8(stationId) / (dayOf(timeMs) + ".jsonl"))) {
+        if (r->id == recordId) return std::move(r);
+    }
+    return std::nullopt;
+}
+
+std::vector<quality::InspectionRecord> JsonlInspectionRecordRepository::all(const std::string& stationId) {
+    std::vector<quality::InspectionRecord> result;
+    for (const auto& file : files(stationId)) {
+        auto records = readRecords(file);
+        result.insert(result.end(), std::make_move_iterator(records.begin()), std::make_move_iterator(records.end()));
+    }
+    return result;
+}
 
 // ---------- JsonGoldenSetRepository ----------
 

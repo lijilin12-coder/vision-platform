@@ -498,6 +498,37 @@ TEST_F(HttpApi, StationsRunContinuouslyAndHotSwapThroughTheApi) {
     EXPECT_EQ(status.body["activeRelease"], lenient);
     EXPECT_EQ(get(base + "?after=abc").status, 400);
 
+    // 保存下来的检测记录：从新到旧；不合格的那一次带着当时的图像
+    auto records = get(base + "/records");
+    ASSERT_EQ(records.status, 200) << records.raw;
+    ASSERT_EQ(records.body["records"].size(), 2u);
+    EXPECT_EQ(records.body["records"][0]["frameName"], "2.png");
+    EXPECT_EQ(records.body["records"][0]["imageId"], "");
+    const auto ngRecord = records.body["records"][1];
+    EXPECT_EQ(ngRecord["verdict"], "NG");
+    EXPECT_EQ(ngRecord["releaseId"], strict);
+    EXPECT_EQ(ngRecord["result"]["defects"].size(), 2u);
+    EXPECT_EQ(ngRecord["time"].get<std::string>().size(), 19u);
+    const auto kept = client->Get("/api/images/" + ngRecord["imageId"].get<std::string>());
+    ASSERT_TRUE(kept && kept->status == 200);
+    EXPECT_EQ(kept->get_header_value("Content-Type"), "image/png");
+    // 筛选、翻页
+    records = get(base + "/records?verdict=NG");
+    ASSERT_EQ(records.body["records"].size(), 1u);
+    EXPECT_EQ(records.body["records"][0]["id"], ngRecord["id"]);
+    EXPECT_EQ(get(base + "/records?limit=1").body["records"].size(), 1u);
+    EXPECT_TRUE(get(base + "/records?before=" + ngRecord["id"].get<std::string>()).body["records"].empty());
+    EXPECT_EQ(get(base + "/records?verdict=MAYBE").status, 400);
+    EXPECT_EQ(get(base + "/records?limit=abc").status, 400);
+    EXPECT_EQ(get("/api/stations/nobody/records").status, 404);
+    const auto summary = get(base + "/summary");
+    ASSERT_EQ(summary.status, 200);
+    EXPECT_EQ(summary.body["total"], 2);
+    EXPECT_EQ(summary.body["ng"], 1);
+    EXPECT_DOUBLE_EQ(summary.body["yield"].get<double>(), 0.5);
+    EXPECT_EQ(summary.body["defectsByCategory"].size(), 1u);
+    EXPECT_EQ(get("/api/stations/nobody/summary").status, 404);
+
     // 回滚；工位列表里看得到运行情况，但不带检测记录
     ASSERT_EQ(post(base + "/rollback").status, 200);
     EXPECT_EQ(get(base).body["activeRelease"], strict);

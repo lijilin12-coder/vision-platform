@@ -141,6 +141,18 @@ Result<std::vector<unsigned char>> FileContentStore::get(const std::string& sha2
     return bytes;
 }
 
+// ---------------- 检测时的图像 ----------------
+
+Result<std::string> InspectionImages::store(const Image& image) {
+    std::vector<unsigned char> png;
+    try {
+        if (!cv::imencode(".png", imaging::view(image), png)) return Result<std::string>::failure("content.encode", "图像编码失败");
+    } catch (const cv::Exception& e) {
+        return Result<std::string>::failure("content.encode", std::string("图像编码失败：") + e.what());
+    }
+    return store_.put(png);
+}
+
 // ---------------- 匹配模板 ----------------
 
 Result<authoring::StoredContent> TemplateContent::storeCrop(const Image& source, int x, int y, int width, int height) {

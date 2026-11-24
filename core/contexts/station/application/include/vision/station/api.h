@@ -72,6 +72,15 @@ struct StationInspection {
     Image frame;                 // 图像来自图像源时：这一帧的图像（和检测用的是同一份像素，不是复制品）
 };
 
+// ===== 端口：有一次产线检测完成了 =====
+// 想知道“工位检测了什么”的一方实现它（现在是质量分析：把每次检测记下来）。
+// 在做检测的那个线程里调用，检测的结果已经确定之后。实现要自己保证够快、不抛异常。
+class InspectionObserver {
+public:
+    virtual ~InspectionObserver() = default;
+    virtual void onInspected(const std::string& stationId, const StationInspection& inspection) = 0;
+};
+
 // 应用服务。线程模型：
 //   - inspect 可以和 deploy、rollback、pause 等命令在不同的线程里同时调用；
 //   - 同一个工位的 inspect 一次只进行一个（D5-4），不同工位之间互不影响（H-05）；
@@ -102,8 +111,10 @@ public:
     // 回滚到上一个上线包。withdraw 为 true 时同时撤回出问题的上线包（F-5）。
     Status rollback(const std::string& stationId, bool withdraw = false);
 
-    // 对一帧图像做一次产线检测。
-    Result<StationInspection> inspect(const std::string& stationId, const Image& frame);
+    // 对一帧图像做一次产线检测。frameName：这一帧的名字（给人看的，会进检测记录），可以为空
+    Result<StationInspection> inspect(const std::string& stationId, const Image& frame, const std::string& frameName = {});
+    // 每完成一次产线检测通知一声。组装根传入；不设置就没有人被通知
+    void useInspectionObserver(InspectionObserver& observer);
 
     // ---- 图像源（STA-01）----
     // 用到图像源的功能需要它；组装根传入。

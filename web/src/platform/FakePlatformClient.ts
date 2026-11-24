@@ -1,6 +1,6 @@
 import type { PlatformClient } from "./PlatformClient";
 import { PlatformError } from "./types";
-import type { DebugRun, InspectionRecord, OperatorMeta, ParamValue, Recipe, Release, Roi, Station } from "./types";
+import type { DebugRun, InspectionRecord, OperatorMeta, ParamValue, Recipe, Release, Roi, Station, QualitySummary, RecordQuery, SavedRecord } from "./types";
 
 // 测试用的假后端：在内存里记着方案，按很少的几条规则回答。
 // 有了它，编辑器的状态和操作可以不启动 vision-runtime、不开浏览器就测。
@@ -188,6 +188,22 @@ export class FakePlatformClient implements PlatformClient {
     s.state = "stopped";
     s.runner.running = false;
     return { ...s, runner: { ...s.runner } };
+  }
+  saved: SavedRecord[] = []; // 测试往这里放“保存下来的检测记录”，从旧到新
+  async listRecords(stationId: string, query: RecordQuery = {}) {
+    this.station(stationId);
+    return [...this.saved]
+      .reverse()
+      .filter((r) => (!query.verdict || r.verdict === query.verdict) && (!query.before || r.id < query.before))
+      .slice(0, query.limit ?? 50);
+  }
+  async getSummary(stationId: string): Promise<QualitySummary> {
+    this.station(stationId);
+    const count = (v: string) => this.saved.filter((r) => r.verdict === v).length;
+    const [ok, ng] = [count("OK"), count("NG")];
+    const defectsByCategory: Record<string, number> = {};
+    for (const r of this.saved) for (const d of r.result.defects) defectsByCategory[d.category] = (defectsByCategory[d.category] ?? 0) + 1;
+    return { total: this.saved.length, ok, ng, error: count("ERROR"), yield: ok + ng > 0 ? ok / (ok + ng) : null, defectsByCategory };
   }
   stationFrameUrl(stationId: string, sequence: number) {
     return `/api/stations/${stationId}/frame?s=${sequence}`;

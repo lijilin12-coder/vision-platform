@@ -79,6 +79,7 @@ struct StationService::Impl {
     std::mutex loadersMutex;
     std::vector<std::future<void>> loaders;
     ImageSourceFactory* imageSources = nullptr;
+    InspectionObserver* observer = nullptr;
 
     Impl(StationRepository& r, release::ReleaseService& rel, execution::ExecutionService& ex, EventPublisher& ev)
         : repository(r), releases(rel), execution(ex), events(ev) {}
@@ -346,7 +347,9 @@ Status StationService::rollback(const std::string& stationId, bool withdraw) {
     return impl_->command(stationId, [withdraw](Station& s) { return s.rollback(withdraw); });
 }
 
-Result<StationInspection> StationService::inspect(const std::string& stationId, const Image& frame) {
+void StationService::useInspectionObserver(InspectionObserver& observer) { impl_->observer = &observer; }
+
+Result<StationInspection> StationService::inspect(const std::string& stationId, const Image& frame, const std::string& frameName) {
     using R = Result<StationInspection>;
     auto e = impl_->entry(stationId);
     if (!e) return e.error();
@@ -407,6 +410,12 @@ Result<StationInspection> StationService::inspect(const std::string& stationId, 
         pulled = impl_->persist(entry);
     }
     impl_->publish(pulled);
+    if (result) {
+        result.value().frameName = frameName;
+        result.value().frame = frame;  // Image 内部共享像素：这不是复制一幅图像
+        // 通知想知道的一方（质量分析会把这次检测记下来）。放在最后：工位自己的状态已经更新完了
+        if (impl_->observer != nullptr) impl_->observer->onInspected(stationId, result.value());
+    }
     return result;
 }
 
@@ -475,10 +484,8 @@ Result<std::optional<StationInspection>> StationService::inspectNext(const std::
         if (!next.value()) return std::optional<StationInspection>{};  // 现在没有新的图像
         frame = std::move(*next.value());
     }
-    auto inspected = inspect(stationId, frame.image);
+    auto inspected = inspect(stationId, frame.image, frame.name);
     if (!inspected) return inspected.error();
-    inspected.value().frameName = std::move(frame.name);
-    inspected.value().frame = std::move(frame.image);
     return std::optional<StationInspection>{std::move(inspected).value()};
 }
 

@@ -264,6 +264,24 @@ try {
   await page.waitForFunction(() => document.querySelector("[data-station-state]")?.textContent === "已停止");
   check(true, "停止");
 
+  console.log("历史记录：保存在磁盘上的检测记录");
+  await page.click("[data-view-history]");
+  await page.waitForFunction(() => document.querySelectorAll("[data-history-record]").length === 3);
+  check((await page.textContent("[data-history-total]")) === "3", "三次检测都保存下来了");
+  check((await page.textContent("[data-history-yield]")) === "33.3%", "良率 33.3%（1 次合格，2 次不合格）");
+  await page.check("[data-history-only-ng]");
+  await page.waitForFunction(() => document.querySelectorAll("[data-history-record]").length === 2);
+  check(true, "只看不合格：剩 2 条");
+  await page.locator("[data-history-record]").last().click();
+  await page.waitForFunction(() => document.querySelector("[data-history-image]")?.complete && document.querySelector("[data-history-image]").naturalWidth === 640);
+  check((await page.locator(".overlay .defect").count()) === 3, "点开不合格的那一条：当时的图像还在，上面有 3 个缺陷框");
+  await shot("6-history");
+  await page.uncheck("[data-history-only-ng]");
+  await page.waitForFunction(() => document.querySelectorAll("[data-history-record]").length === 3);
+  await page.locator("[data-history-record]").nth(1).click();
+  await page.waitForSelector("[data-history-no-image]");
+  check(true, "合格的那一条没有保留图像，页面说明了原因");
+
   check(consoleErrors.length === 0, `浏览器控制台没有报错${consoleErrors.length ? "：" + consoleErrors.slice(0, 3).join(" | ") : ""}`);
 } finally {
   await browser.close();

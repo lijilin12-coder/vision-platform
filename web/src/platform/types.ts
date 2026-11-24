@@ -161,6 +161,30 @@ export interface InspectionRecord {
   result: { defects: Defect[]; measurements: Measurement[]; poses: PoseResult[] };
 }
 
+// 保存下来的检测记录：比上面多了编号、时间、当时的图像。程序重启之后还在
+export interface SavedRecord extends InspectionRecord {
+  id: string; // 记录的编号：越新的越大
+  time: string; // 给人看的时间（UTC）
+  recipeVersionId: string;
+  imageId: string; // 当时的图像；没有保留时是空的（默认只保留不合格的和出错的）
+}
+
+// 一个工位有记录以来的汇总
+export interface QualitySummary {
+  total: number;
+  ok: number;
+  ng: number;
+  error: number;
+  yield: number | null; // 良率：OK ÷ (OK + NG)。还没有可算的时候是 null
+  defectsByCategory: Record<string, number>;
+}
+
+export interface RecordQuery {
+  verdict?: "OK" | "NG" | "ERROR";
+  before?: string; // 翻页：只要比这个编号更早的
+  limit?: number;
+}
+
 export interface Station {
   id: string;
   name: string;
