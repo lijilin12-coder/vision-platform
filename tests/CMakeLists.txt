@@ -133,3 +133,17 @@ gtest_discover_tests(training_integration_tests)
 add_executable(training_http_tests training_http_test.cpp)
 target_link_libraries(training_http_tests PRIVATE vision_training_http nlohmann_json::nlohmann_json GTest::gtest_main)
 gtest_discover_tests(training_http_tests)
+
+# ---- 模型在检测引擎里运行（POC-13 第 4 步）：异常检测算子、模型参数、ONNX Runtime ----
+add_executable(inference_integration_tests inference_integration_test.cpp)
+target_link_libraries(inference_integration_tests PRIVATE
+  authoring_application execution_application catalog_application models_application release_application
+  vision_operators vision_imaging vision_eventbus vision_persistence vision_content
+  GTest::gtest_main)
+target_compile_definitions(inference_integration_tests PRIVATE VISION_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+if(VISION_WITH_ONNXRUNTIME)
+  target_link_libraries(inference_integration_tests PRIVATE vision_inference_onnx)
+  target_compile_definitions(inference_integration_tests PRIVATE VISION_WITH_ONNXRUNTIME)
+  vision_copy_onnxruntime(inference_integration_tests)  # 必须在 gtest_discover_tests 之前：它在构建时就要运行这个程序
+endif()
+gtest_discover_tests(inference_integration_tests)

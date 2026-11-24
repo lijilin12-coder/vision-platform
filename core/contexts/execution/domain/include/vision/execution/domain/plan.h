@@ -13,6 +13,7 @@
 #include "vision/common/result.h"
 #include "vision/kernel/geometry.h"
 #include "vision/kernel/match_template.h"
+#include "vision/kernel/model.h"
 #include "vision/kernel/signature.h"
 #include "vision/kernel/value.h"
 
@@ -27,6 +28,8 @@ struct PlanNode {
     std::optional<Roi> roi;
     // 模板参数名 → 已经解码好的匹配模板。编译执行计划之前就准备好，之后每次检测不再读取、解码
     std::map<std::string, MatchTemplateData> templates;
+    // 模型参数名 → 已经加载好的模型。同样在编译执行计划之前准备好
+    std::map<std::string, std::shared_ptr<const InferenceModel>> models;
 };
 
 struct PlanEdge {

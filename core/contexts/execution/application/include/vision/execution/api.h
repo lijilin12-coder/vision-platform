@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "vision/kernel/model.h"
 #include "vision/authoring/api.h"  // 只用到发布语言 RecipeVersionDocument
 #include "vision/catalog/api.h"
 #include "vision/common/domain_event.h"
@@ -60,6 +61,15 @@ public:
     virtual Result<Image> load(const authoring::RecipeDocumentTemplate& ref) = 0;
 };
 
+// 端口：按模型版本 ID 取出一个已经加载好、可以运行的模型。
+// requirePublished：正式检测（产线、上线前的检查）只能用已经发布的模型版本；调试运行可以用未发布的——
+// 刚训练出来的模型要先试一试，才知道该不该发布。
+class ModelSource {
+public:
+    virtual ~ModelSource() = default;
+    virtual Result<std::shared_ptr<const InferenceModel>> load(const std::string& modelVersionId, bool requirePublished) = 0;
+};
+
 // 应用服务：检测引擎。被方案编排（调试）、上线管理（检查）、工位运行（产线）复用（D4-2）。
 class ExecutionService {
 public:
@@ -78,6 +88,8 @@ public:
 
     // 用到匹配模板的方案需要它。模板在编译执行计划时取出、解码，之后每次检测没有额外开销。
     void useTemplateSource(TemplateSource& source);
+    // 用到模型的方案需要它。模型在编译执行计划时加载，之后每次检测直接运行。
+    void useModelSource(ModelSource& source);
 
 private:
     struct Impl;

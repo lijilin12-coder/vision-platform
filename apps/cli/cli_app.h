@@ -18,6 +18,9 @@
 #include "vision/content/content_store.h"
 #include "vision/eventbus/in_memory_event_bus.h"
 #include "vision/execution/api.h"
+#ifdef VISION_WITH_ONNXRUNTIME
+#include "vision/inference_onnx/onnx_model_source.h"
+#endif
 #include "vision/models/api.h"
 #include "vision/persistence/json_repositories.h"
 #include "vision/persistence/runtime_repositories.h"
@@ -41,6 +44,16 @@ private:
     const authoring::AuthoringService& authoring_;
 };
 
+// 把“这个方案版本能不能加载”这个端口接到检测引擎上：让它真的加载一次（结果会留在缓存里，不白做）。
+class ExecutionLoadCheck final : public release::LoadCheck {
+public:
+    explicit ExecutionLoadCheck(execution::ExecutionService& execution) : execution_(execution) {}
+    Status canLoad(const authoring::RecipeVersionDocument& recipe) override { return execution_.prepare(recipe); }
+
+private:
+    execution::ExecutionService& execution_;
+};
+
 // 组装根：在这里把适配器和各个上下文的应用服务连接起来。
 // 成员的声明顺序就是构造顺序，析构时反过来：工位服务最先析构，它会等后台加载线程结束。
 struct App {
@@ -55,6 +68,7 @@ struct App {
     execution::ExecutionService execution;
     AuthoringRecipeSource recipeSource;
     release::ReleaseService releases;
+    ExecutionLoadCheck loadCheck;
     station::StationService stations;
 
     // ---- 以下只属于方案构建平台（ADR-28）：基准图集、工作流、方案助手 ----
@@ -83,6 +97,10 @@ struct App {
     models::ModelService models;
     content::DataDatasetSource datasetSource;
     content::RepositoryModelImporter modelImporter;
+#ifdef VISION_WITH_ONNXRUNTIME
+    // 推理引擎：检测引擎通过它运行模型仓库里的模型。编译时关掉了推理功能的话，用到模型的方案会报“没有配置推理引擎”
+    inference_onnx::OnnxModelSource modelSource;
+#endif
     http::CurlCommandHttpClient trainingHttp;
     std::unique_ptr<training::TrainingBackend> trainingBackend;
     training::TrainingService training;
@@ -100,6 +118,7 @@ struct App {
           execution(catalog::OperatorCatalog::global(), bus),
           recipeSource(authoring),
           releases(releaseRepository, recipeSource, bus),
+          loadCheck(execution),
           stations(stationRepository, releases, execution, bus),
           goldenSetRepository(dataDir),
           goldenSets(goldenSetRepository, bus),
@@ -119,6 +138,9 @@ struct App {
           models(modelVersionRepository, modelFiles, bus),
           datasetSource(data),
           modelImporter(models),
+#ifdef VISION_WITH_ONNXRUNTIME
+          modelSource(models),
+#endif
           trainingBackend(trainingUrl.empty()
                               ? std::unique_ptr<training::TrainingBackend>(std::make_unique<content::NoTrainingBackend>())
                               : std::make_unique<training_http::HttpTrainingBackend>(trainingHttp, trainingUrl)),
@@ -127,6 +149,10 @@ struct App {
         // 匹配模板：方案编排往内容仓库里存，检测引擎从内容仓库里取
         authoring.useTemplateStore(templates);
         execution.useTemplateSource(templates);
+        releases.useLoadCheck(loadCheck);
+#ifdef VISION_WITH_ONNXRUNTIME
+        execution.useModelSource(modelSource);
+#endif
         bus.subscribe("*", [this](const EventPtr& e) {
             // 每个领域事件都记入日志：事后可以还原“发生过什么”。
             // 每次检测都有一个“检测已完成”，数量很大，记为 debug，平时不输出。

@@ -20,11 +20,12 @@ namespace {
 class CatalogNodeRunner final : public NodeRunner {
 public:
     CatalogNodeRunner(std::unique_ptr<catalog::Operator> op, OperatorSignature sig,
-                      std::map<std::string, MatchTemplateData> templates)
-        : op_(std::move(op)), sig_(std::move(sig)), templates_(std::move(templates)) {}
+                      std::map<std::string, MatchTemplateData> templates,
+                      std::map<std::string, std::shared_ptr<const InferenceModel>> models)
+        : op_(std::move(op)), sig_(std::move(sig)), templates_(std::move(templates)), models_(std::move(models)) {}
 
     Result<PortValues> run(const PortValues& inputs, const ParamMap& params, const std::optional<Roi>& roi) override {
-        catalog::OpContext ctx(inputs, params, roi, &templates_);
+        catalog::OpContext ctx(inputs, params, roi, &templates_, &models_);
         try {
             if (auto st = op_->execute(ctx); !st) return st.error();
         } catch (const std::exception& e) {
@@ -42,6 +43,7 @@ private:
     std::unique_ptr<catalog::Operator> op_;
     OperatorSignature sig_;
     std::map<std::string, MatchTemplateData> templates_;
+    std::map<std::string, std::shared_ptr<const InferenceModel>> models_;
 };
 
 class CatalogRunnerFactory final : public NodeRunnerFactory {
@@ -51,7 +53,7 @@ public:
         const OperatorSignature& sig = node.signature;
         auto op = catalog_.create(sig.id, sig.majorVersion);
         if (!op) return op.error();
-        return std::shared_ptr<NodeRunner>(std::make_shared<CatalogNodeRunner>(std::move(op).value(), sig, node.templates));
+        return std::shared_ptr<NodeRunner>(std::make_shared<CatalogNodeRunner>(std::move(op).value(), sig, node.templates, node.models));
     }
 
 private:
@@ -62,7 +64,7 @@ private:
 // allowUnsetTemplates：调试运行时为真。模板参数还没有设置的节点照样编译进计划，运行到它时才失败；
 // 它上游的节点正常运行、中间结果照样能看。人和方案助手都靠这个从“预处理之后的图像”上框模板。
 Result<PlanSpec> toPlanSpec(const authoring::RecipeVersionDocument& doc, const catalog::OperatorCatalog& catalog,
-                            TemplateSource* templateSource, bool allowUnsetTemplates) {
+                            TemplateSource* templateSource, ModelSource* modelSource, bool allowUnsetTemplates) {
     if (!authoring::isSupportedRecipeDocumentSchema(doc.schemaVersion)) {
         return Result<PlanSpec>::failure("execution.schema", "不支持的方案文档版本：" + doc.schemaVersion);
     }
@@ -75,7 +77,7 @@ Result<PlanSpec> toPlanSpec(const authoring::RecipeVersionDocument& doc, const c
             return Result<PlanSpec>::failure("execution.operator_major",
                                              "算子 " + n.operatorId + " 主版本号不匹配（D5-1）");
         }
-        PlanNode node{n.id, meta->signature, n.params, n.roi, {}};
+        PlanNode node{n.id, meta->signature, n.params, n.roi, {}, {}};
         // 匹配模板：现在就取出来、解码好。出了问题在这里（加载方案时）暴露，而不是等到产线上第一次检测
         for (const auto& def : meta->signature.params) {
             if (def.type != ParamType::Template) continue;
@@ -104,6 +106,24 @@ Result<PlanSpec> toPlanSpec(const authoring::RecipeVersionDocument& doc, const c
             }
             node.templates[def.name] = MatchTemplateData{std::move(image).value(), ref->referenceX, ref->referenceY,
                                                          ref->sourceWidth, ref->sourceHeight};
+        }
+        // 模型：同样现在就加载好。调试运行（allowUnsetTemplates）时：没有设置的先跳过，未发布的模型也可以试
+        for (const auto& def : meta->signature.params) {
+            if (def.type != ParamType::Model) continue;
+            const auto value = n.params.find(def.name);
+            const std::string modelId =
+                value != n.params.end() && std::holds_alternative<std::string>(value->second) ? std::get<std::string>(value->second) : "";
+            const std::string where = "节点 " + n.id + " 的模型参数 " + def.name;
+            if (modelId.empty()) {
+                if (allowUnsetTemplates) continue;
+                return Result<PlanSpec>::failure("execution.model_unset", where + " 还没有设置");
+            }
+            if (modelSource == nullptr) {
+                return Result<PlanSpec>::failure("execution.no_model_source", "这个程序没有配置推理引擎，不能运行用到模型的方案");
+            }
+            auto model = modelSource->load(modelId, /*requirePublished=*/!allowUnsetTemplates);
+            if (!model) return Result<PlanSpec>::failure(model.error().code, where + "：" + model.error().message);
+            node.models[def.name] = std::move(model).value();
         }
         spec.nodes.push_back(std::move(node));
     }
@@ -234,6 +254,7 @@ struct ExecutionService::Impl {
     ExecutionPlanner planner;
     Executor executor;
     TemplateSource* templateSource = nullptr;
+    ModelSource* modelSource = nullptr;
     std::mutex cacheMutex;
     std::map<std::string, std::shared_ptr<const ExecutionPlan>> planCache;  // 按方案版本缓存（02-architecture §6.4）
 
@@ -246,7 +267,7 @@ struct ExecutionService::Impl {
             if (auto it = planCache.find(doc.versionId); it != planCache.end()) return it->second;
         }
         // 调试运行不用缓存（useCache 为假），也只有它允许模板还没有设置
-        auto spec = toPlanSpec(doc, catalog, templateSource, /*allowUnsetTemplates=*/!useCache);
+        auto spec = toPlanSpec(doc, catalog, templateSource, modelSource, /*allowUnsetTemplates=*/!useCache);
         if (!spec) return spec.error();
         auto plan = planner.plan(spec.value());
         if (!plan) return plan.error();
@@ -313,6 +334,7 @@ ExecutionService::ExecutionService(const catalog::OperatorCatalog& catalog, Even
 ExecutionService::~ExecutionService() = default;
 
 void ExecutionService::useTemplateSource(TemplateSource& source) { impl_->templateSource = &source; }
+void ExecutionService::useModelSource(ModelSource& source) { impl_->modelSource = &source; }
 
 Result<InspectionReport> ExecutionService::inspect(const authoring::RecipeVersionDocument& recipe, const Image& frame,
                                                    RunPurpose purpose) {

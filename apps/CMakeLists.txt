@@ -22,6 +22,12 @@ target_link_libraries(vision-cli PRIVATE
   vision_crash
   nlohmann_json::nlohmann_json)
 
+if(VISION_WITH_ONNXRUNTIME)
+  target_link_libraries(vision-cli PRIVATE vision_inference_onnx)
+  target_compile_definitions(vision-cli PRIVATE VISION_WITH_ONNXRUNTIME)
+  vision_copy_onnxruntime(vision-cli)
+endif()
+
 if(WIN32)
   target_link_libraries(vision-cli PRIVATE shell32)  # CommandLineToArgvW
 endif()

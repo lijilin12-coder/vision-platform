@@ -13,6 +13,13 @@
 | nlohmann-json | 3.x | JSON 仓储 |
 | GoogleTest | 1.10+ | 测试 |
 
+### ONNX Runtime（自动下载）
+
+运行模型用的推理引擎。不需要自己安装：第一次运行 `cmake` 配置时会自动下载微软官方的预编译库（约 120 MB，来自 nuget.org），之后用缓存。
+
+- 下载不了时：手工下载 `cmake/OnnxRuntime.cmake` 里写的那个地址，把文件改名为 `.zip` 解压，配置时加 `-DFETCHCONTENT_SOURCE_DIR_ONNXRUNTIME_NUGET=<解压出来的目录>`
+- 暂时不需要模型功能：配置时加 `-DVISION_WITH_ONNXRUNTIME=OFF`。其余功能不受影响；用到模型的方案会提示“没有配置推理引擎”
+
 ## macOS
 
 ```bash

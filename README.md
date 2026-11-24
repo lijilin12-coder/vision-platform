@@ -58,7 +58,8 @@ VID=$(./build/apps/vision-cli recipe publish $RID)
 | [docs/poc/poc-13-report.md](docs/poc/poc-13-report.md) | POC-13 训练闭环（进行中）：第 1 步 样本、数据集版本、规则 N1；第 2 步 训练任务和模型仓库 |
 | [docs/poc/locating-report.md](docs/poc/locating-report.md) | 定位算子实测：模板匹配的精度和耗时、对齐对测量精度的影响 |
 | [docs/dev/build.md](docs/dev/build.md) | 构建与运行 |
-| [docs/dev/operators.md](docs/dev/operators.md) | 算子一览：17 个算子各自解决什么问题、怎么搭配 |
+| [docs/dev/operators.md](docs/dev/operators.md) | 算子一览：18 个算子各自解决什么问题、怎么搭配 |
+| [docs/dev/training-demo.md](docs/dev/training-demo.md) | 训练闭环演示：从一批图像到工位上运行的模型，一步一步走一遍 |
 | [docs/dev/how-to-add-operator.md](docs/dev/how-to-add-operator.md) | 如何新增一个算子 |
 | [docs/dev/logging-and-crash-dumps.md](docs/dev/logging-and-crash-dumps.md) | 日志与崩溃转储：文件在哪里、怎么写日志、怎么分析崩溃 |
 | [docs/tutorial/cpp/](docs/tutorial/cpp/README.md) | 现代工程 C++ 教程（从竞赛写法到工程写法） |

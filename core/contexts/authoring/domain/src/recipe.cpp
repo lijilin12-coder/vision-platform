@@ -283,6 +283,16 @@ Result<RecipeVersion> Recipe::publish() {
             }
         }
     }
+    // P3：每个需要模型的节点都指明了用哪个模型版本
+    for (const auto& n : nodes_) {
+        for (const auto& def : n.op.params) {
+            if (def.type != ParamType::Model) continue;
+            const auto it = n.params.find(def.name);
+            if (it == n.params.end() || std::get<std::string>(it->second).empty()) {
+                problems.push_back("节点 " + n.id + " 的模型参数 " + def.name + " 还没有设置");
+            }
+        }
+    }
 
     if (!problems.empty()) {
         std::string msg = "方案不能发布：";

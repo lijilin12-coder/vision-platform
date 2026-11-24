@@ -8,6 +8,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(VISION_BUILD_TESTS "Build unit and integration tests" ON)
 option(VISION_BUILD_TUTORIALS "Build the OpenCV tutorial examples" ON)
+option(VISION_WITH_ONNXRUNTIME "Run models with ONNX Runtime (downloads the prebuilt library)" ON)
 
 if(MSVC)
   add_compile_options(/W4 /utf-8)
@@ -20,6 +21,14 @@ include(cmake/VisionBoundaries.cmake)
 # 只有算子和适配器需要 OpenCV；领域层不允许依赖它（见 docs/02-architecture.md §4.3）
 find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs)
 find_package(nlohmann_json 3 REQUIRED)
+
+if(VISION_WITH_ONNXRUNTIME)
+  include(cmake/OnnxRuntime.cmake)
+else()
+  # 关掉推理功能时，这个函数什么也不做，调用它的地方不用再判断
+  function(vision_copy_onnxruntime target)
+  endfunction()
+endif()
 
 if(VISION_BUILD_TESTS)
   enable_testing()

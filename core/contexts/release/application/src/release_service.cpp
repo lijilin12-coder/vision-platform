@@ -16,7 +16,13 @@ ReleaseService::ReleaseService(ReleaseRepository& releases, const RecipeVersionS
 
 Result<std::string> ReleaseService::createRelease(const std::string& recipeVersionId) {
     // 上线包引用的方案版本必须存在。（“必须是有效状态”的规则 L3 要等方案版本的状态进入发布语言之后再检查。）
-    if (auto doc = recipes_.find(recipeVersionId); !doc) return doc.error();
+    auto doc = recipes_.find(recipeVersionId);
+    if (!doc) return doc.error();
+    if (loadCheck_ != nullptr) {
+        if (auto st = loadCheck_->canLoad(doc.value()); !st) {
+            return Result<std::string>::failure(st.error().code, "这个方案版本现在不能做成上线包：" + st.error().message);
+        }
+    }
 
     auto release = Release::create(newUuid(), recipeVersionId);
     if (!release) return release.error();

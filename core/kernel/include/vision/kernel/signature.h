@@ -17,7 +17,9 @@ using ParamMap = std::map<std::string, ParamValue>;
 
 // Template：值是方案里某个匹配模板的 ID（文本）；空文本表示还没有设置。
 // 这个 ID 是否真的存在，由方案编排检查（不变量 R7）；这里只检查它是文本。
-enum class ParamType { Number, Bool, Text, Choice, Template };
+// Model：值是模型仓库里一个模型版本的 ID（文本，例如 "surface-anomaly@v1"）；空文本表示还没有设置。
+// 这个模型版本是否存在、能不能用，在加载方案时由检测执行检查。
+enum class ParamType { Number, Bool, Text, Choice, Template, Model };
 
 // 参数定义（术语表 §2）：名称、类型、默认值、取值范围。
 struct ParamDef {

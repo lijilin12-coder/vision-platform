@@ -1,0 +1,14 @@
+{
+  "name": "表面异常检测（示例，用训练出来的模型）",
+  "nodes": [
+    { "key": "input",   "operator": "vision.image_input" },
+    { "key": "gray",    "operator": "vision.to_gray" },
+    { "key": "anomaly", "operator": "vision.anomaly_detect", "params": { "model": "surface-anomaly@v1" } },
+    { "key": "judge",   "operator": "vision.judge_range", "params": { "min": 0, "max": 1, "label": "异常程度", "unit": "倍阈值" } }
+  ],
+  "edges": [
+    ["input.image",   "gray.image"],
+    ["gray.image",    "anomaly.image"],
+    ["anomaly.ratio", "judge.value"]
+  ]
+}

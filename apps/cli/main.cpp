@@ -112,7 +112,12 @@ constexpr const char* kUsage = R"(用法：vision-cli [--data <目录>] <命令>
   train status <任务ID>                         向训练后端查询一次进度并显示
   train wait <任务ID>                           等到训练结束
   train list | train cancel <任务ID>
-  model list | model show <模型版本ID> | model publish <模型版本ID>
+  model list | model show <模型版本ID>
+  model publish <模型版本ID>                    发布。未发布的模型只能在调试运行里试用；正式检测、上线只能用已发布的
+  model import <模型文件> --name <模型名> --size <宽> <高> [--threshold <阈值>] [--kind <种类>]
+                                               手工导入一个在别处训练好的 ONNX 模型，输出模型版本 ID
+                                               在方案里使用模型：加一个 vision.anomaly_detect 节点，把它的 model 参数设成模型版本 ID
+                                               （示例见 samples/recipes/surface-anomaly.draft.json）
 工具
   sample-images <输出目录> [宽 高]              生成示例图像（良品与带亮斑缺陷的产品），默认 640×480
   debug crash <segv|abort|throw>                故意让程序崩溃，用来验证崩溃报告和转储文件能否生成
