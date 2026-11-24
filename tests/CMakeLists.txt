@@ -128,3 +128,8 @@ target_link_libraries(training_integration_tests PRIVATE
   vision_content vision_imaging vision_eventbus vision_persistence
   GTest::gtest_main)
 gtest_discover_tests(training_integration_tests)
+
+# ---- 训练服务的 HTTP 适配器（POC-13 第 3 步）：用假的 HTTP 回复检查请求和回复的翻译 ----
+add_executable(training_http_tests training_http_test.cpp)
+target_link_libraries(training_http_tests PRIVATE vision_training_http nlohmann_json::nlohmann_json GTest::gtest_main)
+gtest_discover_tests(training_http_tests)

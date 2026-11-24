@@ -171,8 +171,11 @@ TEST_F(TrainingLoop, CompletedJobBecomesAnUnpublishedModelVersionWithFullProvena
         EXPECT_TRUE(fs::exists(pathFromUtf8(s.contentPath)));
         ++(s.split == training::Split::Train ? train : s.split == training::Split::Validation ? val : test);
     }
-    EXPECT_EQ(train, 20);  // 合格 20 个：16 / 2 / 2；不合格只有 4 个，按 10% 四舍五入是 0 个，全部进了训练集
-    EXPECT_EQ(val + test, 4);
+    // 合格 20 个：16 / 2 / 2。不合格只有 4 个，按 10% 四舍五入是 0 个——
+    // 但测试集和验证集里各至少留一个（否则算不出指标），所以是 2 / 1 / 1
+    EXPECT_EQ(train, 18);
+    EXPECT_EQ(val, 3);
+    EXPECT_EQ(test, 3);
 
     backend.running(0.4);
     backend.completed(modelFile());

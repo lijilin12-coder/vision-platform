@@ -1,4 +1,4 @@
-#include "vision/llm/http_client.h"
+#include "vision/http/http_client.h"
 
 #include <cstdio>
 #include <filesystem>
@@ -16,7 +16,7 @@
 #define VISION_PCLOSE pclose
 #endif
 
-namespace vision::llm {
+namespace vision::http {
 
 namespace fs = std::filesystem;
 
@@ -44,7 +44,7 @@ struct TempFiles {
 
 }  // namespace
 
-Result<HttpResponse> CurlCommandHttpClient::post(const HttpRequest& request) {
+Result<HttpResponse> CurlCommandHttpClient::send(const HttpRequest& request) {
     using R = Result<HttpResponse>;
     std::error_code ec;
     const fs::path dir = fs::temp_directory_path(ec);
@@ -54,7 +54,8 @@ Result<HttpResponse> CurlCommandHttpClient::post(const HttpRequest& request) {
     const fs::path configFile = dir / (stem + ".cfg"), bodyFile = dir / (stem + ".body"), outFile = dir / (stem + ".out");
     temp.paths = {configFile, bodyFile, outFile};
 
-    {
+    const bool hasBody = request.method == "POST" || !request.body.empty();
+    if (hasBody) {
         std::ofstream body(bodyFile, std::ios::binary);
         body << request.body;
         if (!body) return R::failure("http.temp", "无法写临时文件");
@@ -65,9 +66,10 @@ Result<HttpResponse> CurlCommandHttpClient::post(const HttpRequest& request) {
         fs::permissions(configFile, fs::perms::owner_read | fs::perms::owner_write, ec);
         std::ofstream config(configFile, std::ios::binary);
         config << "url = " << quoted(request.url) << "\n";
-        config << "request = \"POST\"\n";
+        config << "request = " << quoted(request.method) << "\n";
+        config << "noproxy = \"localhost,127.0.0.1\"\n";
         for (const auto& h : request.headers) config << "header = " << quoted(h) << "\n";
-        config << "data-binary = " << quoted("@" + pathToUtf8(bodyFile)) << "\n";
+        if (hasBody) config << "data-binary = " << quoted("@" + pathToUtf8(bodyFile)) << "\n";
         config << "output = " << quoted(pathToUtf8(outFile)) << "\n";
         config << "write-out = \"%{http_code}\"\n";
         config << "max-time = " << request.timeoutSeconds << "\n";
@@ -86,6 +88,8 @@ Result<HttpResponse> CurlCommandHttpClient::post(const HttpRequest& request) {
 
     if (exitCode != 0) {
         // 没有收到回复：断网、域名解析失败、超时、没有安装 curl……
+        // 没有收到回复时 curl 仍然会按 write-out 打印一个 "000"：去掉它，只留出错信息
+        if (printed.size() >= 3 && printed.compare(printed.size() - 3, 3, "000") == 0) printed.erase(printed.size() - 3);
         while (!printed.empty() && (printed.back() == '\n' || printed.back() == '\r')) printed.pop_back();
         return R::failure("http.unreachable", "请求没有成功：" + (printed.empty() ? "curl 退出码 " + std::to_string(exitCode) : printed));
     }
@@ -102,4 +106,4 @@ Result<HttpResponse> CurlCommandHttpClient::post(const HttpRequest& request) {
     return response;
 }
 
-}  // namespace vision::llm
+}  // namespace vision::http

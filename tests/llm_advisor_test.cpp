@@ -20,7 +20,7 @@ namespace {
 // 假的 HTTP 客户端：按顺序给出事先准备好的回复，并记下收到的每一个请求
 class FakeHttp final : public HttpClient {
 public:
-    Result<HttpResponse> post(const HttpRequest& request) override {
+    Result<HttpResponse> send(const HttpRequest& request) override {
         requests.push_back(request);
         if (replies.empty()) return Result<HttpResponse>::failure("http.unreachable", "模拟：断网");
         auto next = replies.front();
@@ -333,7 +333,7 @@ TEST(CurlCommandHttpClient, ReportsFailureWhenTheHostIsUnreachable) {
     request.headers = {"Authorization: Bearer secret-for-test"};
     request.body = "{}";
     request.timeoutSeconds = 5;
-    const auto response = http.post(request);
+    const auto response = http.send(request);
     ASSERT_FALSE(response.ok());
     EXPECT_EQ(response.error().message.find("secret-for-test"), std::string::npos);  // 出错信息里没有密钥
 }

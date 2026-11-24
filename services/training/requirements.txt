@@ -1,0 +1,8 @@
+# 训练服务的依赖。
+# torch 建议装只含 CPU 的版本（小得多）：
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+# 有 NVIDIA 显卡时直接 pip install torch 即可。
+torch>=2.2
+numpy
+pillow
+onnx

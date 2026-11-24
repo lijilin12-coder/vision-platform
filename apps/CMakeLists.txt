@@ -12,6 +12,7 @@ target_link_libraries(vision-cli PRIVATE
   models_application
   training_application
   vision_llm
+  vision_training_http
   catalog_application
   vision_operators
   vision_imaging

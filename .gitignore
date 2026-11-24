@@ -108,3 +108,9 @@ samples/images/
 vcpkg_installed/
 build.log
 prog.exe
+
+# Python（训练服务）
+__pycache__/
+*.pyc
+.venv/
+services/training/work/

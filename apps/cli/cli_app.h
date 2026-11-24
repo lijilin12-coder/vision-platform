@@ -4,6 +4,7 @@
 
 #include <filesystem>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -23,6 +24,7 @@
 #include "vision/release/api.h"
 #include "vision/station/api.h"
 #include "vision/training/api.h"
+#include "vision/training_http/http_training_backend.h"
 
 namespace vision::cli {
 
@@ -72,20 +74,22 @@ struct App {
     data::DataService data;
     content::DataSampleRegistry sampleRegistry;
 
-    // 模型仓库（BC-7）和模型训练（BC-12）。训练后端现在是占位的“没有配置”：
-    // 提交的训练任务会以“已失败”记录下来，其余功能照常可用。真正的训练服务见 POC-13 第 3 步。
+    // 模型仓库（BC-7）和模型训练（BC-12）。
+    // 训练后端：配置了训练服务的地址就通过 HTTP 调它（services/training）；没有配置时是占位的“没有配置”——
+    // 提交的训练任务会以“已失败”记录下来，其余功能照常可用。
     persistence::JsonModelVersionRepository modelVersionRepository;
     persistence::JsonTrainingJobRepository trainingJobRepository;
     content::ModelFileStore modelFiles;
     models::ModelService models;
     content::DataDatasetSource datasetSource;
     content::RepositoryModelImporter modelImporter;
-    content::NoTrainingBackend noTrainingBackend;
+    http::CurlCommandHttpClient trainingHttp;
+    std::unique_ptr<training::TrainingBackend> trainingBackend;
     training::TrainingService training;
 
     bool verboseEvents = false;
 
-    explicit App(const std::filesystem::path& dataDir)
+    explicit App(const std::filesystem::path& dataDir, const std::string& trainingUrl = {})
         : recipes(dataDir),
           versions(dataDir),
           releaseRepository(dataDir),
@@ -115,7 +119,10 @@ struct App {
           models(modelVersionRepository, modelFiles, bus),
           datasetSource(data),
           modelImporter(models),
-          training(trainingJobRepository, noTrainingBackend, datasetSource, modelImporter, bus) {
+          trainingBackend(trainingUrl.empty()
+                              ? std::unique_ptr<training::TrainingBackend>(std::make_unique<content::NoTrainingBackend>())
+                              : std::make_unique<training_http::HttpTrainingBackend>(trainingHttp, trainingUrl)),
+          training(trainingJobRepository, *trainingBackend, datasetSource, modelImporter, bus) {
         goldenSets.useSampleRegistry(sampleRegistry);
         // 匹配模板：方案编排往内容仓库里存，检测引擎从内容仓库里取
         authoring.useTemplateStore(templates);
