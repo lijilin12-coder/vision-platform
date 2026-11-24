@@ -5,6 +5,7 @@
 //
 // 两个平台的划分见 docs/ddd/08-platforms-and-training.md 和 docs/ddd/13-two-programs.md。
 
+#include <chrono>
 #include <filesystem>
 #include <iostream>
 #include <memory>
@@ -22,6 +23,7 @@
 #endif
 #include "vision/models/api.h"
 #include "vision/persistence/runtime_repositories.h"
+#include "vision/quality/api.h"
 #include "vision/release/api.h"
 #include "vision/station/api.h"
 
@@ -56,6 +58,42 @@ public:
 
 private:
     execution::ExecutionService& execution_;
+};
+
+// 系统时钟
+class SystemClock final : public quality::Clock {
+public:
+    std::int64_t nowMs() override {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    }
+};
+
+// 工位每完成一次检测，交给质量分析记下来。
+// 两个上下文互不认识：工位只知道“有人想听”，质量分析只知道“有一次检测要记”，翻译在这里做。
+class RecordInspections final : public station::InspectionObserver {
+public:
+    explicit RecordInspections(quality::QualityService& quality) : quality_(quality) {}
+    void onInspected(const std::string& stationId, const station::StationInspection& inspection) override {
+        quality::InspectionToRecord in;
+        in.stationId = stationId;
+        in.sequence = inspection.sequence;
+        in.releaseId = inspection.releaseId;
+        in.recipeVersionId = inspection.report.recipeVersionId;
+        in.frameName = inspection.frameName;
+        in.verdict = inspection.report.verdict;
+        for (const auto& r : inspection.report.reasons) in.reasons.push_back({r.nodeId, r.pass, r.text});
+        in.result = inspection.report.result;
+        in.totalMs = inspection.report.totalMs;
+        in.swapped = inspection.swapped;
+        in.frame = inspection.frame;
+        // 记录写不下来不能让检测失败：产线照常跑，只在日志里留一条
+        if (auto r = quality_.record(in); !r) {
+            log::warn("quality", "检测记录没有写下来", {{"station", stationId}, {"message", r.error().message}});
+        }
+    }
+
+private:
+    quality::QualityService& quality_;
 };
 
 // 成员的声明顺序就是构造顺序，析构时反过来。
@@ -93,6 +131,13 @@ struct LinePlatform {
     persistence::JsonStationRepository stationRepository;
     station::StationService stations;
 
+    // 质量分析（BC-10）：每次产线检测记一条。不合格的和出错的连图像一起留下
+    persistence::JsonlInspectionRecordRepository inspectionRecords;
+    SystemClock clock;
+    content::InspectionImages inspectionImages;
+    quality::QualityService quality;
+    RecordInspections recordInspections;
+
     bool verboseEvents = false;
 
     // 工位的后台加载线程会用到检测引擎、模型、方案版本的来源。在任何成员开始销毁之前，先等它们全部结束。
@@ -121,13 +166,18 @@ struct LinePlatform {
           contentArchive(contentStore),
           packages(recipeSource, importedRecipes, packageExchange, operatorInventory, modelArchive, contentArchive, bus),
           stationRepository(dataDir),
-          stations(stationRepository, releases, execution, bus) {
+          stations(stationRepository, releases, execution, bus),
+          inspectionRecords(dataDir),
+          inspectionImages(contentStore),
+          quality(inspectionRecords, clock, inspectionImages),
+          recordInspections(quality) {
         execution.useTemplateSource(templates);
 #ifdef VISION_WITH_ONNXRUNTIME
         execution.useModelSource(modelSource);
 #endif
         releases.useLoadCheck(loadCheck);
         stations.useImageSources(imageSources);
+        stations.useInspectionObserver(recordInspections);
         bus.subscribe("*", [this](const EventPtr& e) {
             // 每个领域事件都记入日志：事后可以还原“发生过什么”。
             // 每次检测都有一个“检测已完成”，数量很大，记为 debug，平时不输出。

@@ -161,6 +161,12 @@ target_link_libraries(image_source_tests PRIVATE vision_platform_assembly vision
 vision_copy_onnxruntime(image_source_tests)
 gtest_discover_tests(image_source_tests)
 
+# ---- 检测记录（BC-10 质量分析）----
+add_executable(quality_tests quality_test.cpp)
+target_link_libraries(quality_tests PRIVATE vision_platform_assembly vision_operators quality_domain GTest::gtest_main)
+vision_copy_onnxruntime(quality_tests)
+gtest_discover_tests(quality_tests)
+
 # ---- 方案包（REL-02）：导入规则、包文件、两台“机器”之间导出和导入 ----
 add_executable(package_tests package_test.cpp)
 target_link_libraries(package_tests PRIVATE vision_platform_assembly vision_operators release_domain GTest::gtest_main)

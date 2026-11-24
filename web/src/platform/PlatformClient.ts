@@ -1,4 +1,4 @@
-import type { DebugRun, ModelInfo, OperatorMeta, ParamValue, Recipe, RecipeSummary, Release, Roi, Station, UploadedImage } from "./types";
+import type { DebugRun, ModelInfo, OperatorMeta, ParamValue, Recipe, RecipeSummary, QualitySummary, RecordQuery, Release, Roi, SavedRecord, Station, UploadedImage } from "./types";
 
 // 界面使用平台的唯一入口。
 //
@@ -39,6 +39,10 @@ export interface PlatformClient {
   stopStation(stationId: string): Promise<Station>;
   // 工位最近检测的那一帧。sequence 只是为了让地址每次不同（浏览器不要拿旧图充数）
   stationFrameUrl(stationId: string, sequence: number): string;
+
+  // ---- 保存下来的检测记录 ----
+  listRecords(stationId: string, query?: RecordQuery): Promise<SavedRecord[]>; // 从新到旧
+  getSummary(stationId: string): Promise<QualitySummary>;
 
   // 返回可以直接放进 <img src> 的地址。（不返回字节：鸿蒙的桥不一定传得了二进制，那时可以换成别的地址形式。）
   imageUrl(imageId: string): string;

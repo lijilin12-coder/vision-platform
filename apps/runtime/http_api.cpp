@@ -548,6 +548,44 @@ void ApiServer::Impl::routes() {
         res.set_content(reinterpret_cast<const char*>(png.value().data()), png.value().size(), "image/png");
     });
 
+    // ---- 检测记录（质量分析）：保存在磁盘上的，程序重启之后还在 ----
+    // ?verdict=NG 只要这种判定；?before=<记录编号> 翻页，只要比它更早的；?limit=N（默认 50，最多 500）。从新到旧
+    server.Get("/api/stations/" + id + "/records", [this](const Request& req, Response& res) {
+        const std::string stationId = req.matches[1];
+        if (auto view = platform.stations.getStation(stationId); !view) return replyError(res, view.error());
+        quality::RecordQuery query;
+        query.verdict = req.get_param_value("verdict");
+        query.beforeId = req.get_param_value("before");
+        if (!query.verdict.empty() && query.verdict != "OK" && query.verdict != "NG" && query.verdict != "ERROR") {
+            return replyBadRequest(res, "verdict 只能是 OK、NG 或 ERROR");
+        }
+        try {
+            if (req.has_param("limit")) query.limit = std::stoi(req.get_param_value("limit"));
+        } catch (const std::exception&) {
+            return replyBadRequest(res, "limit 必须是一个数字");
+        }
+        json list = json::array();
+        for (const auto& r : platform.quality.query(stationId, query)) {
+            json reasons = json::array();
+            for (const auto& reason : r.reasons) reasons.push_back({{"nodeId", reason.nodeId}, {"pass", reason.pass}, {"text", reason.text}});
+            // imageId：留下了图像的话，用 GET /api/images/{imageId} 取；没有留就是空的
+            list.push_back({{"id", r.id}, {"time", r.time}, {"timeMs", r.timeMs}, {"sequence", r.sequence}, {"frameName", r.frameName},
+                            {"verdict", r.verdict}, {"releaseId", r.releaseId}, {"recipeVersionId", r.recipeVersionId},
+                            {"imageId", r.imageSha256}, {"swapped", r.swapped}, {"totalMs", r.totalMs},
+                            {"reasons", std::move(reasons)}, {"result", resultJson(r.result)}});
+        }
+        reply(res, 200, {{"records", std::move(list)}});
+    });
+    // 这个工位有记录以来的汇总：检测了多少、良率、每种缺陷出现了多少个
+    server.Get("/api/stations/" + id + "/summary", [this](const Request& req, Response& res) {
+        const std::string stationId = req.matches[1];
+        if (auto view = platform.stations.getStation(stationId); !view) return replyError(res, view.error());
+        const auto s = platform.quality.summary(stationId);
+        json j = {{"total", s.total}, {"ok", s.ok}, {"ng", s.ng}, {"error", s.error}, {"defectsByCategory", s.defectsByCategory}};
+        j["yield"] = s.yield ? json(*s.yield) : json(nullptr);
+        reply(res, 200, j);
+    });
+
     // ---- 模型仓库（只读）：界面里“模型”这种参数要一个可以选的列表 ----
     server.Get("/api/models", [this](const Request&, Response& res) {
         json list = json::array();

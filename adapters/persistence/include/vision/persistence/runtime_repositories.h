@@ -9,6 +9,7 @@
 #include "vision/data/domain/dataset.h"
 #include "vision/data/domain/sample.h"
 #include "vision/models/domain/model_version.h"
+#include "vision/quality/domain/inspection_record.h"
 #include "vision/release/domain/golden_set.h"
 #include "vision/release/domain/release.h"
 #include "vision/station/domain/station.h"
@@ -50,6 +51,24 @@ public:
     std::vector<std::string> listIds() const override;
 
 private:
+    std::filesystem::path dir_;
+};
+
+// <root>/inspection-records/<工位 ID>/<日期>.jsonl
+// 检测记录：每个工位每天一个文件，一行一条（JSON），只往后追加。
+// 为什么不是一条记录一个文件：一个工位一天可能有几万次检测。
+// 为什么不是数据库：现在的查询只有“某个工位最近的若干条”，按天分文件足够；也不用为它引入一个依赖。
+class JsonlInspectionRecordRepository final : public quality::InspectionRecordRepository {
+public:
+    explicit JsonlInspectionRecordRepository(std::filesystem::path root);
+    Status append(const quality::InspectionRecord& record) override;
+    std::vector<quality::InspectionRecord> query(const std::string& stationId, const quality::RecordFilter& filter) override;
+    std::optional<quality::InspectionRecord> find(const std::string& stationId, const std::string& recordId) override;
+    std::vector<quality::InspectionRecord> all(const std::string& stationId) override;
+
+private:
+    // 这个工位的记录文件，从新到旧
+    std::vector<std::filesystem::path> files(const std::string& stationId) const;
     std::filesystem::path dir_;
 };
 

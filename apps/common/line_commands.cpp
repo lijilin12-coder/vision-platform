@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <iomanip>
@@ -459,9 +460,40 @@ int runStationCommand(platform::LinePlatform& app, const std::vector<std::string
         const auto st = app.stations.unbindImageSource(args[2]);
         return st ? 0 : fail(st.error());
     }
+    if (sub == "records") {
+        // station records <工位ID> [--ng] [--limit N]
+        quality::RecordQuery query;
+        if (takeFlag(args, "--ng")) query.verdict = "NG";
+        query.limit = takeIntOption(args, "--limit", 20);
+        if (args.size() < 3) return usageError("station records <工位ID> [--ng] [--limit N]");
+        if (auto v = app.stations.getStation(args[2]); !v) return fail(v.error());
+        for (const auto& r : app.quality.query(args[2], query)) {
+            std::cout << r.time << "  #" << r.sequence << "  " << r.verdict << "  " << (r.frameName.empty() ? "-" : r.frameName) << "  上线包 "
+                      << shortId(r.releaseId);
+            if (!r.result.defects.empty()) std::cout << "  缺陷 " << r.result.defects.size() << " 个";
+            if (!r.imageSha256.empty()) std::cout << "  图像 " << shortId(r.imageSha256);
+            std::cout << "\n";
+            for (const auto& reason : r.reasons) {
+                if (!reason.pass) std::cout << "      " << reason.text << "\n";
+            }
+        }
+        return 0;
+    }
+    if (sub == "summary" && args.size() >= 3) {
+        if (auto v = app.stations.getStation(args[2]); !v) return fail(v.error());
+        const auto s = app.quality.summary(args[2]);
+        std::cout << "检测 " << s.total << " 次：合格 " << s.ok << "，不合格 " << s.ng << "，出错 " << s.error << "\n";
+        if (s.yield) {
+            char text[40];
+            std::snprintf(text, sizeof text, "%.1f%%", *s.yield * 100);
+            std::cout << "良率 " << text << "（出错的不算在内）\n";
+        }
+        for (const auto& [category, count] : s.defectsByCategory) std::cout << "  缺陷 " << category << "：" << count << " 个\n";
+        return 0;
+    }
     if (sub == "run") return cmdStationRun(app, args);
     if (sub == "stress") return cmdStationStress(app, args);
-    return usageError("station create | list | show | deploy | rollback | run | stress（详见 vision-cli help）");
+    return usageError("station create | list | show | deploy | rollback | run | records | summary | stress（详见 vision-cli help）");
 }
 
 // ---------- package ----------

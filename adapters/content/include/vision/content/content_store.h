@@ -14,6 +14,7 @@
 #include "vision/data/api.h"
 #include "vision/execution/api.h"
 #include "vision/models/api.h"
+#include "vision/quality/api.h"
 #include "vision/release/api.h"
 #include "vision/training/api.h"
 #include "vision/training/domain/training_job.h"
@@ -52,6 +53,17 @@ private:
 // 样本的图像内容：把导入的图像文件原样存进内容仓库。实现数据上下文的 SampleContent 端口。
 // 哈希对文件的字节计算：同一个文件换个名字再导入，哈希相同，就是同一个样本。
 // （同一幅画面重新保存成另一种格式，字节不同，会被当成两个样本——见 docs/06-open-questions.md Q-09。）
+// 检测时的图像（质量分析要留下来的那些）：编码成 PNG 存进内容仓库。
+// 和上传的样图存在同一个地方，所以同样可以用内容哈希取出来看。
+class InspectionImages final : public quality::ImageArchive {
+public:
+    explicit InspectionImages(FileContentStore& store) : store_(store) {}
+    Result<std::string> store(const Image& image) override;
+
+private:
+    FileContentStore& store_;
+};
+
 class SampleFiles final : public data::SampleContent {
 public:
     explicit SampleFiles(FileContentStore& store) : store_(store) {}

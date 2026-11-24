@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FakePlatformClient } from "./platform/FakePlatformClient";
-import type { InspectionRecord } from "./platform/types";
+import type { InspectionRecord, SavedRecord } from "./platform/types";
 import { createStations } from "./stations";
 
 const record = (sequence: number, verdict: "OK" | "NG" = "OK", swapped = false): InspectionRecord => ({
@@ -77,5 +77,59 @@ describe("工位页面", () => {
     expect(stations.releaseName("bbbbbbbb-2222")).toBe("亮斑检测 v2（bbbbbbbb）");
     expect(stations.releaseName("")).toBe("（无）");
     expect(stations.releaseName("cccccccc-3333")).toBe("cccccccc"); // 列表里没有的：只显示编号
+  });
+
+  // ---- 历史记录 ----
+  const saved = (n: number, verdict: "OK" | "NG" = "OK"): SavedRecord => ({
+    ...record(n, verdict), id: String(1000 + n), time: "2026-11-24 12:00:00", recipeVersionId: "亮斑@v1", imageId: verdict === "NG" ? `img-${n}` : "",
+    result: { defects: verdict === "NG" ? [{ nodeId: "n5", category: "亮斑", centerX: 1, centerY: 1, left: 0, top: 0, width: 2, height: 2, area: 4 }] : [],
+      measurements: [], poses: [] },
+  });
+
+  it("历史记录：从新到旧，一次一页，可以往前翻", async () => {
+    const { client, stations } = await setup();
+    for (let n = 1; n <= 70; n++) client.saved.push(saved(n, n % 10 === 0 ? "NG" : "OK"));
+    expect(await stations.loadHistory()).toBe(true);
+    const h = () => stations.state.history;
+    expect(h().records.length).toBe(30);
+    expect(h().records[0].sequence).toBe(70);
+    expect(h().hasMore).toBe(true);
+    expect(h().summary?.total).toBe(70);
+    expect(stations.yieldText(h().summary)).toBe("90.0%");
+    await stations.loadMoreHistory();
+    await stations.loadMoreHistory();
+    expect(h().records.length).toBe(70);
+    expect(h().records[69].sequence).toBe(1);
+    expect(h().hasMore).toBe(false); // 最后一页不满：到头了
+    expect(new Set(h().records.map((r) => r.id)).size).toBe(70); // 翻页没有重复
+  });
+
+  it("历史记录：只看不合格的；点开一条看当时的图像", async () => {
+    const { client, stations } = await setup();
+    for (let n = 1; n <= 20; n++) client.saved.push(saved(n, n % 5 === 0 ? "NG" : "OK"));
+    await stations.loadHistory();
+    stations.pickRecord(stations.state.history.records[0]);
+    await stations.setOnlyNg(true);
+    const h = stations.state.history;
+    expect(h.records.map((r) => r.sequence)).toEqual([20, 15, 10, 5]);
+    expect(h.selected).toBeNull(); // 换了筛选条件：原来点开的那条不一定还在列表里
+    expect(h.summary?.total).toBe(20); // 汇总是全部的，不跟着筛选变
+    expect(h.summary?.defectsByCategory).toEqual({ 亮斑: 4 });
+    stations.pickRecord(h.records[1]);
+    expect(stations.recordImageUrl(h.selected!)).toBe("/api/images/img-15");
+    expect(stations.recordImageUrl(saved(1))).toBe(""); // 合格的没有保留图像
+    expect(stations.yieldText(null)).toBe("—");
+    expect(stations.yieldText({ total: 1, ok: 0, ng: 0, error: 1, yield: null, defectsByCategory: {} })).toBe("—");
+  });
+
+  it("历史记录：换一个工位，原来那个工位的记录不留在页面上", async () => {
+    const { client, stations } = await setup();
+    client.saved.push(saved(1, "NG"));
+    await stations.setOnlyNg(true);
+    expect(stations.state.history.records.length).toBe(1);
+    await stations.create("二号");
+    expect(stations.state.history.records).toEqual([]);
+    expect(stations.state.history.summary).toBeNull();
+    expect(stations.state.history.onlyNg).toBe(true); // 筛选条件是人选的，留着
   });
 });

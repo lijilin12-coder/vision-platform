@@ -15,6 +15,17 @@ function onFrameLoad(event: Event) {
   viewBox.value = `0 0 ${img.naturalWidth} ${img.naturalHeight}`;
 }
 let timer: ReturnType<typeof setInterval> | null = null;
+// “实时”看刚刚检测的；“历史记录”看保存在磁盘上的（程序重启之后还在）
+const view = ref<"live" | "history">("live");
+const historyBox = ref("0 0 640 480");
+function onHistoryImageLoad(event: Event) {
+  const img = event.target as HTMLImageElement;
+  historyBox.value = `0 0 ${img.naturalWidth} ${img.naturalHeight}`;
+}
+async function show(which: "live" | "history") {
+  view.value = which;
+  if (which === "history") await stations.loadHistory();
+}
 
 onMounted(async () => {
   await stations.refresh();
@@ -26,6 +37,7 @@ onUnmounted(() => timer && clearInterval(timer));
 
 async function select(id: string) {
   await stations.select(id);
+  if (view.value === "history") await stations.loadHistory();
   folder.value = state.current?.imageSource.location ?? "";
 }
 async function create() {
@@ -38,6 +50,8 @@ async function create() {
 
 const current = computed(() => state.current);
 const latest = computed(() => state.records[0] ?? null);
+const history = computed(() => state.history);
+const picked = computed(() => state.history.selected);
 const usable = computed(() => state.releases.filter((r) => !r.withdrawn));
 const stateNames: Record<string, string> = { stopped: "已停止", running: "运行中", paused: "已暂停", faulted: "故障" };
 </script>
@@ -96,14 +110,19 @@ const stateNames: Record<string, string> = { stopped: "已停止", running: "运
         </div>
       </div>
 
-      <div class="counts">
+      <div class="views">
+        <button :class="{ on: view === 'live' }" data-view-live @click="show('live')">实时</button>
+        <button :class="{ on: view === 'history' }" data-view-history @click="show('history')">历史记录</button>
+      </div>
+
+      <div class="counts" v-if="view === 'live'">
         <span class="count ok" data-count-ok>OK {{ current.runner.ok }}</span>
         <span class="count ng" data-count-ng>NG {{ current.runner.ng }}</span>
         <span class="count error">ERROR {{ current.runner.error }}</span>
         <span class="muted" v-if="current.runner.unreadable > 0">读不出来的图像 {{ current.runner.unreadable }} 幅</span>
       </div>
 
-      <div class="live">
+      <div class="live" v-if="view === 'live'">
         <div class="frame-area">
           <template v-if="latest">
             <div class="caption">
@@ -140,6 +159,57 @@ const stateNames: Record<string, string> = { stopped: "已停止", running: "运
           </table>
         </div>
       </div>
+
+      <template v-if="view === 'history'">
+        <div class="counts" v-if="history.summary">
+          <span>累计检测 <strong data-history-total>{{ history.summary.total }}</strong> 次</span>
+          <span>良率 <strong data-history-yield>{{ stations.yieldText(history.summary) }}</strong></span>
+          <span class="count ok small">OK {{ history.summary.ok }}</span>
+          <span class="count ng small">NG {{ history.summary.ng }}</span>
+          <span class="count error small">ERROR {{ history.summary.error }}</span>
+          <span class="muted" v-for="(n, category) in history.summary.defectsByCategory" :key="category">缺陷“{{ category }}” {{ n }} 个</span>
+          <span class="spacer" />
+          <label><input type="checkbox" :checked="history.onlyNg" data-history-only-ng @change="stations.setOnlyNg(($event.target as HTMLInputElement).checked)" /> 只看不合格</label>
+          <button data-history-refresh @click="stations.loadHistory()">刷新</button>
+        </div>
+        <div class="live">
+          <div class="frame-area">
+            <template v-if="picked">
+              <div class="caption">
+                {{ picked.time }} #{{ picked.sequence }} {{ picked.frameName }}
+                <span class="badge" :class="picked.verdict">{{ picked.verdict }}</span>
+              </div>
+              <div class="frame" v-if="picked.imageId">
+                <img :src="stations.recordImageUrl(picked)" :alt="picked.frameName" data-history-image @load="onHistoryImageLoad" />
+                <svg v-if="picked.result.defects.length > 0" class="overlay" preserveAspectRatio="none" :viewBox="historyBox">
+                  <rect v-for="(d, i) in picked.result.defects" :key="i" :x="d.left - 2" :y="d.top - 2" :width="d.width + 4" :height="d.height + 4" class="defect" />
+                </svg>
+              </div>
+              <div v-else class="muted empty" data-history-no-image>这一次没有保留图像（只保留不合格的和出错的）。</div>
+              <div v-for="(r, i) in picked.reasons" :key="i" :class="r.pass ? 'pass' : 'fail'">{{ r.pass ? "✓" : "✗" }} {{ r.text }}</div>
+              <div class="muted">上线包 {{ stations.releaseName(picked.releaseId) }} · 方案版本 {{ picked.recipeVersionId }} · {{ picked.totalMs.toFixed(1) }} ms</div>
+            </template>
+            <div v-else class="muted empty">点右边的一条记录，看当时的图像和判定依据。</div>
+          </div>
+          <div class="records">
+            <table>
+              <thead><tr><th>时间（UTC）</th><th>#</th><th>图像</th><th>判定</th><th>原因</th><th>上线包</th></tr></thead>
+              <tbody>
+                <tr v-for="r in history.records" :key="r.id" class="pick" :class="{ active: picked?.id === r.id }" :data-history-record="r.id" @click="stations.pickRecord(r)">
+                  <td>{{ r.time }}</td>
+                  <td>{{ r.sequence }}</td>
+                  <td>{{ r.frameName }}</td>
+                  <td><span class="badge" :class="r.verdict">{{ r.verdict }}</span></td>
+                  <td class="reason">{{ r.reasons.filter((x) => !x.pass).map((x) => x.text).join("；") }}</td>
+                  <td class="muted">{{ r.releaseId.slice(0, 8) }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <p v-if="history.records.length === 0" class="muted pad">还没有{{ history.onlyNg ? "不合格的" : "" }}检测记录。</p>
+            <p v-if="history.hasMore" class="pad"><button data-history-more @click="stations.loadMoreHistory()">更早的…</button></p>
+          </div>
+        </div>
+      </template>
     </section>
     <section class="detail" v-else><p class="muted">在左边新建或选一个工位。</p></section>
   </div>
@@ -168,6 +238,15 @@ const stateNames: Record<string, string> = { stopped: "已停止", running: "运
 .label { width: 90px; color: var(--muted); }
 .row input { flex: 1; max-width: 420px; }
 .pending { color: #b45309; }
+.views { display: flex; gap: 0; }
+.views button { border-radius: 0; border-right-width: 0; }
+.views button:first-child { border-radius: 4px 0 0 4px; }
+.views button:last-child { border-radius: 0 4px 4px 0; border-right-width: 1px; }
+.views button.on { background: #eff6ff; color: #1d4ed8; font-weight: 600; }
+.count.small { font-size: 14px; }
+tr.pick { cursor: pointer; }
+tr.pick:hover td, tr.pick.active td { background: #eff6ff; }
+.pad { padding: 8px; margin: 0; }
 .counts { display: flex; gap: 14px; align-items: center; }
 .count { font-size: 18px; font-weight: 600; }
 .count.ok { color: var(--ok); }

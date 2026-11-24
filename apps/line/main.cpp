@@ -46,6 +46,8 @@ constexpr const char* kUsage = R"(用法：vision-line [--data <目录>] <命令
   station deploy <工位ID> <上线包ID>            部署：加载完成后，在下一次检测开始前生效
   station rollback <工位ID> [--withdraw]
   station run <工位ID> [--follow 秒]            让一个工位把图像源里现有的图像检测完
+  station records <工位ID> [--ng] [--limit N]   看保存下来的检测记录（从新到旧；--ng 只看不合格的）
+  station summary <工位ID>                      检测了多少、良率、每种缺陷出现了多少个
 运行
   serve [<工位ID>...] [--port N] [--exit-when-idle 秒]
                                                让工位持续运行：每个工位从自己的图像源取图、检测，直到按 Ctrl+C。
@@ -128,6 +130,8 @@ int main(int argc, char** argv) {
             return 1;
         }
         // 服务正在运行的话，工位的状态在它的内存里：对工位的操作要交给它，不能在这个进程里另做一份
+        // 检测记录在磁盘上，谁都可以读：服务运行着的时候也能直接看
+        if (args[1] == "records" || args[1] == "summary") return cli::runStationCommand(app, args);
         if (const std::string service = line::runningService(data); !service.empty()) {
             const int code = line::forwardStationCommand(service, args);
             if (code >= 0) return code;

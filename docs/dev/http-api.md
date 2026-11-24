@@ -83,11 +83,17 @@ curl http://127.0.0.1:8750/api/health
 | `POST /api/stations/{id}/rollback` | | 回滚到上一个上线包 |
 | `POST /api/stations/{id}/start`、`/stop` | | 开始 / 停止持续运行：工位从自己的图像源取图、检测 |
 | `GET /api/stations/{id}/frame` | | 最近检测的那一帧图像（PNG） |
+| `GET /api/stations/{id}/records` | | **保存下来的**检测记录，从新到旧。`?verdict=NG` 只要这种判定；`?before=<记录的 id>` 翻页，只要更早的；`?limit=N`（默认 50，最多 500） |
+| `GET /api/stations/{id}/summary` | | 这个工位有记录以来的汇总：`total`、`ok`、`ng`、`error`、`yield`（良率，OK ÷ (OK + NG)；没有可算的时候是 `null`）、`defectsByCategory` |
 
 工位的回复里：`state`（工位的状态）、`activeRelease`、`pendingRelease` 和 `pendingReady`（待切换的上线包、加载好了没有）、
 `runner`（有没有在持续运行、是不是在等新图像、OK / NG / ERROR 各多少次）、`recent`（检测记录：序号、图像名、判定、原因、结果项、用的上线包、是不是刚发生了切换）。
 
-服务只在内存里给每个工位留最近 100 条检测记录；服务重启后就没有了（检测记录的保存还没有做）。
+`recent` 是“刚刚检测的”：服务只在内存里给每个工位留最近 100 条，给界面实时显示用。
+
+`records` 是保存在磁盘上的（[说明](../ddd/14-inspection-records.md)），服务重启之后还在。每一条比 `recent` 里的多：
+`id`（记录的编号，越新的越大）、`time`（UTC）和 `timeMs`、`recipeVersionId`、`imageId`。
+`imageId` 不为空时，用 `GET /api/images/{imageId}` 取当时的图像；默认只保留不合格的和出错的，合格的 `imageId` 是空的。
 
 调试运行的回复：
 

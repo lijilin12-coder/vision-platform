@@ -83,6 +83,8 @@ constexpr const char* kUsage = R"(用法：vision-cli [--data <目录>] <命令>
                                                --follow：暂时没有新图像时再等这么多秒（可以一边运行一边往目录里放图像）
   station run <工位ID> <图像或目录>... [--repeat N]
                                                热启动工位，对给出的图像逐张检测（不经过图像源）
+  station records <工位ID> [--ng] [--limit N]   看保存下来的检测记录（从新到旧；--ng 只看不合格的）
+  station summary <工位ID>                      检测了多少、良率、每种缺陷出现了多少个
   station stress <工位ID> <上线包A> <上线包B> <图像或目录> [--count N] [--deploys N] [--rollbacks N]
                                                一边连续检测，一边在两个上线包之间反复部署和回滚，输出测量结果
 方案助手（方案构建平台）
