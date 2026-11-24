@@ -140,9 +140,12 @@ TEST(InspectionRecordFiles, OneFilePerStationPerDayOneLinePerRecord) {
     ASSERT_TRUE(fs::exists(today));
     EXPECT_TRUE(fs::exists(dir / "inspection-records" / "s-1" / "2026-11-23.jsonl"));
     EXPECT_TRUE(fs::exists(dir / "inspection-records" / "s-2" / "2026-11-24.jsonl"));
-    std::ifstream in(today);
     int lines = 0;
-    for (std::string line; std::getline(in, line);) ++lines;
+    {
+        // 读完就关上：Windows 上，文件还开着的话后面删不掉这个目录
+        std::ifstream in(today);
+        for (std::string line; std::getline(in, line);) ++lines;
+    }
     EXPECT_EQ(lines, 3);
 
     // 换一个对象来读（相当于程序重启了）：从新到旧，内容一样不少
