@@ -12,6 +12,7 @@
 #include "vision/common/result.h"
 #include "vision/kernel/geometry.h"
 #include "vision/kernel/match_template.h"
+#include "vision/kernel/model.h"
 #include "vision/kernel/signature.h"
 #include "vision/kernel/value.h"
 
@@ -29,9 +30,11 @@ struct OperatorMeta {
 class OpContext {
 public:
     // templates：参数名 → 已经解码好的匹配模板。没有模板参数的算子不用管它。
+    // models：参数名 → 已经加载好的模型。没有模型参数的算子不用管它。
     OpContext(const std::map<std::string, Value>& inputs, const ParamMap& params, std::optional<Roi> roi,
-              const std::map<std::string, MatchTemplateData>* templates = nullptr)
-        : inputs_(inputs), params_(params), roi_(std::move(roi)), templates_(templates) {}
+              const std::map<std::string, MatchTemplateData>* templates = nullptr,
+              const std::map<std::string, std::shared_ptr<const InferenceModel>>* models = nullptr)
+        : inputs_(inputs), params_(params), roi_(std::move(roi)), templates_(templates), models_(models) {}
 
     // 读取某个输入；类型不对时返回错误。
     template <typename T>
@@ -56,6 +59,14 @@ public:
         return Result<MatchTemplateData>::failure("operator.template", "模板参数 " + param + " 还没有设置");
     }
 
+    // 取模型参数对应的模型：已经加载好，可以直接运行。
+    Result<const InferenceModel*> model(const std::string& param) const {
+        if (models_ != nullptr) {
+            if (const auto it = models_->find(param); it != models_->end() && it->second) return it->second.get();
+        }
+        return Result<const InferenceModel*>::failure("operator.model", "模型参数 " + param + " 还没有设置");
+    }
+
     void setOutput(const std::string& name, Value value) { outputs_[name] = std::move(value); }
     std::map<std::string, Value>& outputs() { return outputs_; }
 
@@ -64,6 +75,7 @@ private:
     const ParamMap& params_;
     std::optional<Roi> roi_;
     const std::map<std::string, MatchTemplateData>* templates_;
+    const std::map<std::string, std::shared_ptr<const InferenceModel>>* models_;
     std::map<std::string, Value> outputs_;
 };
 

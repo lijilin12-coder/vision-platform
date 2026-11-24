@@ -222,6 +222,34 @@ jobs:
           # 训练服务的地址配了、但服务没有启动：同样是记录下来的失败，不是崩溃
           & $cli --data $data --training-url http://127.0.0.1:9 train submit $version2 --name 试一试
           if ($LASTEXITCODE -ne 1) { throw "连不上训练服务时，退出码应该是 1，实际是 $LASTEXITCODE" }
+      - name: 模型在检测引擎里运行（ONNX Runtime）
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+          function Check { if ($LASTEXITCODE -ne 0) { throw "命令失败，退出码 $LASTEXITCODE" } }
+          function Last($lines) { return ($lines | Select-Object -Last 1).Trim().Split(" ")[-1] }
+          $cli = ".\build\apps\vision-cli.exe"
+          $data = "$env:RUNNER_TEMP\模型数据"
+          $images = "$env:RUNNER_TEMP\模型图像"
+          & $cli --data $data sample generate $images --ok 10 --ng 6 --seed 7; Check
+          # 导入一个事先训练好的模型（和训练服务训练出来的一样，只是这里没有 PyTorch）
+          & $cli --data $data model import tests\data\surface-anomaly.onnx --name surface-anomaly --size 256 256 --threshold 0.080625; Check
+          $recipe = Last (& $cli --data $data recipe build samples\recipes\surface-anomaly.draft.json); Check
+          & $cli --data $data recipe debug $recipe "$images\ok\ok_001.png"; Check
+          $version = Last (& $cli --data $data recipe publish $recipe); Check
+          # 模型还没有发布：正式检测和创建上线包都必须被拒绝
+          & $cli --data $data release create $version
+          if ($LASTEXITCODE -eq 0) { throw "用了未发布模型的方案版本不应该能做成上线包" }
+          & $cli --data $data model publish surface-anomaly@v1; Check
+          $summary = (& $cli --data $data inspect $version "$images\ok" "$images\ng" | Select-Object -Last 1); Check
+          Write-Host $summary
+          if ($summary -notmatch "OK 10，NG 6，ERROR 0") { throw "检测结果不对：$summary" }
+          $release = Last (& $cli --data $data release create $version); Check
+          $station = Last (& $cli --data $data station create 模型工位); Check
+          & $cli --data $data station deploy $station $release; Check
+          $summary = (& $cli --data $data station run $station "$images\ok" "$images\ng" | Select-Object -Last 1); Check
+          if ($summary -notmatch "OK 10，NG 6，ERROR 0") { throw "工位的检测结果不对：$summary" }
       - name: 编译并运行教程示例
         shell: cmd
         run: docs\tutorial\cpp\run_all.bat

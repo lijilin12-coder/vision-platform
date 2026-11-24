@@ -81,3 +81,13 @@ target_link_libraries(vision_content
   PUBLIC authoring_application execution_application data_application release_application
          models_application training_application training_domain
   PRIVATE vision_imaging)
+
+# 推理引擎：用 ONNX Runtime 运行模型仓库里的模型，实现检测执行的 ModelSource 端口。
+# 推理引擎只出现在这一个库里；算子通过共享内核的 InferenceModel 接口使用模型，不知道背后是谁。
+if(VISION_WITH_ONNXRUNTIME)
+  add_library(vision_inference_onnx STATIC inference_onnx/src/onnx_model_source.cpp)
+  target_include_directories(vision_inference_onnx PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/inference_onnx/include)
+  target_link_libraries(vision_inference_onnx
+    PUBLIC execution_application models_application
+    PRIVATE vision_content onnxruntime::onnxruntime)
+endif()

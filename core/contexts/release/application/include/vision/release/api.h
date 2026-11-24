@@ -40,13 +40,23 @@ public:
     virtual Result<authoring::RecipeVersionDocument> find(const std::string& recipeVersionId) const = 0;
 };
 
+// 端口：一个方案版本现在能不能被检测引擎加载——算子齐不齐、匹配模板读不读得出来、用到的模型有没有发布。
+// 创建上线包之前问一次：不能加载的方案版本做成上线包没有意义，到了工位上也只会加载失败。
+class LoadCheck {
+public:
+    virtual ~LoadCheck() = default;
+    virtual Status canLoad(const authoring::RecipeVersionDocument& recipe) = 0;
+};
+
 // 应用服务。可以从多个线程调用（工位在后台线程里加载上线包）。
 class ReleaseService {
 public:
     ReleaseService(ReleaseRepository& releases, const RecipeVersionSource& recipes, EventPublisher& events);
 
-    // 用一个已发布的方案版本创建上线包，返回上线包 ID。方案版本不存在时被拒绝。
+    // 用一个已发布的方案版本创建上线包，返回上线包 ID。方案版本不存在时被拒绝；
+    // 配置了 LoadCheck 时，不能加载的方案版本（例如用了还没发布的模型）也被拒绝。
     Result<std::string> createRelease(const std::string& recipeVersionId);
+    void useLoadCheck(LoadCheck& check) { loadCheck_ = &check; }
     Status withdraw(const std::string& releaseId);
 
     Result<ReleaseManifest> getManifest(const std::string& releaseId) const;
@@ -57,6 +67,7 @@ private:
     ReleaseRepository& releases_;
     const RecipeVersionSource& recipes_;
     EventPublisher& events_;
+    LoadCheck* loadCheck_ = nullptr;
     mutable std::mutex mutex_;  // 保护仓储：仓储的实现不要求线程安全
 };
 

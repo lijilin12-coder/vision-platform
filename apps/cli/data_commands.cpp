@@ -314,6 +314,38 @@ int runModelCommand(App& app, const std::vector<std::string>& args) {
         }
         return 0;
     }
+    if (sub == "import" && args.size() >= 3) {
+        // model import <模型文件> --name <模型名> --size <宽> <高> [--kind <种类>] [--threshold <阈值>]
+        // 手工导入一个在别处训练好的模型。契约（种类、输入尺寸、阈值）要自己说清楚：平台没法从文件里猜出来
+        std::string name;
+        models::ContractView contract;
+        contract.kind = "anomaly-autoencoder";
+        contract.output = "anomaly-score-and-map";
+        try {
+            for (std::size_t i = 3; i < args.size(); ++i) {
+                if (args[i] == "--name" && i + 1 < args.size()) name = args[++i];
+                else if (args[i] == "--kind" && i + 1 < args.size()) contract.kind = args[++i];
+                else if (args[i] == "--threshold" && i + 1 < args.size()) contract.numbers["threshold"] = std::stod(args[++i]);
+                else if (args[i] == "--size" && i + 2 < args.size()) {
+                    contract.inputWidth = std::stoi(args[i + 1]);
+                    contract.inputHeight = std::stoi(args[i + 2]);
+                    i += 2;
+                } else {
+                    std::cerr << "看不懂的参数：" << args[i] << "\n";
+                    return 1;
+                }
+            }
+        } catch (const std::exception&) {
+            std::cerr << "--size 和 --threshold 后面必须是数字\n";
+            return 1;
+        }
+        models::ProvenanceView provenance;
+        provenance.kind = "imported";
+        auto id = app.models.importModel(name, args[2], contract, provenance);
+        if (!id) return fail(id.error());
+        std::cout << id.value() << "\n";
+        return 0;
+    }
     if (sub == "publish" && args.size() >= 3) {
         const auto st = app.models.publish(args[2]);
         return st ? 0 : fail(st.error());

@@ -62,6 +62,7 @@ const char* paramTypeName(ParamType t) {
         case ParamType::Text: return "text";
         case ParamType::Choice: return "choice";
         case ParamType::Template: return "template";
+        case ParamType::Model: return "model";
     }
     return "number";
 }
@@ -71,6 +72,7 @@ ParamType paramTypeFrom(const std::string& s) {
     if (s == "text") return ParamType::Text;
     if (s == "choice") return ParamType::Choice;
     if (s == "template") return ParamType::Template;
+    if (s == "model") return ParamType::Model;
     return ParamType::Number;
 }
 
