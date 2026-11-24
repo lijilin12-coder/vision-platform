@@ -30,6 +30,8 @@ constexpr const char* kUsage = R"(用法：vision-runtime [选项]
   --host <地址>          监听的地址，默认 127.0.0.1（只接受本机的连接）。
                          这个服务没有登录和权限：不要让它监听不可信的网络
   --training-url <地址>  训练服务的地址（也可以用环境变量 VISION_TRAINING_URL）
+  --web <目录>           界面的文件在哪里，默认 ./web/dist（编译界面：cd web && npm install && npm run build）。
+                         目录存在的话，浏览器打开 http://127.0.0.1:8750/ 就是界面
 
 启动之后：浏览器或 curl 访问 http://127.0.0.1:8750/api/health
 按 Ctrl+C 停止。日志在 <数据目录>/logs/vision-runtime.log。
@@ -42,7 +44,7 @@ void onSignal(int) { stopRequested = true; }  // 信号处理函数里只能做�
 
 int main(int argc, char** argv) {
     const std::vector<std::string> args = utf8Args(argc, argv);  // Windows 上数据目录可能带中文
-    std::string dataDir = "vision-data", host = "127.0.0.1", trainingUrl;
+    std::string dataDir = "vision-data", host = "127.0.0.1", trainingUrl, webDir = "web/dist";
     int port = 8750;
     for (std::size_t i = 0; i < args.size(); ++i) {
         const std::string& arg = args[i];
@@ -52,6 +54,8 @@ int main(int argc, char** argv) {
             return 0;
         } else if (arg == "--data" && hasValue) {
             dataDir = args[++i];
+        } else if (arg == "--web" && hasValue) {
+            webDir = args[++i];
         } else if (arg == "--host" && hasValue) {
             host = args[++i];
         } else if (arg == "--training-url" && hasValue) {
@@ -92,8 +96,16 @@ int main(int argc, char** argv) {
     if (host != "127.0.0.1" && host != "localhost") {
         std::cerr << "注意：正在监听 " << host << "。这个服务没有登录和权限，能连到这个地址的人都可以操作它。\n";
     }
+    std::error_code webEc;
+    const bool hasWeb = std::filesystem::is_regular_file(pathFromUtf8(webDir) / "index.html", webEc) && server.serveWebFiles(webDir);
     log::info("runtime", "启动", {{"host", host}, {"port", std::to_string(port)}, {"data", dataDir}});
-    std::cout << "vision-runtime 已启动：http://" << host << ":" << port << "/api/health\n数据目录 " << dataDir << "。按 Ctrl+C 停止。" << std::endl;
+    std::cout << "vision-runtime 已启动。数据目录 " << dataDir << "。按 Ctrl+C 停止。\n";
+    if (hasWeb) {
+        std::cout << "界面：  http://" << host << ":" << port << "/\n";
+    } else {
+        std::cout << "界面：  没有找到（" << webDir << "/index.html 不存在）。先编译：cd web && npm install && npm run build\n";
+    }
+    std::cout << "接口：  http://" << host << ":" << port << "/api/health" << std::endl;
 
     std::signal(SIGINT, onSignal);
     std::signal(SIGTERM, onSignal);

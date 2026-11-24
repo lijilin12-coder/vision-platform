@@ -3,7 +3,7 @@
 | 项 | 内容 |
 |---|---|
 | 日期 | 2026-11-24 |
-| 状态 | **2026-11-24 确认，但范围调整：先只做第 ① 步（服务和 HTTP 接口，纯 C++）；界面（第 ②、③ 步）推迟**，等后端达到 MVP 之后再考虑。见下面的说明 |
+| 状态 | **已完成**（2026-11-24）：先做了第 ① 步，后端到 MVP 之后做了界面。结论见 [poc-2-report.md](poc-2-report.md) |
 | 验证的假设 | A10：Web 界面 ↔ vision-runtime 端到端可用 |
 | 相关设计 | [02-architecture.md](../02-architecture.md) §4.1、§6（ADR-07、ADR-09）；[06-open-questions.md](../06-open-questions.md) Q-06 |
 
