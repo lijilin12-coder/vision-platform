@@ -17,7 +17,7 @@
 cd services/training
 python3 -m venv .venv
 source .venv/bin/activate            # Windows：.venv\Scripts\activate
-pip install torch --index-url https://download.pytorch.org/whl/cpu   # 只含 CPU 的版本，小得多；Mac 上直接 pip install torch
+pip install torch --index-url https://download.pytorch.org/whl/cpu   # 只含 CPU 的版本，小得多
 pip install numpy opencv-python-headless onnx
 python server.py --port 8765 --work-dir ./work
 ```
