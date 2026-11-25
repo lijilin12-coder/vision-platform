@@ -36,7 +36,8 @@ constexpr const char* kUsage = R"(用法：vision-line [--data <目录>] <命令
   package import <文件.vpkg>                    导入方案包（方案版本 + 它用到的模板和模型）
   package show <文件.vpkg>                      只看包里有什么
 上线包
-  release create <方案版本ID>                   用导入的方案版本创建上线包，输出上线包 ID
+  release import <文件.vrel>                    导入上线包文件：方案版本、模板、模型，和一个验收通过的上线包。之后直接部署
+  release create <方案版本ID>                   用导入的方案版本创建上线包（没有验收记录，只有加了 --allow-unaccepted 才能部署）
   release list | release show <上线包ID> | release withdraw <上线包ID>
 工位
   station create <名称> [--auto-rollback N]     创建工位，输出工位 ID
@@ -61,6 +62,7 @@ constexpr const char* kUsage = R"(用法：vision-line [--data <目录>] <命令
 选项
   --data <目录>          数据目录，默认 ./vision-line-data
   --events               在控制台显示领域事件
+  --allow-unaccepted     调试用：允许部署还没有验收的上线包（验收没通过的仍然不行）。不要在正式生产中使用
 
 日志在 <数据目录>/logs/vision-line.log，崩溃报告在 <数据目录>/crashes/。
 )";
@@ -74,6 +76,7 @@ int main(int argc, char** argv) {
     std::vector<std::string> args = utf8Args(argc, argv);
     std::string dataDir = "vision-line-data";
     bool verbose = false;
+    bool allowUnaccepted = false;
     int exitWhenIdle = 0, port = 8760;
     for (std::size_t i = 0; i < args.size();) {
         if (args[i] == "--data" && i + 1 < args.size()) {
@@ -87,6 +90,9 @@ int main(int argc, char** argv) {
             args.erase(args.begin() + static_cast<std::ptrdiff_t>(i), args.begin() + static_cast<std::ptrdiff_t>(i) + 2);
         } else if (args[i] == "--events") {
             verbose = true;
+            args.erase(args.begin() + static_cast<std::ptrdiff_t>(i));
+        } else if (args[i] == "--allow-unaccepted") {
+            allowUnaccepted = true;
             args.erase(args.begin() + static_cast<std::ptrdiff_t>(i));
         } else {
             ++i;
@@ -114,6 +120,10 @@ int main(int argc, char** argv) {
 
     platform::LinePlatform app(data);
     app.verboseEvents = verbose;
+    if (allowUnaccepted) {
+        app.stations.allowUnacceptedReleases(true);
+        log::warn("line", "调试选项 --allow-unaccepted：允许部署还没有验收的上线包。不要在正式生产中使用");
+    }
     const std::string& cmd = args[0];
 
     if (cmd == "package" && args.size() >= 3) {
@@ -123,7 +133,13 @@ int main(int argc, char** argv) {
         }
         return cli::runPackageCommand(app, args);
     }
-    if (cmd == "release" && args.size() >= 2) return cli::runReleaseCommand(app, args);
+    if (cmd == "release" && args.size() >= 2) {
+        if (args[1] == "export") {
+            std::cerr << "产线运行平台不导出上线包文件：上线包文件是在方案构建平台上做的\n";
+            return 1;
+        }
+        return cli::runReleaseCommand(app, args);
+    }
     if (cmd == "station" && args.size() >= 2) {
         if (args[1] == "stress") {
             std::cerr << "station stress 是方案构建平台上的测量工具，产线运行平台没有\n";

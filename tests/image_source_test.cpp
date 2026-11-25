@@ -163,6 +163,7 @@ protected:
         data = freshDir("数据");
         images = freshDir("图像");
         p = std::make_unique<platform::Platform>(data);
+        p->stations.allowUnacceptedReleases(true);
         // 输入 → 灰度 → 阈值 → Blob → 个数判定，发布、做成上线包
         auto& a = p->authoring;
         const auto recipe = a.createRecipe("亮斑").value();
@@ -250,6 +251,7 @@ TEST_F(StationWithSource, BindingSurvivesARestartOfTheProgram) {
     ASSERT_TRUE(p->stations.bindImageSource(station, "folder", pathToUtf8(images)).ok());
     p.reset();  // 程序退出
     p = std::make_unique<platform::Platform>(data);  // 再启动
+    p->stations.allowUnacceptedReleases(true);
     EXPECT_EQ(p->stations.getStation(station).value().imageSourceLocation, pathToUtf8(images));
     // 上次部署的上线包还没来得及生效，重启后在后台重新加载；等它好了再启动
     ASSERT_TRUE(p->stations.waitForLoading(station).ok());

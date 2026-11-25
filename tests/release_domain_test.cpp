@@ -10,7 +10,7 @@ TEST(Release, CreateRecordsEventAndIsDeployable) {
     auto r = Release::create("rel-1", "recipe@v1");
     ASSERT_TRUE(r.ok());
     EXPECT_EQ(r.value().recipeVersionId(), "recipe@v1");
-    EXPECT_TRUE(r.value().deployable());
+    EXPECT_FALSE(r.value().deployable());  // L4：还没验收的不能部署（验收之后的见 acceptance_test.cpp）
     const auto events = r.value().pullEvents();
     ASSERT_EQ(events.size(), 1u);
     EXPECT_STREQ(events[0]->name(), "ReleaseCreated");

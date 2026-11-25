@@ -134,10 +134,13 @@ $CLI inspect <方案版本ID> ./demo-fresh/ok ./demo-fresh/ng
 
 最后一行是汇总，应该是 `OK 20，NG 9，ERROR 0`。
 
-再走一遍产线的流程——做成上线包，部署到工位：
+再走一遍产线的流程——做成上线包，验收，部署到工位。只有验收通过的上线包才能部署；
+这里直接拿那批全新的图像当基准图集（合格的一个目录、不合格的一个目录，正好是它要的样子）：
 
 ```bash
 $CLI release create <方案版本ID>            # 输出上线包 ID
+$CLI golden create 表面基准 --ok ./demo-fresh/ok --ng ./demo-fresh/ng   # 输出基准图集 ID
+$CLI release accept <上线包ID> <基准图集ID>  # 应该是“通过”
 $CLI station create 一号工位                # 输出工位 ID
 $CLI station deploy <工位ID> <上线包ID>
 $CLI station run <工位ID> ./demo-fresh/ok ./demo-fresh/ng

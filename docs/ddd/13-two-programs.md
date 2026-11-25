@@ -19,15 +19,17 @@
 | **方案构建平台** | `vision-cli`（命令行）、`vision-runtime`（HTTP 服务） | 全部：搭方案、调试、方案助手、数据集、训练、模型仓库、导出方案包；也能做产线那一侧的事（方便在一台机器上试） |
 | **产线运行平台** | `vision-line` | 只有：导入方案包、上线包、工位、让工位持续运行 |
 
-产线上的电脑只装 `vision-line`。它**没有**方案编排：在那台机器上改不了方案，也调试不了。方案和模型只有一个来路——方案包。
+产线上的电脑只装 `vision-line`。它**没有**方案编排：在那台机器上改不了方案，也调试不了。方案和模型只有一个来路——方案构建平台导出的文件。带到产线部署用**上线包文件**（[16](16-release-bundle.md)）：它带着验收记录，没有验收记录的上线包部署不了。
 
 ```bash
-# 方案构建平台
-vision-cli package export <方案版本ID> 表面检测.vpkg
+# 方案构建平台：做成上线包、验收、导出
+vision-cli release create <方案版本ID>
+vision-cli golden create 表面基准 --ok ./基准/ok --ng ./基准/ng
+vision-cli release accept <上线包ID> <基准图集ID>
+vision-cli release export <上线包ID> 表面检测.vrel
 
-# 产线运行平台
-vision-line package import 表面检测.vpkg
-vision-line release create <方案版本ID>
+# 产线运行平台：导入之后上线包的 ID 不变
+vision-line release import 表面检测.vrel
 vision-line station create 一号工位
 vision-line station deploy <工位ID> <上线包ID>
 vision-line station bind <工位ID> folder ./来料图像
@@ -79,8 +81,7 @@ apps/common/platform.h         Platform : LinePlatform   再加：方案编排�
 对使用的人来说，命令和平时一样：
 
 ```bash
-vision-line package import 新版.vpkg        # 这两条不涉及工位的内存状态，照常在本进程里做
-vision-line release create <方案版本ID>
+vision-line release import 新版.vrel        # 不涉及工位的内存状态，照常在本进程里做
 vision-line station deploy <工位ID> <上线包ID>   # 自动交给正在运行的服务；下一次检测开始前热切换
 vision-line station rollback <工位ID>           # 不行就回滚
 ```

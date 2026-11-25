@@ -118,9 +118,27 @@ json toJson(const PackageManifest& m) {
                           {"provenance", {{"kind", x.provenanceKind}, {"trainingJobId", x.trainingJobId},
                                           {"datasetVersionId", x.datasetVersionId}, {"split", x.split}, {"backend", x.backend}}}});
     }
-    return {{"schema", m.schema}, {"packageId", m.packageId},
-            {"recipeVersion", {{"id", m.recipeVersionId}, {"name", m.recipeName}, {"sha256", m.recipeSha256}}},
-            {"operators", std::move(operators)}, {"templates", std::move(templates)}, {"models", std::move(models)}};
+    json j = {{"schema", m.schema}, {"packageId", m.packageId},
+              {"recipeVersion", {{"id", m.recipeVersionId}, {"name", m.recipeName}, {"sha256", m.recipeSha256}}},
+              {"operators", std::move(operators)}, {"templates", std::move(templates)}, {"models", std::move(models)}};
+    if (m.release) {
+        // 上线包文件：多这一项。以前的程序读到它会当成普通的方案包（不认识的项被忽略）
+        const auto& a = m.release->acceptance;
+        json wrong = json::array();
+        for (const auto& w : a.wrongCases) {
+            wrong.push_back({{"case", w.caseId}, {"image", w.imageRef}, {"truth", w.truthNg ? "NG" : "OK"}, {"observed", w.observed}});
+        }
+        j["release"] = {{"id", m.release->releaseId}, {"recipeVersion", m.release->recipeVersionId},
+                        {"lockedModels", m.release->lockedModels},
+                        {"acceptance",
+                         {{"goldenSet", a.goldenSetId}, {"goldenSetName", a.goldenSetName}, {"checkedAtMs", a.checkedAtMs},
+                          {"passed", a.passed},
+                          {"criteria", {{"maxMisses", a.maxMisses}, {"maxFalseAlarmRate", a.maxFalseAlarmRate}, {"maxErrors", a.maxErrors}}},
+                          {"total", a.total}, {"truthOk", a.truthOk}, {"truthNg", a.truthNg}, {"misses", a.misses},
+                          {"falseAlarms", a.falseAlarms}, {"errors", a.errors}, {"meanMs", a.meanMs}, {"maxMs", a.maxMs},
+                          {"wrongCases", std::move(wrong)}}}};
+    }
+    return j;
 }
 
 PackageManifest manifestFrom(const json& j) {  // 字段缺失、类型不对时抛异常，由调用的地方接住
@@ -154,6 +172,39 @@ PackageManifest manifestFrom(const json& j) {  // 字段缺失、类型不对时
         e.split = p.at("split").get<std::string>();
         e.backend = p.at("backend").get<std::string>();
         m.models.push_back(std::move(e));
+    }
+    if (j.contains("release")) {
+        const auto& r = j.at("release");
+        release::BundledRelease b;
+        b.releaseId = r.at("id").get<std::string>();
+        b.recipeVersionId = r.at("recipeVersion").get<std::string>();
+        b.lockedModels = r.at("lockedModels").get<std::map<std::string, std::string>>();
+        const auto& a = r.at("acceptance");
+        auto& v = b.acceptance;
+        v.releaseId = b.releaseId;
+        v.goldenSetId = a.at("goldenSet").get<std::string>();
+        v.goldenSetName = a.at("goldenSetName").get<std::string>();
+        v.checkedAtMs = a.at("checkedAtMs").get<std::int64_t>();
+        v.passed = a.at("passed").get<bool>();
+        v.maxMisses = a.at("criteria").at("maxMisses").get<int>();
+        v.maxFalseAlarmRate = a.at("criteria").at("maxFalseAlarmRate").get<double>();
+        v.maxErrors = a.at("criteria").at("maxErrors").get<int>();
+        v.total = a.at("total").get<int>();
+        v.truthOk = a.at("truthOk").get<int>();
+        v.truthNg = a.at("truthNg").get<int>();
+        v.misses = a.at("misses").get<int>();
+        v.falseAlarms = a.at("falseAlarms").get<int>();
+        v.errors = a.at("errors").get<int>();
+        v.falseAlarmRate = v.truthOk == 0 ? 0.0 : static_cast<double>(v.falseAlarms) / v.truthOk;
+        v.meanMs = a.at("meanMs").get<double>();
+        v.maxMs = a.at("maxMs").get<double>();
+        for (const auto& w : a.at("wrongCases")) {
+            const bool truthNg = w.at("truth").get<std::string>() == "NG";
+            const std::string observed = w.at("observed").get<std::string>();
+            v.wrongCases.push_back({w.at("case").get<std::string>(), w.at("image").get<std::string>(), truthNg, observed,
+                                    observed == "ERROR" ? "error" : truthNg ? "miss" : "false_alarm"});
+        }
+        m.release = std::move(b);
     }
     return m;
 }

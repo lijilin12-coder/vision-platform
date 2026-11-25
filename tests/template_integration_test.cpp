@@ -441,6 +441,7 @@ TEST_F(TemplateMechanism, DeploysToAStationAndABrokenTemplateDoesNotAffectProduc
     AuthoringSource source(p->authoring);
     release::ReleaseService releases(p->releaseRepository, source, p->bus);
     station::StationService stations(p->stationRepository, releases, p->execution, p->bus);
+    stations.allowUnacceptedReleases(true);  // 这里测的不是验收：允许部署没验收的上线包（规则 L4 的测试在 acceptance_test.cpp、release_bundle_test.cpp）
     const auto r1 = releases.createRelease(v1).value();
     const auto r2 = releases.createRelease(v2).value();
 

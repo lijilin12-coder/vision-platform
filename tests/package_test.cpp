@@ -135,6 +135,7 @@ protected:
         work = freshDir("文件");
         a = std::make_unique<platform::Platform>(dirA);
         b = std::make_unique<platform::Platform>(dirB);
+        b->stations.allowUnacceptedReleases(true);
         file = pathToUtf8(work / pathFromUtf8("方案.vpkg"));
     }
     void TearDown() override {
@@ -299,10 +300,12 @@ TEST_F(Package, ShuttingDownWhileAReleaseWithAModelIsStillLoadingIsSafe) {
         ASSERT_TRUE(b->stations.deploy(station, release).ok());  // 后台开始加载
         b.reset();                                                // 不等它，直接退出
         b = std::make_unique<platform::Platform>(dirB);
+        b->stations.allowUnacceptedReleases(true);
         // 重新启动后，没来得及生效的部署会在后台重新加载；这一次也不等
         ASSERT_TRUE(b->stations.getStation(station).ok());
         b.reset();
         b = std::make_unique<platform::Platform>(dirB);
+        b->stations.allowUnacceptedReleases(true);
     }
     ASSERT_TRUE(b->stations.waitForLoading(station).ok());
     EXPECT_TRUE(b->stations.start(station).ok());

@@ -29,6 +29,37 @@ Release Release::restore(ReleaseId id, std::string recipeVersionId, std::map<std
     return r;
 }
 
+Result<Release> Release::adopt(ReleaseId id, std::string recipeVersionId, std::map<std::string, std::string> lockedModels,
+                               AcceptanceRecord acceptance) {
+    using R = Result<Release>;
+    if (id.empty() || recipeVersionId.empty()) return R::failure("release.bundle_invalid", "上线包文件里的上线包没有 ID 或者没有方案版本");
+    // B1。文件是可以手工改的，所以“通过”不能只看那个标记：按记录里的数字和标准重新算一遍
+    CaseEvaluation e;
+    e.total = acceptance.total;
+    e.truthOk = acceptance.truthOk;
+    e.truthNg = acceptance.truthNg;
+    e.misses = acceptance.misses;
+    e.falseAlarms = acceptance.falseAlarms;
+    e.errors = acceptance.errors;
+    const bool consistent = acceptance.total > 0 && acceptance.total == acceptance.truthOk + acceptance.truthNg &&
+                            acceptance.misses >= 0 && acceptance.falseAlarms >= 0 && acceptance.errors >= 0 &&
+                            acceptance.misses <= acceptance.truthNg && acceptance.falseAlarms <= acceptance.truthOk;
+    if (!acceptance.passed || !consistent ||
+        !meets(e, {acceptance.maxMisses, acceptance.maxFalseAlarmRate, acceptance.maxErrors})) {
+        return R::failure("release.bundle_not_accepted", "上线包文件里的上线包没有通过验收检查，不接收");
+    }
+    Release release(std::move(id), std::move(recipeVersionId), std::move(lockedModels), ReleaseStatus::Active);
+    release.acceptance_ = std::move(acceptance);
+    release.record(std::make_shared<ReleaseImported>(release.id_));
+    return release;
+}
+
+Status Release::sameAs(const std::string& recipeVersionId) const {
+    if (recipeVersionId_ == recipeVersionId) return Status::success();
+    return Status::failure("release.bundle_conflict", "本平台已经有上线包 " + id_ + "，但它的方案版本是 " + recipeVersionId_ +
+                                                          "，文件里的是 " + recipeVersionId + "。同一个 ID 不可能指两样东西");
+}
+
 Status Release::recordAcceptance(const GoldenSet& set, const CaseEvaluation& e, std::vector<WrongCase> wrongCases,
                                  std::int64_t checkedAtMs) {
     if (status_ == ReleaseStatus::Withdrawn) {

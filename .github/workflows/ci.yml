@@ -136,7 +136,8 @@ jobs:
           $b = Last (& $cli --data $data release create $v2); Check
           $station = Last (& $cli --data $data station create 工位一); Check
           # 这里是调试版本，数字只用来看趋势；检查项（没有丢失、没有用错上线包）才是重点
-          & $cli --data $data station stress $station $a $b $images --count 3000 --deploys 12 --rollbacks 3; Check
+          # 压力测试量的是热切换的机制，不是方案判得对不对：用调试选项跳过验收
+          & $cli --data $data --allow-unaccepted station stress $station $a $b $images --count 3000 --deploys 12 --rollbacks 3; Check
       - name: 方案助手（POC-11：按工作流搭出候选方案并自动调参）
         shell: pwsh
         run: |
@@ -273,10 +274,16 @@ jobs:
           if ($summary -notmatch "OK 10，NG 6，ERROR 0") { throw "检测结果不对：$summary" }
           $release = Last (& $cli --data $data release create $version); Check
           $station = Last (& $cli --data $data station create 模型工位); Check
+          # 还没验收的上线包不能部署
+          & $cli --data $data station deploy $station $release
+          if ($LASTEXITCODE -eq 0) { throw "没有验收的上线包不应该能部署" }
+          # 验收：两个目录就是标准答案（合格的 10 幅、不合格的 6 幅）
+          $golden = Last (& $cli --data $data golden create 表面基准 --ok "$images\ok" --ng "$images\ng"); Check
+          & $cli --data $data release accept $release $golden; Check
           & $cli --data $data station deploy $station $release; Check
           $summary = (& $cli --data $data station run $station "$images\ok" "$images\ng" | Select-Object -Last 1); Check
           if ($summary -notmatch "OK 10，NG 6，ERROR 0") { throw "工位的检测结果不对：$summary" }
-      - name: 方案包和图像源（两个数据目录当作两台机器）
+      - name: 方案包、上线包文件和图像源（两个数据目录当作两台机器）
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -297,15 +304,34 @@ jobs:
           & $cli --data $builder model publish surface-anomaly@v1; Check
           & $cli --data $builder package export $version $package; Check
           & $cli --data $builder package show $package; Check
+          # 上线包文件：验收通过之后才能导出
+          $bundle = "$env:RUNNER_TEMP\表面检测.vrel"
+          & $cli --data $builder sample generate $images --ok 4 --ng 3 --seed 5; Check
+          $accepted = Last (& $cli --data $builder release create $version); Check
+          & $cli --data $builder release export $accepted $bundle
+          if ($LASTEXITCODE -eq 0) { throw "没有验收的上线包不应该能导出" }
+          $golden = Last (& $cli --data $builder golden create 表面基准 --ok "$images\ok" --ng "$images\ng"); Check
+          & $cli --data $builder release accept $accepted $golden; Check
+          & $cli --data $builder release export $accepted $bundle; Check
+          & $cli --data $builder package show $bundle; Check
           # 产线机：用的是另一个程序 vision-line（它没有方案编排）。导入（两次：第二次不应该出错）、上线、绑定图像源
           $lineExe = ".\build\apps\vision-line.exe"
           & $lineExe --data $line recipe list
           if ($LASTEXITCODE -eq 0) { throw "产线运行平台不应该有 recipe 命令" }
           & $lineExe --data $line package import $package; Check
           & $lineExe --data $line package import $package; Check
-          & $cli --data $builder sample generate $images --ok 4 --ng 3 --seed 5; Check
-          $release = Last (& $lineExe --data $line release create $version); Check
+          # 只导入了方案包：在产线上自己创建的上线包没有验收记录，部署不了
+          $local = Last (& $lineExe --data $line release create $version); Check
           $station = Last (& $lineExe --data $line station create 产线一号); Check
+          & $lineExe --data $line station deploy $station $local
+          if ($LASTEXITCODE -eq 0) { throw "产线上没有验收记录的上线包不应该能部署" }
+          & $lineExe --data $line release import $package
+          if ($LASTEXITCODE -eq 0) { throw "方案包里没有上线包，release import 应该被拒绝" }
+          # 导入上线包文件（两次：第二次不应该出错）：上线包的 ID 和验收记录都带过来了，直接部署
+          $release = Last (& $lineExe --data $line release import $bundle); Check
+          & $lineExe --data $line release import $bundle; Check
+          if ($release -ne $accepted) { throw "导入的上线包 ID 变了：$release ≠ $accepted" }
+          & $lineExe --data $line release show $release; Check
           & $lineExe --data $line station deploy $station $release; Check
           & $lineExe --data $line station bind $station folder "$images\ng"; Check
           # serve：工位自己取图检测，图像取完、空闲 2 秒后结束

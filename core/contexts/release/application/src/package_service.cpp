@@ -28,8 +28,8 @@ PackageService::PackageService(const RecipeVersionSource& recipes, ImportedRecip
     : recipes_(recipes), imported_(imported), exchange_(exchange), operators_(operators), models_(models), content_(content),
       events_(events) {}
 
-Result<ExportReport> PackageService::exportPackage(const std::string& recipeVersionId, const std::string& filePath) {
-    using R = Result<ExportReport>;
+Result<PackageFile> PackageService::build(const std::string& recipeVersionId, ExportReport& report) {
+    using R = Result<PackageFile>;
     auto doc = recipes_.find(recipeVersionId);
     if (!doc) return doc.error();
 
@@ -57,7 +57,6 @@ Result<ExportReport> PackageService::exportPackage(const std::string& recipeVers
     }
     m.operators.assign(usedOperators.begin(), usedOperators.end());
 
-    ExportReport report;
     for (const auto& t : doc.value().templates) {
         auto bytes = content_.get(t.sha256);
         if (!bytes) return R::failure(bytes.error().code, "匹配模板“" + t.name + "”的图像读不出来：" + bytes.error().message);
@@ -79,13 +78,65 @@ Result<ExportReport> PackageService::exportPackage(const std::string& recipeVers
         package.contents[model.value().entry.sha256] = std::move(bytes).value();
     }
 
-    if (auto st = exchange_.write(filePath, package); !st) return st.error();
     report.packageId = m.packageId;
     report.recipeVersionId = m.recipeVersionId;
     report.templates = static_cast<int>(m.templates.size());
     report.models = static_cast<int>(m.models.size());
+    return package;
+}
+
+Result<ExportReport> PackageService::exportPackage(const std::string& recipeVersionId, const std::string& filePath) {
+    ExportReport report;
+    auto package = build(recipeVersionId, report);
+    if (!package) return package.error();
+    if (auto st = exchange_.write(filePath, package.value()); !st) return st.error();
     return report;
 }
+
+Result<ExportReport> PackageService::exportRelease(const std::string& releaseId, const std::string& filePath) {
+    using R = Result<ExportReport>;
+    if (releases_ == nullptr) return R::failure("release.no_bundles", "这个程序没有接上上线管理，不能导出上线包文件");
+    auto bundled = releases_->bundle(releaseId);  // B1
+    if (!bundled) return bundled.error();
+    ExportReport report;
+    auto package = build(bundled.value().recipeVersionId, report);
+    if (!package) return package.error();
+    package.value().manifest.release = std::move(bundled).value();
+    if (auto st = exchange_.write(filePath, package.value()); !st) return st.error();
+    return report;
+}
+
+Result<BundleImportReport> PackageService::importRelease(const std::string& filePath) {
+    using R = Result<BundleImportReport>;
+    if (releases_ == nullptr) return R::failure("release.no_bundles", "这个程序没有接上上线管理，不能导入上线包文件");
+    auto read = exchange_.read(filePath);
+    if (!read) return read.error();
+    const auto& bundled = read.value().manifest.release;
+    if (!bundled) {
+        return R::failure("release.bundle_no_release",
+                          "这个文件是方案包，里面没有上线包。方案包用 package import 导入；要带着验收记录上线，请在方案构建平台上用 release export 导出");
+    }
+    if (bundled->recipeVersionId != read.value().manifest.recipeVersionId) {
+        return R::failure("release.bundle_invalid", "上线包文件里的上线包和它带的方案版本对不上");
+    }
+    // 先接收不了的就什么都不导入：按 B1 预先看一眼（真正的检查在 adopt 里还会再做一遍）
+    if (!bundled->acceptance.passed) return R::failure("release.bundle_not_accepted", "上线包文件里的上线包没有通过验收检查，不接收");
+
+    BundleImportReport report;
+    {
+        auto imported = importFile(read.value());
+        if (!imported) return imported.error();
+        report.package = std::move(imported).value();
+    }
+    auto added = releases_->adopt(*bundled);
+    if (!added) return added.error();
+    report.releaseId = bundled->releaseId;
+    report.releaseAdded = added.value();
+    report.acceptance = bundled->acceptance;
+    return report;
+}
+
+
 
 Result<PackageManifest> PackageService::inspect(const std::string& filePath) {
     auto package = exchange_.read(filePath);
@@ -94,11 +145,15 @@ Result<PackageManifest> PackageService::inspect(const std::string& filePath) {
 }
 
 Result<ImportReport> PackageService::importPackage(const std::string& filePath) {
-    using R = Result<ImportReport>;
     // 读文件。适配器已经核对过结构和每一份内容的校验和
     auto read = exchange_.read(filePath);
     if (!read) return read.error();
-    const PackageFile& package = read.value();
+    // 上线包文件也可以当方案包导入：只取方案版本那一部分，里面的上线包不管
+    return importFile(read.value());
+}
+
+Result<ImportReport> PackageService::importFile(const PackageFile& package) {
+    using R = Result<ImportReport>;
     const PackageManifest& m = package.manifest;
 
     std::lock_guard<std::mutex> lock(mutex_);

@@ -176,6 +176,7 @@ struct LinePlatform {
         execution.useModelSource(modelSource);
 #endif
         releases.useLoadCheck(loadCheck);
+        packages.useReleases(releases);
         stations.useImageSources(imageSources);
         stations.useInspectionObserver(recordInspections);
         bus.subscribe("*", [this](const EventPtr& e) {

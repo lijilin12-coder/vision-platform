@@ -13,7 +13,7 @@
 // 环境变量 SCREENSHOT=<目录> 时，把几个关键时刻的画面存成图片。
 
 import { execFileSync, spawn } from "node:child_process";
-import { copyFileSync, mkdtempSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -256,6 +256,19 @@ try {
   check((await page.locator('[data-release-state="passed"]').count()) === 1 && (await page.locator('[data-release-state="failed"]').count()) === 1,
         "左边的列表里：一个通过、一个没通过");
   await shot("7-acceptance");
+  // 导出上线包文件：通过了的那个才有“导出”
+  check((await page.locator("[data-export]").count()) === 0, "没通过的上线包没有“导出”");
+  await releaseRow("v2").click();
+  const bundle = join(work, "亮斑.vrel");
+  await page.fill("[data-export-path]", bundle);
+  await page.click("[data-export]");
+  await page.waitForSelector("[data-release-notice]");
+  check(existsSync(bundle), "验收通过的上线包导出成了一个文件");
+  // 产线运行平台（另一个程序、另一个数据目录）导入它：上线包的 ID 和验收记录都在
+  const lineData = join(work, "产线数据");
+  const importedId = execFileSync(exe("vision-line"), ["--data", lineData, "release", "import", bundle], { encoding: "utf8" }).trim().split("\n").pop().trim();
+  const lineShown = execFileSync(exe("vision-line"), ["--data", lineData, "release", "show", importedId], { encoding: "utf8" });
+  check(lineShown.includes("验收检查  通过"), "产线运行平台导入之后：验收记录跟着过来了");
 
   await page.click('[data-tab="stations"]');
   await page.fill("[data-station-name]", "一号工位");

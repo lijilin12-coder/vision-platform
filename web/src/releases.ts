@@ -14,13 +14,15 @@ export interface ReleasesState {
   goldenSetId: string; // 验收时用哪个基准图集
   checking: boolean; // 验收检查正在跑（用例多的时候要等一会儿）
   error: string | null;
+  notice: string | null; // 做成了一件事的提示（例如导出到了哪里）
 }
 
 export function createReleases(client: PlatformClient) {
-  const state = reactive<ReleasesState>({ releases: [], goldenSets: [], selectedId: null, goldenSetId: "", checking: false, error: null });
+  const state = reactive<ReleasesState>({ releases: [], goldenSets: [], selectedId: null, goldenSetId: "", checking: false, error: null, notice: null });
 
   async function attempt(action: () => Promise<void>): Promise<boolean> {
     state.error = null;
+    state.notice = null;
     try {
       await action();
       return true;
@@ -67,8 +69,19 @@ export function createReleases(client: PlatformClient) {
       return ok;
     },
 
+    // 把选中的上线包导出成上线包文件（带到产线上导入）。文件写在后端那台机器上
+    async exportTo(path: string) {
+      const releaseId = state.selectedId;
+      if (!releaseId || !path.trim()) return false;
+      return attempt(async () => {
+        await client.exportRelease(releaseId, path.trim());
+        state.notice = `已导出到 ${path.trim()}。带到产线上：vision-line release import <这个文件>`;
+      });
+    },
+
     dismiss() {
       state.error = null;
+      state.notice = null;
     },
   };
 }

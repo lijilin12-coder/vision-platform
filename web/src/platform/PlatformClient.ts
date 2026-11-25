@@ -34,6 +34,9 @@ export interface PlatformClient {
   // 没通过也是正常返回（passed 为 false）；做不下去才抛错
   checkAcceptance(releaseId: string, goldenSetId: string): Promise<Acceptance>;
 
+  // 导出上线包文件，写到后端那台机器上的 path。只有验收通过、没撤回的上线包才能导出
+  exportRelease(releaseId: string, path: string): Promise<void>;
+
   listStations(): Promise<Station[]>;
   createStation(name: string): Promise<Station>;
   // afterSequence：只要序号比它大的检测记录

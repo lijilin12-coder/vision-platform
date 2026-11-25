@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, onMounted, reactive } from "vue";
+import { computed, inject, onMounted, reactive, ref } from "vue";
 import { acceptanceLabel, percent, releaseTitle, verdictLine, wrongKind } from "../releases";
 import type { Releases } from "../releases";
 
@@ -19,6 +19,7 @@ async function createGoldenSet() {
   });
   if (ok) form.name = "";
 }
+const exportPath = ref("");
 const time = (ms: number) => new Date(ms).toLocaleString();
 </script>
 
@@ -35,6 +36,8 @@ const time = (ms: number) => new Date(ms).toLocaleString();
 
     <section class="detail">
       <div v-if="state.error" class="message" data-release-error @click="releases.dismiss()">{{ state.error }} <span class="close">点一下关闭</span></div>
+
+      <div v-if="state.notice" class="message ok" data-release-notice @click="releases.dismiss()">{{ state.notice }} <span class="close">点一下关闭</span></div>
 
       <div class="box">
         <h4>基准图集</h4>
@@ -88,9 +91,14 @@ const time = (ms: number) => new Date(ms).toLocaleString();
               <span class="kind">{{ wrongKind(w) }}</span> {{ w.caseId }} <span class="muted">真实 {{ w.truth }}，判成 {{ w.observed }} · {{ w.imageRef }}</span>
             </div>
           </div>
-          <p class="muted" v-if="!acceptance.passed">验收没有通过的上线包不能部署到工位。改方案、重新发布、做成新的上线包再验收；或者——如果是标准定得不对——新建一个基准图集重新验收。</p>
+          <div class="row" v-if="acceptance.passed && !selected.withdrawn">
+            <span>带到产线：</span>
+            <input v-model="exportPath" placeholder="导出到哪个文件（后端那台机器上），例如 ./亮斑.vrel" data-export-path class="path" />
+            <button :disabled="!exportPath.trim()" data-export @click="releases.exportTo(exportPath)">导出上线包文件</button>
+          </div>
+          <p class="muted" v-if="!acceptance.passed">验收没有通过的上线包不能部署到工位，也不能导出。改方案、重新发布、做成新的上线包再验收；或者——如果是标准定得不对——新建一个基准图集重新验收。</p>
         </template>
-        <p v-else class="muted" data-accept-none>还没有做过验收检查。没验收的上线包也能部署，但没人知道它判得对不对。</p>
+        <p v-else class="muted" data-accept-none>还没有做过验收检查。只有验收通过的上线包才能部署到工位、才能导出带到产线。</p>
       </div>
       <p v-else class="muted">在左边选一个上线包。</p>
     </section>
@@ -108,6 +116,8 @@ const time = (ms: number) => new Date(ms).toLocaleString();
 .tag.withdrawn { background: #e5e7eb; color: #6b7280; text-decoration: line-through; }
 .detail { padding: 12px 16px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; min-width: 0; }
 .message { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; border-radius: 4px; padding: 6px 10px; cursor: pointer; }
+.message.ok { background: #f0fdf4; color: #15803d; border-color: #bbf7d0; }
+.row input.path { flex: 1; max-width: 460px; }
 .close { float: right; opacity: 0.6; font-size: 11px; }
 .box { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 10px 14px; display: flex; flex-direction: column; gap: 8px; }
 h4 { margin: 0; }

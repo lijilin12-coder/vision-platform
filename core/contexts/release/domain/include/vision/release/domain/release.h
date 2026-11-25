@@ -48,12 +48,13 @@ enum class AcceptanceState { NotChecked, Passed, Failed };
 // 这里是 POC-9 需要的最小实现：
 //   L1 方案版本和锁定的模型版本创建后不可修改（只提供只读访问）
 //   L6 已撤回的上线包不能再部署；撤回不可撤销
-//   L4（一部分）验收检查没有通过的上线包不能部署。
-//       还没有做过验收检查的可以部署——见 docs/ddd/15-acceptance-check.md §4 为什么先这样
+//   L4（一部分）只有验收检查通过了的上线包才可以部署（docs/ddd/15-acceptance-check.md §4）
 //   A1  已撤回的上线包不再做验收检查
 //   A2  验收记录必须覆盖基准图集的全部用例，并且至少有一个用例
 //   A3  通过还是没通过由验收标准算出来，不由调用的一方说了算（规则在 golden_set.h 的 meets）
 //   A4  可以重新验收（例如换一个更全的基准图集）；以最近的一次为准
+//   B1  只有“可以部署”的上线包（没撤回、验收通过）才能导出成上线包文件，也只有这样的才能从文件里接收进来
+//   B2  接收时本机已经有同一个 ID 的上线包：方案版本相同就什么都不做（已有的那个不动，哪怕它后来被撤回了）；不同就是冲突
 // 跨平台一致性检查（L4 的另一半、L5）以及模型兼容性（L2）还没有实现。
 class Release : public EventRecorder {
 public:
@@ -72,7 +73,13 @@ public:
     Status recordAcceptance(const class GoldenSet& set, const struct CaseEvaluation& evaluation, std::vector<WrongCase> wrongCases,
                             std::int64_t checkedAtMs);
 
-    bool deployable() const { return status_ == ReleaseStatus::Active && acceptanceState() != AcceptanceState::Failed; }
+    // 从上线包文件里接收一个在别的机器上创建、验收过的上线包（ID 不变）。检查 B1
+    static Result<Release> adopt(ReleaseId id, std::string recipeVersionId, std::map<std::string, std::string> lockedModels,
+                                 AcceptanceRecord acceptance);
+    // B2：本机已有的这个上线包，和文件里带来的是不是同一个
+    Status sameAs(const std::string& recipeVersionId) const;
+
+    bool deployable() const { return status_ == ReleaseStatus::Active && acceptanceState() == AcceptanceState::Passed; }
     AcceptanceState acceptanceState() const {
         return !acceptance_ ? AcceptanceState::NotChecked : acceptance_->passed ? AcceptanceState::Passed : AcceptanceState::Failed;
     }
@@ -92,6 +99,12 @@ private:
     std::map<std::string, std::string> lockedModels_;  // 模型槽位 → 模型版本 ID
     ReleaseStatus status_;
     std::optional<AcceptanceRecord> acceptance_;
+};
+
+struct ReleaseImported final : DomainEvent {
+    std::string releaseId;
+    explicit ReleaseImported(std::string id) : releaseId(std::move(id)) {}
+    const char* name() const override { return "ReleaseImported"; }
 };
 
 struct ReleaseAccepted final : DomainEvent {

@@ -102,6 +102,9 @@ export class HttpPlatformClient implements PlatformClient {
   checkAcceptance(releaseId: string, goldenSetId: string) {
     return this.request<Acceptance>("POST", `/api/releases/${releaseId}/acceptance`, { goldenSetId });
   }
+  async exportRelease(releaseId: string, path: string) {
+    await this.request("POST", `/api/releases/${releaseId}/export`, { path });
+  }
   async listStations() {
     return (await this.request<{ stations: Station[] }>("GET", "/api/stations")).stations;
   }

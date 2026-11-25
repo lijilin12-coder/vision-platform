@@ -66,6 +66,9 @@ constexpr const char* kUsage = R"(用法：vision-cli [--data <目录>] <命令>
   release list
   release show <上线包ID>
   release accept <上线包ID> <基准图集ID>         验收检查：在基准图集上跑一遍，对照真实判定。没通过的上线包不能部署
+  release export <上线包ID> <文件.vrel>          导出上线包文件：方案版本、模板、模型，连同验收记录。带到产线上 release import
+                                               只有验收通过、没有撤回的上线包才能导出
+  release import <文件.vrel>                    导入上线包文件（上线包的 ID 和验收记录不变）
   release withdraw <上线包ID>                   撤回：不允许再部署
 方案包：把方案版本连同它用到的模板、模型打成一个文件，带到另一台机器上
   package export <方案版本ID> <文件.vpkg>       导出。方案用到的模型必须已经发布
@@ -76,7 +79,7 @@ constexpr const char* kUsage = R"(用法：vision-cli [--data <目录>] <命令>
   station create <名称> [--auto-rollback N]     创建工位，输出工位 ID（N：连续多少次 ERROR 自动回滚，默认 3）
   station list
   station show <工位ID>
-  station deploy <工位ID> <上线包ID>            部署：加载完成后，在下一次检测开始前生效
+  station deploy <工位ID> <上线包ID>            部署：加载完成后，在下一次检测开始前生效。只有验收通过的上线包才能部署
   station rollback <工位ID> [--withdraw]        回滚到上一个上线包；--withdraw 同时撤回出问题的上线包
   station bind <工位ID> folder <目录>           给工位绑定图像源：一个目录里的图像（只能在工位停止时做）
   station unbind <工位ID>
@@ -143,6 +146,7 @@ constexpr const char* kUsage = R"(用法：vision-cli [--data <目录>] <命令>
   --log-level <级别>     写入日志文件的最低级别：trace / debug / info（默认）/ warn / error / off
   --training-url <地址>  训练服务的地址，例如 http://127.0.0.1:8765（也可以用环境变量 VISION_TRAINING_URL）
   --events               在控制台显示领域事件
+  --allow-unaccepted     调试用：允许部署还没有验收的上线包（验收没通过的仍然不行）。不要在正式生产中使用
   --no-core-dump         崩溃时不生成 core 文件（macOS / Linux）
 
 日志在 <数据目录>/logs/vision-cli.log，崩溃报告和转储文件在 <数据目录>/crashes/。
@@ -391,6 +395,7 @@ int main(int argc, char** argv) {
     std::vector<std::string> args = utf8Args(argc, argv);
     fs::path data = "vision-data";
     bool verbose = false;
+    bool allowUnaccepted = false;
     std::string trainingUrl;
     bool coreDumps = true;
     LogLevel logLevel = LogLevel::Info;
@@ -409,6 +414,9 @@ int main(int argc, char** argv) {
             args.erase(args.begin() + i, args.begin() + i + 2);
         } else if (args[i] == "--events") {
             verbose = true;
+            args.erase(args.begin() + i);
+        } else if (args[i] == "--allow-unaccepted") {
+            allowUnaccepted = true;
             args.erase(args.begin() + i);
         } else {
             ++i;
@@ -443,6 +451,10 @@ int main(int argc, char** argv) {
     }
     App app(data, trainingUrl);
     app.verboseEvents = verbose;
+    if (allowUnaccepted) {
+        app.stations.allowUnacceptedReleases(true);
+        log::warn("cli", "调试选项 --allow-unaccepted：允许部署还没有验收的上线包。不要在正式生产中使用");
+    }
     const auto& cmd = args[0];
     auto need = [&](size_t n) {
         if (args.size() < n) {

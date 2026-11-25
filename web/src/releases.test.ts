@@ -55,17 +55,38 @@ describe("上线包页面", () => {
     expect(releases.selected()?.acceptanceState).toBe("passed");
   });
 
-  it("没通过验收的上线包部署不了，工位页面显示后端的原因", async () => {
-    const { client, releases, lenient } = await setup();
-    await releases.createGoldenSet(newSet());
-    releases.select(lenient);
-    await releases.check();
+  it("只有验收通过的上线包才能部署，工位页面显示后端的原因", async () => {
+    const { client, releases, strict, lenient } = await setup();
     const stations = createStations(client);
     await stations.refresh();
     await stations.create("一号");
+    expect(await stations.deploy(strict)).toBe(false); // 还没验收
+    expect(stations.state.error).toContain("还没有做过验收检查");
+    expect(stations.releaseName(strict)).toContain("未验收"); // 下拉框里就看得出来
+    await releases.createGoldenSet(newSet());
+    await releases.check();
+    releases.select(lenient);
+    await releases.check();
+    await stations.refresh();
     expect(await stations.deploy(lenient)).toBe(false);
     expect(stations.state.error).toContain("验收检查没有通过");
-    expect(stations.releaseName(lenient)).toContain("验收没有通过"); // 下拉框里就看得出来
+    expect(stations.releaseName(lenient)).toContain("验收没有通过");
+    expect(await stations.deploy(strict)).toBe(true);
+    expect(stations.releaseName(strict)).not.toContain("验收");
+  });
+
+  it("导出上线包文件：验收通过的才行；导出到哪里说清楚", async () => {
+    const { client, releases, strict } = await setup();
+    expect(await releases.exportTo("/tmp/a.vrel")).toBe(false);
+    expect(releases.state.error).toContain("请先验收");
+    expect(releases.state.notice).toBeNull();
+    await releases.createGoldenSet(newSet());
+    await releases.check();
+    expect(await releases.exportTo("  /tmp/a.vrel ")).toBe(true);
+    expect(client.exported).toEqual([{ releaseId: strict, path: "/tmp/a.vrel" }]);
+    expect(releases.state.notice).toContain("/tmp/a.vrel");
+    expect(await releases.exportTo(" ")).toBe(false); // 没填路径：什么都不做
+    expect(client.exported.length).toBe(1);
   });
 
   it("结论说得清是哪一条没达到", () => {
