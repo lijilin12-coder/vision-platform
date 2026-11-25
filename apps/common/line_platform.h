@@ -6,10 +6,13 @@
 // 两个平台的划分见 docs/ddd/08-platforms-and-training.md 和 docs/ddd/13-two-programs.md。
 
 #include <chrono>
+#include <condition_variable>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <thread>
+#include <mutex>
 #include <string>
 
 #include "vision/catalog/api.h"
@@ -98,6 +101,41 @@ private:
     quality::QualityService& quality_;
 };
 
+// 定时清理过期的检测图像：启动时清一次，之后每隔一段时间清一次。
+// 只有长时间运行的程序（vision-runtime、vision-line serve）需要它；跑完一条命令就退出的，启动时清一次就够了。
+class ImageJanitor {
+public:
+    explicit ImageJanitor(quality::QualityService& quality) : quality_(quality) {}
+    ~ImageJanitor() { stop(); }
+    void start(std::chrono::seconds interval = std::chrono::hours(1)) {
+        if (thread_.joinable()) return;
+        thread_ = std::thread([this, interval] {
+            std::unique_lock<std::mutex> lock(mutex_);
+            for (;;) {
+                lock.unlock();
+                (void)quality_.cleanExpiredImages();
+                lock.lock();
+                if (wake_.wait_for(lock, interval, [this] { return stopping_; })) return;
+            }
+        });
+    }
+    void stop() {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            stopping_ = true;
+        }
+        wake_.notify_all();
+        if (thread_.joinable()) thread_.join();
+    }
+
+private:
+    quality::QualityService& quality_;
+    std::mutex mutex_;
+    std::condition_variable wake_;
+    bool stopping_ = false;
+    std::thread thread_;
+};
+
 // 成员的声明顺序就是构造顺序，析构时反过来。
 struct LinePlatform {
     eventbus::InMemoryEventBus bus;
@@ -137,9 +175,10 @@ struct LinePlatform {
     persistence::JsonlInspectionRecordRepository inspectionRecords;
     persistence::JsonlReviewRepository reviews;  // 复判
     SystemClock clock;
-    content::InspectionImages inspectionImages;
+    content::InspectionImageFiles inspectionImages;  // 检测图像：短期缓存 + 长期保留
     quality::QualityService quality;
     RecordInspections recordInspections;
+    ImageJanitor imageJanitor;  // 没有 start 就什么都不做
 
     bool verboseEvents = false;
 
@@ -172,9 +211,10 @@ struct LinePlatform {
           stations(stationRepository, releases, execution, bus),
           inspectionRecords(dataDir),
           reviews(dataDir),
-          inspectionImages(contentStore),
+          inspectionImages(dataDir, contentStore),
           quality(inspectionRecords, clock, inspectionImages),
-          recordInspections(quality) {
+          recordInspections(quality),
+          imageJanitor(quality) {
         execution.useTemplateSource(templates);
 #ifdef VISION_WITH_ONNXRUNTIME
         execution.useModelSource(modelSource);
@@ -197,12 +237,33 @@ struct LinePlatform {
     }
 };
 
+// 程序的图像选项（--keep-images、--image-retention-hours）。出错时返回原因
+inline Status applyImageOptions(LinePlatform& app, const std::string& keepImages, const std::string& retentionHours) {
+    if (!keepImages.empty()) {
+        if (keepImages != "all" && keepImages != "ng" && keepImages != "none") {
+            return Status::failure("cli.bad_option", "--keep-images 只能是 all、ng 或 none");
+        }
+        app.quality.setImagePolicy(keepImages == "all" ? quality::ImagePolicy::All
+                                   : keepImages == "none" ? quality::ImagePolicy::None : quality::ImagePolicy::NgAndError);
+    }
+    if (!retentionHours.empty()) {
+        double hours = 0;
+        try {
+            hours = std::stod(retentionHours);
+        } catch (const std::exception&) {
+            return Status::failure("cli.bad_option", "--image-retention-hours 后面要跟一个数字");
+        }
+        if (auto st = app.quality.setImageRetentionHours(hours); !st) return st;
+    }
+    return Status::success();
+}
+
 // 把复判过的检测的图像导出成两个目录：<目录>/ok（人确认是合格的）和 <目录>/ng（人确认是不合格的）。
 // 这正是建基准图集、导入样本要的样子——复判的结果由此回到方案构建那一侧（数据闭环，规则 P3）。
 // 只有当时留下了图像的记录才导得出来。misjudgedOnly：只要复判确认判错了的（误报、漏检）。
 struct ReviewedExport {
     int ok = 0, ng = 0;
-    int withoutImage = 0;  // 复判过、但当时没有留图像的
+    int withoutImage = 0;  // 复判过、但没有图像的（当时没留，或者过期清掉了）
 };
 inline Result<ReviewedExport> exportReviewedImages(LinePlatform& app, const std::string& stationId, const std::string& directory,
                                                    bool misjudgedOnly) {
@@ -221,11 +282,11 @@ inline Result<ReviewedExport> exportReviewedImages(LinePlatform& app, const std:
         const auto page = app.quality.query(stationId, query);
         for (const auto& r : page) {
             if (!r.review || (misjudgedOnly && r.review->kind != "false_alarm" && r.review->kind != "miss")) continue;
-            if (r.imageSha256.empty()) {
+            if (r.imageState != "kept" && r.imageState != "cached") {  // 当时没留，或者已经过期清掉了
                 ++report.withoutImage;
                 continue;
             }
-            auto bytes = app.contentStore.get(r.imageSha256);
+            auto bytes = app.quality.recordImage(stationId, r.id);
             if (!bytes) return R::failure(bytes.error().code, "记录 " + r.id + " 的图像读不出来：" + bytes.error().message);
             // 文件名用记录的编号：不会重名，也能从文件找回是哪一次检测
             const fs::path file = root / (r.review->truthNg ? "ng" : "ok") / (r.id + ".png");

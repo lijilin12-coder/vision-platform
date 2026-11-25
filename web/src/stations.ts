@@ -179,15 +179,16 @@ export function createStations(client: PlatformClient) {
       return attempt(async () => {
         const r = await client.exportReviewed(id, directory.trim());
         state.history.notice = `已导出到 ${directory.trim()}：ok ${r.ok} 幅，ng ${r.ng} 幅` +
-          (r.withoutImage > 0 ? `；另有 ${r.withoutImage} 条复判过的记录当时没有留图像` : "");
+          (r.withoutImage > 0 ? `；另有 ${r.withoutImage} 条复判过的记录没有图像（当时没留，或者已经过期）` : "");
       });
     },
 
     pickRecord(record: SavedRecord | null) {
       state.history.selected = record;
     },
-    // 当时的图像；没有保留时返回空
-    recordImageUrl: (record: SavedRecord) => (record.imageId ? client.imageUrl(record.imageId) : ""),
+    // 当时的图像；没有（当时没留，或者过期清掉了）时返回空
+    recordImageUrl: (record: SavedRecord) =>
+      state.selectedId && (record.imageState === "kept" || record.imageState === "cached") ? client.recordImageUrl(state.selectedId, record.id) : "",
     // 良率给人看的样子
     yieldText(summary: QualitySummary | null): string {
       return summary?.yield == null ? "—" : (summary.yield * 100).toFixed(1) + "%";
@@ -207,4 +208,12 @@ export type Stations = ReturnType<typeof createStations>;
 export function reviewLabel(review: { kind: string } | null): string {
   if (!review) return "";
   return review.kind === "false_alarm" ? "误报" : review.kind === "miss" ? "漏检" : review.kind === "was_error" ? "已补判" : "判对了";
+}
+
+// 一条记录的图像为什么看不到 / 还能看多久，给人看
+export function imageNote(record: { imageState: string; review: unknown }): string {
+  if (record.imageState === "cached") return "这幅图像在短期缓存里，过了保留期会自动清掉。复判之后会长期保留。";
+  if (record.imageState === "expired") return "这幅图像已经过了保留期，被清掉了。检测记录还在。";
+  if (record.imageState === "none") return "这一次没有保留图像。";
+  return "";
 }

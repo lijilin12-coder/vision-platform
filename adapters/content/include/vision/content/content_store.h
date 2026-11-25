@@ -53,15 +53,28 @@ private:
 // 样本的图像内容：把导入的图像文件原样存进内容仓库。实现数据上下文的 SampleContent 端口。
 // 哈希对文件的字节计算：同一个文件换个名字再导入，哈希相同，就是同一个样本。
 // （同一幅画面重新保存成另一种格式，字节不同，会被当成两个样本——见 docs/06-open-questions.md Q-09。）
-// 检测时的图像（质量分析要留下来的那些）：编码成 PNG 存进内容仓库。
-// 和上传的样图存在同一个地方，所以同样可以用内容哈希取出来看。
-class InspectionImages final : public quality::ImageArchive {
+// 检测时的图像（docs/ddd/18-image-cache.md）。不放进内容仓库：内容仓库里的东西可能被好几处引用，没法安全地删；
+// 而检测图像的大多数是要过期清掉的。所以单独放，按工位、按日期分目录——一整天的可以一起删。
+//
+//   <root>/inspection-images/<工位 ID>/kept/<记录编号>.png            长期保留
+//   <root>/inspection-images/<工位 ID>/cache/<日期>/<记录编号>.png    短期缓存
+//
+// 图像的编号就是检测记录的编号（由它能算出日期，所以不用另外记图像在哪个目录）。
+// 以前的版本把检测图像存在内容仓库里，编号是内容哈希：那些照旧能读，算作长期保留。
+class InspectionImageFiles final : public quality::ImageArchive {
 public:
-    explicit InspectionImages(FileContentStore& store) : store_(store) {}
-    Result<std::string> store(const Image& image) override;
+    InspectionImageFiles(const std::filesystem::path& root, FileContentStore& legacy);
+    Result<std::string> store(const std::string& stationId, const std::string& recordId, const Image& image, bool longTerm) override;
+    std::string state(const std::string& stationId, const std::string& imageId) override;
+    Result<std::vector<unsigned char>> load(const std::string& stationId, const std::string& imageId) override;
+    Status keep(const std::string& stationId, const std::string& imageId) override;
+    quality::ImageCleanup cleanup(std::int64_t cutoffMs, std::uint64_t minFreeBytes) override;
 
 private:
-    FileContentStore& store_;
+    std::filesystem::path keptFile(const std::string& stationId, const std::string& imageId) const;
+    std::filesystem::path cachedFile(const std::string& stationId, const std::string& imageId) const;
+    std::filesystem::path dir_;
+    FileContentStore& legacy_;
 };
 
 class SampleFiles final : public data::SampleContent {

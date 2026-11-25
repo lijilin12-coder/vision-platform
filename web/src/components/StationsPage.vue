@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, onUnmounted, ref } from "vue";
-import { reviewLabel } from "../stations";
+import { imageNote, reviewLabel } from "../stations";
 import type { Stations } from "../stations";
 
 // 工位页面：工位列表、部署和回滚、绑定图像目录、开始 / 停止、最近检测的图像和结果。
@@ -206,13 +206,14 @@ const stateNames: Record<string, string> = { stopped: "已停止", running: "运
                 {{ picked.time }} #{{ picked.sequence }} {{ picked.frameName }}
                 <span class="badge" :class="picked.verdict">{{ picked.verdict }}</span>
               </div>
-              <div class="frame" v-if="picked.imageId">
+              <div class="frame" v-if="stations.recordImageUrl(picked)">
                 <img :src="stations.recordImageUrl(picked)" :alt="picked.frameName" data-history-image @load="onHistoryImageLoad" />
                 <svg v-if="picked.result.defects.length > 0" class="overlay" preserveAspectRatio="none" :viewBox="historyBox">
                   <rect v-for="(d, i) in picked.result.defects" :key="i" :x="d.left - 2" :y="d.top - 2" :width="d.width + 4" :height="d.height + 4" class="defect" />
                 </svg>
               </div>
-              <div v-else class="muted empty" data-history-no-image>这一次没有保留图像（只保留不合格的和出错的）。</div>
+              <div v-else class="muted empty" data-history-no-image>{{ imageNote(picked) }}</div>
+              <div v-if="picked.imageState === 'cached'" class="muted" data-history-cached>{{ imageNote(picked) }}</div>
               <div v-for="(r, i) in picked.reasons" :key="i" :class="r.pass ? 'pass' : 'fail'">{{ r.pass ? "✓" : "✗" }} {{ r.text }}</div>
               <div class="review-box" data-review-box>
                 <strong>复判</strong>

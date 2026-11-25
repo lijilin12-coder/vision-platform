@@ -31,11 +31,27 @@ public:
     virtual std::int64_t nowMs() = 0;  // 1970-01-01 UTC 以来的毫秒数
 };
 
-// 把一幅图像存起来，返回它的内容哈希（存到内容仓库里；同样的图像只存一份）
+// 清理的结果
+struct ImageCleanup {
+    int expired = 0;    // 过了保留期清掉的
+    int forSpace = 0;   // 磁盘快满了、提前清掉的（还没到期）
+    bool spaceLow = false;  // 清完之后磁盘剩余空间仍然低于要求
+};
+
+// 检测图像的存档。短期缓存和长期保留是两块地方；图像的编号由存档自己定
 class ImageArchive {
 public:
     virtual ~ImageArchive() = default;
-    virtual Result<std::string> store(const Image& image) = 0;
+    // 存一幅图像，返回它的编号。longTerm：直接长期保留；否则进短期缓存
+    virtual Result<std::string> store(const std::string& stationId, const std::string& recordId, const Image& image, bool longTerm) = 0;
+    // 这幅图像现在的情况：kept 长期保留着 / cached 在短期缓存里 / expired 已经清掉了
+    virtual std::string state(const std::string& stationId, const std::string& imageId) = 0;
+    // 图像的内容（PNG）
+    virtual Result<std::vector<unsigned char>> load(const std::string& stationId, const std::string& imageId) = 0;
+    // 把短期缓存里的一幅转成长期保留。已经是长期的、已经过期的：不算出错
+    virtual Status keep(const std::string& stationId, const std::string& imageId) = 0;
+    // 清理短期缓存：cutoffMs 之前的清掉；磁盘剩余空间低于 minFreeBytes 时从最旧的开始再清，直到够或者清空
+    virtual ImageCleanup cleanup(std::int64_t cutoffMs, std::uint64_t minFreeBytes) = 0;
 };
 
 // ===== DTO =====
@@ -72,7 +88,9 @@ struct RecordView {
     std::int64_t timeMs = 0;
     std::string time;  // 给人看的时间（UTC），例如 "2026-11-24 09:15:02"
     std::uint64_t sequence = 0;
-    std::string releaseId, recipeVersionId, frameName, imageSha256, verdict;
+    std::string releaseId, recipeVersionId, frameName, imageId, verdict;
+    // 图像现在的情况：none 当时就没留 / cached 在短期缓存里（过了保留期会清掉）/ kept 长期保留着 / expired 已经清掉了
+    std::string imageState = "none";
     std::vector<ReasonView> reasons;
     ResultItems result;
     double totalMs = 0;
@@ -101,20 +119,28 @@ struct ReviewRequest {
     std::string reviewer, note;
 };
 
-// 哪些检测的图像要留下来。图像比记录大得多（一条记录几百字节，一幅图像几百 KB），不能都留。
+// 哪些检测的图像要留下来（docs/ddd/18-image-cache.md）。图像比记录大得多，不能都永远留着。
 enum class ImagePolicy {
     None,       // 都不留
-    NgAndError, // 只留不合格的和出错的（默认）：出了问题要能回头看当时的图像
-    All,        // 都留
+    NgAndError, // 只留不合格的和出错的（长期）。判 OK 的不留——漏检事后无图可看
+    All,        // 默认：不合格的和出错的长期保留；判 OK 的进短期缓存，过了保留期清掉
 };
 
 // ===== 应用服务 =====
 // 可以从多个线程调用（几个工位同时在检测）。
 class QualityService {
 public:
-    QualityService(InspectionRecordRepository& records, Clock& clock, ImageArchive& images, ImagePolicy policy = ImagePolicy::NgAndError);
+    QualityService(InspectionRecordRepository& records, Clock& clock, ImageArchive& images, ImagePolicy policy = ImagePolicy::All);
     ~QualityService();
     void setImagePolicy(ImagePolicy policy) { policy_ = policy; }
+    // 短期缓存留多久（默认 72 小时）。1 小时到 366 天之外的值被拒绝
+    Status setImageRetentionHours(double hours);
+    // 磁盘剩余空间低于这个数时，清理会提前清掉最旧的缓存图像（默认 2 GB；0 表示不管）
+    void setMinFreeBytes(std::uint64_t bytes) { minFreeBytes_ = bytes; }
+    // 清理一次短期缓存。程序启动时、之后每隔一段时间调用（组装根负责）
+    ImageCleanup cleanExpiredImages();
+    // 一条检测记录的图像（PNG）。当时没留、已经过期：返回失败，原因说清楚
+    Result<std::vector<unsigned char>> recordImage(const std::string& stationId, const std::string& recordId) const;
 
     // ---- 复判（QUA-01，docs/ddd/17-review.md）----
     // 需要复判的存储，和发布事件的地方；组装根传入
@@ -136,6 +162,8 @@ private:
     Clock& clock_;
     ImageArchive& images_;
     std::atomic<ImagePolicy> policy_;
+    std::atomic<std::int64_t> retentionMs_{72LL * 3600 * 1000};
+    std::atomic<std::uint64_t> minFreeBytes_{2ULL * 1024 * 1024 * 1024};
     ReviewRepository* reviews_ = nullptr;
     EventPublisher* events_ = nullptr;
     // 每个工位的复判，按“每条记录最近的一次”整理好。第一次用到时从存储里读

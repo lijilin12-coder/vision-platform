@@ -1,5 +1,7 @@
 #include "vision/quality/domain/inspection_record.h"
 
+#include "vision/quality/domain/image_retention.h"
+
 #include <algorithm>
 #include <cstdio>
 
@@ -22,6 +24,18 @@ Result<InspectionRecord> InspectionRecord::create(Fields f) {
         return R::failure("quality.record_invalid", "判 NG 的检测记录至少要有一条不合格的判定依据");
     }
     return InspectionRecord(std::move(f));
+}
+
+Result<ImageRetention> ImageRetention::create(bool keepRejected, bool cacheAccepted, double retentionHours) {
+    // 保留期太短等于没有缓存（来不及复判）；上限一年只是为了挡住写错的数字
+    if (!(retentionHours >= 1.0) || retentionHours > 24.0 * 366) {
+        return Result<ImageRetention>::failure("quality.retention_invalid", "图像的保留期要在 1 小时到 366 天之间");
+    }
+    ImageRetention r;
+    r.keepRejected = keepRejected;
+    r.cacheAccepted = cacheAccepted;
+    r.retentionMs = static_cast<std::int64_t>(retentionHours * 3600.0 * 1000.0);
+    return r;
 }
 
 std::string makeRecordId(std::int64_t timeMs, std::uint64_t counter) {

@@ -250,12 +250,16 @@ export class FakePlatformClient implements PlatformClient {
       reviewed: this.saved.filter((r) => r.review).length, reviewedCorrect: kind("correct"), falseAlarms: kind("false_alarm"),
       misses: kind("miss"), reviewedErrors: kind("was_error") };
   }
+  recordImageUrl(stationId: string, recordId: string) {
+    return `/api/stations/${stationId}/records/${recordId}/image`;
+  }
   async reviewRecord(stationId: string, recordId: string, truth: "OK" | "NG", note = "") {
     this.station(stationId);
     const r = this.saved.find((x) => x.id === recordId);
     if (!r) throw new PlatformError("找不到这条检测记录", "quality.record_not_found", 404);
     const kind = r.verdict === "ERROR" ? "was_error" : r.verdict === truth ? "correct" : r.verdict === "NG" ? "false_alarm" : "miss";
     r.review = { truth, kind, note, reviewer: "", time: "2026-11-25 08:00:00" };
+    if (r.imageState === "cached") r.imageState = "kept"; // 复判过的图像转成长期保留
     return { ...r };
   }
   exportedReviews: string[] = [];
@@ -263,7 +267,7 @@ export class FakePlatformClient implements PlatformClient {
     this.station(stationId);
     this.exportedReviews.push(directory);
     const reviewed = this.saved.filter((r) => r.review);
-    const withImage = reviewed.filter((r) => r.imageId);
+    const withImage = reviewed.filter((r) => r.imageState === "kept" || r.imageState === "cached");
     return { ok: withImage.filter((r) => r.review!.truth === "OK").length, ng: withImage.filter((r) => r.review!.truth === "NG").length,
       withoutImage: reviewed.length - withImage.length };
   }

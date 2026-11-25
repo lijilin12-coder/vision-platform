@@ -357,11 +357,12 @@ try {
   await page.uncheck("[data-history-only-ng]");
   await page.waitForFunction(() => document.querySelectorAll("[data-history-record]").length === 3);
   await page.locator("[data-history-record]").nth(1).click();
-  await page.waitForSelector("[data-history-no-image]");
-  check(true, "合格的那一条没有保留图像，页面说明了原因");
+  // 判 OK 的那一条：图像在短期缓存里，现在看得到；页面说明它会过期、复判后会长期保留
+  await page.waitForFunction(() => document.querySelector("[data-history-image]")?.complete && document.querySelector("[data-history-image]").naturalWidth === 640);
+  check((await page.textContent("[data-history-cached]")).includes("短期缓存"), "合格的那一条：图像在短期缓存里，看得到，页面说明了它会过期");
 
   console.log("复判：人确认系统判得对不对");
-  // 最早的那一条（判 NG）：人说其实是合格的 → 误报。复判完自动跳到下一条
+  // 从第二条（2.png，判 OK）开始：人确认确实合格。复判完自动跳到下一条
   await page.locator("[data-history-record]").nth(1).click();
   await page.fill("[data-review-note]", "是反光");
   await page.click("[data-review-ok]");
@@ -387,14 +388,15 @@ try {
   await page.waitForFunction(() => document.querySelectorAll("[data-history-record]").length === 0);
   check(true, "还没复判的：没有了");
   await page.selectOption("[data-history-review-filter]", "");
-  // 导出复判过的图像：留了图像的只有判 NG 的两条——一条实际合格（进 ok），一条实际不合格（进 ng）
+  check((await page.locator("[data-history-cached]").count()) === 0, "复判过的图像都转成了长期保留");
+  // 导出复判过的图像：三条都有图像——两条实际合格（进 ok），一条实际不合格（进 ng）
   const reviewedDir = join(work, "复判导出");
   await page.fill("[data-review-export-dir]", reviewedDir);
   await page.click("[data-review-export]");
   await page.waitForSelector("[data-history-notice]");
   const exportNotice = await page.textContent("[data-history-notice]");
-  check(exportNotice.includes("ok 1 幅，ng 1 幅") && exportNotice.includes("另有 1 条"), `导出了复判过的图像：${exportNotice.replace("点一下关闭", "").trim()}`);
-  check(readdirSync(join(reviewedDir, "ok")).length === 1 && readdirSync(join(reviewedDir, "ng")).length === 1, "磁盘上确实有 ok、ng 两个目录，各 1 幅");
+  check(exportNotice.includes("ok 2 幅，ng 1 幅") && !exportNotice.includes("另有"), `导出了复判过的图像：${exportNotice.replace("点一下关闭", "").trim()}`);
+  check(readdirSync(join(reviewedDir, "ok")).length === 2 && readdirSync(join(reviewedDir, "ng")).length === 1, "磁盘上确实有 ok、ng 两个目录：2 幅和 1 幅");
 
   check(consoleErrors.length === 0, `浏览器控制台没有报错${consoleErrors.length ? "：" + consoleErrors.slice(0, 3).join(" | ") : ""}`);
 } finally {

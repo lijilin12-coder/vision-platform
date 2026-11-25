@@ -4,6 +4,7 @@
 #include <ctime>
 
 #include "vision/common/log.h"
+#include "vision/quality/domain/image_retention.h"
 #include "vision/quality/domain/inspection_record.h"
 #include "vision/quality/domain/review.h"
 
@@ -26,7 +27,7 @@ std::string formatTime(std::int64_t timeMs) {
     return buffer;
 }
 
-RecordView toView(const InspectionRecord& r, const Review* review = nullptr) {
+RecordView toView(const InspectionRecord& r, const Review* review, ImageArchive& images) {
     RecordView v;
     v.id = r->id;
     v.stationId = r->stationId;
@@ -36,7 +37,8 @@ RecordView toView(const InspectionRecord& r, const Review* review = nullptr) {
     v.releaseId = r->releaseId;
     v.recipeVersionId = r->recipeVersionId;
     v.frameName = r->frameName;
-    v.imageSha256 = r->imageSha256;
+    v.imageId = r->imageId;
+    v.imageState = r->imageId.empty() ? "none" : images.state(r->stationId, r->imageId);
     v.verdict = r->verdict;
     for (const auto& reason : r->reasons) v.reasons.push_back({reason.nodeId, reason.pass, reason.text});
     v.result = r->result;
@@ -98,25 +100,51 @@ Result<RecordView> QualityService::review(const std::string& stationId, const st
         ReviewBook& reviews = book(stationId);  // 先读出已有的，再追加：不然刚写的这条会被读进来再算一遍
         if (auto st = reviews_->append(review.value()); !st) return st.error();
         reviews.add(review.value());
+        // M3：复判过的检测，图像转成长期保留。转不成（磁盘问题）不让复判失败，只留一条日志
+        if (!(*record)->imageId.empty()) {
+            if (auto st = images_.keep(stationId, (*record)->imageId); !st) {
+                log::warn("quality", "复判过的图像没有转成长期保留", {{"station", stationId}, {"message", st.error().message}});
+            }
+        }
         if (review.value().misjudged()) {
             event = std::make_shared<MisjudgmentConfirmed>(stationId, recordId, reviewKindName(review.value().kind()),
-                                                           (*record)->imageSha256);
+                                                           (*record)->imageId);
         }
-        view = toView(*record, reviews.latest(recordId));
+        view = toView(*record, reviews.latest(recordId), images_);
     }
     if (event && events_ != nullptr) events_->publish(event);  // 在锁外发布
     return view;
 }
 
 Result<std::string> QualityService::record(const InspectionToRecord& in) {
-    // 图像：按策略决定留不留。存图像比较慢，放在锁外面做
-    std::string imageSha256;
+    // 先定下这条记录的编号（图像的文件要用它起名）。
+    // 编号按时间递增。时钟偶尔会往回走（系统对时）：那时沿用上一条的时间，保证编号不倒退
+    std::int64_t now = 0;
+    std::string recordId;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        now = clock_.nowMs();
+        if (now <= lastTimeMs_) {
+            now = lastTimeMs_;
+            ++counter_;
+        } else {
+            lastTimeMs_ = now;
+            counter_ = 0;
+        }
+        recordId = makeRecordId(now, counter_);
+    }
+
+    // 图像：按保留规则决定留不留、留多久（M1、M2）。存图像比较慢，放在锁外面做
+    std::string imageId;
     const ImagePolicy policy = policy_;
-    const bool keep = policy == ImagePolicy::All || (policy == ImagePolicy::NgAndError && in.verdict != "OK");
-    if (keep && !in.frame.empty()) {
-        auto stored = images_.store(in.frame);
+    ImageRetention retention;
+    retention.keepRejected = policy != ImagePolicy::None;
+    retention.cacheAccepted = policy == ImagePolicy::All;
+    const ImageKeeping keeping = retention.at(in.verdict);
+    if (keeping != ImageKeeping::Discard && !in.frame.empty()) {
+        auto stored = images_.store(in.stationId, recordId, in.frame, keeping == ImageKeeping::LongTerm);
         if (stored) {
-            imageSha256 = std::move(stored).value();
+            imageId = std::move(stored).value();
         } else {
             // 图像没存下来（磁盘满了？）：记录照样要写——知道“这一次判了 NG”比什么都没有强
             log::warn("quality", "检测的图像没有存下来", {{"station", in.stationId}, {"message", stored.error().message}});
@@ -124,24 +152,15 @@ Result<std::string> QualityService::record(const InspectionToRecord& in) {
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
-    // 编号按时间递增。时钟偶尔会往回走（系统对时）：那时沿用上一条的时间，保证编号不倒退
-    std::int64_t now = clock_.nowMs();
-    if (now <= lastTimeMs_) {
-        now = lastTimeMs_;
-        ++counter_;
-    } else {
-        lastTimeMs_ = now;
-        counter_ = 0;
-    }
     InspectionRecord::Fields f;
-    f.id = makeRecordId(now, counter_);
+    f.id = recordId;
     f.stationId = in.stationId;
     f.timeMs = now;
     f.sequence = in.sequence;
     f.releaseId = in.releaseId;
     f.recipeVersionId = in.recipeVersionId;
     f.frameName = in.frameName;
-    f.imageSha256 = std::move(imageSha256);
+    f.imageId = std::move(imageId);
     f.verdict = in.verdict;
     for (const auto& reason : in.reasons) f.reasons.push_back({reason.nodeId, reason.pass, reason.text});
     f.result = in.result;
@@ -170,7 +189,7 @@ std::vector<RecordView> QualityService::query(const std::string& stationId, cons
             const Review* review = reviews.latest(r->id);
             if (q.review == "unreviewed" && review != nullptr) continue;
             if (q.review == "misjudged" && (review == nullptr || !review->misjudged())) continue;
-            views.push_back(toView(r, review));
+            views.push_back(toView(r, review, images_));
             if (static_cast<int>(views.size()) >= limit) return views;
         }
         if (q.review.empty() || static_cast<int>(page.size()) < filter.limit) return views;
@@ -182,7 +201,43 @@ Result<RecordView> QualityService::getRecord(const std::string& stationId, const
     std::lock_guard<std::mutex> lock(mutex_);
     auto r = records_.find(stationId, recordId);
     if (!r) return Result<RecordView>::failure("quality.record_not_found", "找不到这条检测记录");
-    return toView(*r, book(stationId).latest(recordId));
+    return toView(*r, book(stationId).latest(recordId), images_);
+}
+
+Status QualityService::setImageRetentionHours(double hours) {
+    auto retention = ImageRetention::create(true, true, hours);
+    if (!retention) return retention.error();
+    retentionMs_ = retention.value().retentionMs;
+    return Status::success();
+}
+
+ImageCleanup QualityService::cleanExpiredImages() {
+    ImageRetention retention;
+    retention.retentionMs = retentionMs_;
+    // 不拿 mutex_：清理可能要删很多文件，不能挡住检测。存档自己保证“正在写的”和“正在删的”不打架
+    const ImageCleanup done = images_.cleanup(retention.cutoff(clock_.nowMs()), minFreeBytes_);
+    if (done.expired > 0) log::info("quality", "清理了过期的检测图像", {{"count", std::to_string(done.expired)}});
+    if (done.forSpace > 0) {
+        log::warn("quality", "磁盘快满了：提前清掉了还没到期的检测图像", {{"count", std::to_string(done.forSpace)}});
+    }
+    if (done.spaceLow) log::warn("quality", "磁盘剩余空间不足，而且短期缓存已经清空了。请清理磁盘");
+    return done;
+}
+
+Result<std::vector<unsigned char>> QualityService::recordImage(const std::string& stationId, const std::string& recordId) const {
+    using R = Result<std::vector<unsigned char>>;
+    std::string imageId;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto r = records_.find(stationId, recordId);
+        if (!r) return R::failure("quality.record_not_found", "找不到这条检测记录");
+        imageId = (*r)->imageId;
+    }
+    if (imageId.empty()) return R::failure("quality.image_not_found", "这一次检测当时没有留图像");
+    if (images_.state(stationId, imageId) == "expired") {
+        return R::failure("quality.image_not_found", "这幅图像已经过了保留期，被清掉了");
+    }
+    return images_.load(stationId, imageId);
 }
 
 SummaryView QualityService::summary(const std::string& stationId) const {

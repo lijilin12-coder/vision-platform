@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { FakePlatformClient } from "./platform/FakePlatformClient";
 import type { InspectionRecord, SavedRecord } from "./platform/types";
-import { createStations, reviewLabel } from "./stations";
+import { createStations, imageNote, reviewLabel } from "./stations";
 
 const record = (sequence: number, verdict: "OK" | "NG" = "OK", swapped = false): InspectionRecord => ({
   sequence, frameName: `${sequence}.png`, verdict, releaseId: "rel-1", swapped, totalMs: 1, reasons: [],
@@ -82,7 +82,7 @@ describe("工位页面", () => {
 
   // ---- 历史记录 ----
   const saved = (n: number, verdict: "OK" | "NG" = "OK"): SavedRecord => ({
-    ...record(n, verdict), id: String(1000 + n), time: "2026-11-24 12:00:00", recipeVersionId: "亮斑@v1", imageId: verdict === "NG" ? `img-${n}` : "", review: null,
+    ...record(n, verdict), id: String(1000 + n), time: "2026-11-24 12:00:00", recipeVersionId: "亮斑@v1", imageState: verdict === "NG" ? "kept" : "cached", review: null,
     result: { defects: verdict === "NG" ? [{ nodeId: "n5", category: "亮斑", centerX: 1, centerY: 1, left: 0, top: 0, width: 2, height: 2, area: 4 }] : [],
       measurements: [], poses: [] },
   });
@@ -117,8 +117,14 @@ describe("工位页面", () => {
     expect(h.summary?.total).toBe(20); // 汇总是全部的，不跟着筛选变
     expect(h.summary?.defectsByCategory).toEqual({ 亮斑: 4 });
     stations.pickRecord(h.records[1]);
-    expect(stations.recordImageUrl(h.selected!)).toBe("/api/images/img-15");
-    expect(stations.recordImageUrl(saved(1))).toBe(""); // 合格的没有保留图像
+    expect(stations.recordImageUrl(h.selected!)).toBe("/api/stations/s1/records/1015/image");
+    expect(stations.recordImageUrl(saved(1))).toContain("/records/1001/image"); // 合格的在短期缓存里：现在看得到
+    expect(stations.recordImageUrl({ ...saved(1), imageState: "expired" })).toBe(""); // 过期清掉了
+    expect(stations.recordImageUrl({ ...saved(1), imageState: "none" })).toBe("");
+    expect(imageNote(saved(1))).toContain("短期缓存");
+    expect(imageNote({ ...saved(1), imageState: "expired" })).toContain("过了保留期");
+    expect(imageNote({ ...saved(1), imageState: "none" })).toContain("没有保留");
+    expect(imageNote(saved(2, "NG"))).toBe("");
     expect(stations.yieldText(null)).toBe("—");
     expect(stations.yieldText({ total: 1, ok: 0, ng: 0, error: 1, yield: null, defectsByCategory: {}, reviewed: 0, reviewedCorrect: 0,
       falseAlarms: 0, misses: 0, reviewedErrors: 0 })).toBe("—");
@@ -161,6 +167,7 @@ describe("工位页面", () => {
     expect(reviewLabel(h.selected!.review)).toBe("误报");
     expect(h.summary).toMatchObject({ reviewed: 3, falseAlarms: 2, reviewedCorrect: 0 });
     expect(reviewLabel(null)).toBe("");
+    expect(h.records.find((r) => r.sequence === 5)?.imageState).toBe("kept"); // 判 OK 的那条复判之后，图像转成了长期保留
     // 最后一条之后没有下一条：留在原地
     stations.pickRecord(h.records[5]);
     stations.pickNext();
@@ -185,16 +192,16 @@ describe("工位页面", () => {
 
   it("导出复判过的图像：说清导出了多少、有多少没有图像", async () => {
     const { client, stations } = await setup();
-    client.saved.push(saved(1, "OK"), saved(2, "NG"));
+    client.saved.push({ ...saved(1, "OK"), imageState: "expired" }, saved(2, "NG"));
     await stations.loadHistory();
     stations.pickRecord(stations.state.history.records[0]); // #2，NG，有图像
     await stations.review("OK");
-    stations.pickNext(); // #1，OK，没有图像
-    await stations.review("NG"); // 漏检，但当时没留图像
+    stations.pickNext(); // #1，OK，图像已经过期清掉了
+    await stations.review("NG"); // 漏检，但没有图像可导
     expect(await stations.exportReviewed(" ")).toBe(false);
     expect(await stations.exportReviewed(" /out ")).toBe(true);
     expect(client.exportedReviews).toEqual(["/out"]);
-    expect(stations.state.history.notice).toBe("已导出到 /out：ok 1 幅，ng 0 幅；另有 1 条复判过的记录当时没有留图像");
+    expect(stations.state.history.notice).toBe("已导出到 /out：ok 1 幅，ng 0 幅；另有 1 条复判过的记录没有图像（当时没留，或者已经过期）");
     stations.dismiss();
     expect(stations.state.history.notice).toBeNull();
   });
