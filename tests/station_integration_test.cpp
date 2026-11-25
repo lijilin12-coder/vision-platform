@@ -85,6 +85,7 @@ struct Services {
           source(authoring),
           releases(releaseRepo, source, bus),
           stations(stationRepo, releases, execution, bus) {
+        stations.allowUnacceptedReleases(true);  // 这里测的不是验收：允许部署没验收的上线包（规则 L4 的测试在 acceptance_test.cpp、release_bundle_test.cpp）
         bus.subscribe("*", [this](const EventPtr& e) {
             std::lock_guard<std::mutex> lock(eventsMutex);
             events.emplace_back(e->name());

@@ -414,6 +414,24 @@ int runReleaseCommand(platform::LinePlatform& app, const std::vector<std::string
         }
         return 0;
     }
+    if (sub == "export" && args.size() >= 4) {
+        auto r = app.packages.exportRelease(args[2], args[3]);
+        if (!r) return fail(r.error());
+        std::cout << "已导出 " << args[3] << "：上线包 " << args[2] << "，方案版本 " << r.value().recipeVersionId << "，匹配模板 "
+                  << r.value().templates << " 个，模型 " << r.value().models << " 个\n";
+        return 0;
+    }
+    if (sub == "import" && args.size() >= 3) {
+        auto r = app.packages.importRelease(args[2]);
+        if (!r) return fail(r.error());
+        const auto& v = r.value();
+        std::cout << (v.releaseAdded ? "已导入上线包 " : "本平台已经有上线包 ") << v.releaseId << "（方案版本 " << v.package.recipeVersionId
+                  << "，" << v.package.recipeName << "）\n";
+        for (const auto& id : v.package.modelsAdded) std::cout << "  新增模型 " << id << "\n";
+        printAcceptance(v.acceptance);
+        std::cout << v.releaseId << "\n";
+        return 0;
+    }
     if (sub == "accept" && args.size() >= 4) {
         // release accept <上线包ID> <基准图集ID>
         auto a = app.releases.checkAcceptance(args[2], args[3]);
@@ -425,7 +443,7 @@ int runReleaseCommand(platform::LinePlatform& app, const std::vector<std::string
         auto st = app.releases.withdraw(args[2]);
         return st ? 0 : fail(st.error());
     }
-    return usageError("release create <方案版本ID> | list | show <上线包ID> | accept <上线包ID> <基准图集ID> | withdraw <上线包ID>");
+    return usageError("release create <方案版本ID> | list | show <上线包ID> | accept <上线包ID> <基准图集ID> | export <上线包ID> <文件> | import <文件> | withdraw <上线包ID>");
 }
 
 // ---------- station … ----------
@@ -535,6 +553,10 @@ int runPackageCommand(platform::LinePlatform& app, const std::vector<std::string
         std::cout << "\n";
         for (const auto& t : m.templates) std::cout << "  匹配模板 " << t.name << "（" << t.bytes << " 字节）\n";
         for (const auto& x : m.models) std::cout << "  模型 " << x.id << "（" << x.kind << "，" << x.bytes << " 字节）\n";
+        if (m.release) {
+            std::cout << "  这是一个上线包文件：带着上线包 " << m.release->releaseId << "\n";
+            printAcceptance(m.release->acceptance);
+        }
     };
     if (sub == "export" && args.size() >= 4) {
         auto r = app.packages.exportPackage(args[2], args[3]);

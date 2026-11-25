@@ -392,6 +392,7 @@ TEST(InspectionRecordsEndToEnd, EveryStationInspectionLeavesARecordThatSurvivesA
     std::string station, release, version;
     {
         platform::Platform p(data);
+        p.stations.allowUnacceptedReleases(true);  // 这里测的不是验收：允许部署没验收的上线包（规则 L4 的测试在 acceptance_test.cpp、release_bundle_test.cpp）
         auto& a = p.authoring;
         const auto recipe = a.createRecipe("亮斑").value();
         std::vector<std::string> n;

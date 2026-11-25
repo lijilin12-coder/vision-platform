@@ -173,6 +173,12 @@ target_link_libraries(acceptance_tests PRIVATE vision_platform_assembly vision_o
 vision_copy_onnxruntime(acceptance_tests)
 gtest_discover_tests(acceptance_tests)
 
+# ---- 上线包文件（REL-03）----
+add_executable(release_bundle_tests release_bundle_test.cpp)
+target_link_libraries(release_bundle_tests PRIVATE vision_platform_assembly vision_operators release_domain GTest::gtest_main)
+vision_copy_onnxruntime(release_bundle_tests)
+gtest_discover_tests(release_bundle_tests)
+
 # ---- 方案包（REL-02）：导入规则、包文件、两台“机器”之间导出和导入 ----
 add_executable(package_tests package_test.cpp)
 target_link_libraries(package_tests PRIVATE vision_platform_assembly vision_operators release_domain GTest::gtest_main)

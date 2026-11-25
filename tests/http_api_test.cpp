@@ -43,6 +43,7 @@ protected:
         dir = fs::temp_directory_path() / pathFromUtf8(std::string("vision-接口-") + info->name());
         fs::remove_all(dir);
         platform = std::make_unique<platform::Platform>(dir);
+        platform->stations.allowUnacceptedReleases(true);  // 这里测的不是验收：允许部署没验收的上线包（规则 L4 的测试在 acceptance_test.cpp、release_bundle_test.cpp）
         server = std::make_unique<runtime::ApiServer>(*platform);
         port = server->bind("127.0.0.1", 0);
         ASSERT_GT(port, 0);

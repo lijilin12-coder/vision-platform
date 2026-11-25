@@ -51,7 +51,7 @@ TEST(ReleaseAcceptance, A3_PassOrFailComesFromTheCriteriaNotFromTheCaller) {
     auto r = Release::create("rel-1", "recipe@v1").value();
     (void)r.pullEvents();
     EXPECT_EQ(r.acceptanceState(), AcceptanceState::NotChecked);
-    EXPECT_TRUE(r.deployable());  // 还没验收的可以部署
+    EXPECT_FALSE(r.deployable());  // L4：还没验收的不能部署
 
     const auto set = goldenSet();
     ASSERT_TRUE(r.recordAcceptance(set, evaluate(set), {}, 1000).ok());
@@ -256,26 +256,39 @@ TEST_F(Acceptance, PassAndFailAgainstRealImages) {
     EXPECT_EQ(a.value().wrongCases.size(), 1u);  // 通过了，判错的那张照样列出来
 }
 
-TEST_F(Acceptance, L4_AFailedReleaseCannotBeDeployed) {
+TEST_F(Acceptance, L4_OnlyAnAcceptedReleaseCanBeDeployed) {
     const std::string set = golden();
     const std::string station = p->stations.createStation("一号").value();
-    // 没验收的：可以部署
-    ASSERT_TRUE(p->stations.deploy(station, lenient).ok());
-    ASSERT_TRUE(p->stations.waitForLoading(station).ok());
-    ASSERT_FALSE(p->releases.checkAcceptance(lenient, set).value().passed);
-    // 没通过的：不能部署到别的工位，也不能再部署到这个工位
-    const std::string other = p->stations.createStation("二号").value();
-    auto st = p->stations.deploy(other, lenient);
+    // 没验收的：不能部署，原因说的是“还没验收”
+    auto st = p->stations.deploy(station, strict);
     ASSERT_FALSE(st.ok());
     EXPECT_EQ(st.error().code, "station.release_not_accepted");
-    EXPECT_TRUE(p->stations.getStation(other).value().pendingRelease.empty());
+    EXPECT_NE(st.error().message.find("还没有做过验收检查"), std::string::npos);
+    EXPECT_TRUE(p->stations.getStation(station).value().pendingRelease.empty());  // 被拒绝的不留痕迹
+    // 没通过的：不能部署
+    ASSERT_FALSE(p->releases.checkAcceptance(lenient, set).value().passed);
+    st = p->stations.deploy(station, lenient);
+    ASSERT_FALSE(st.ok());
+    EXPECT_NE(st.error().message.find("没有通过"), std::string::npos);
     // 通过的：可以
     ASSERT_TRUE(p->releases.checkAcceptance(strict, set).value().passed);
-    EXPECT_TRUE(p->stations.deploy(other, strict).ok());
-    ASSERT_TRUE(p->stations.waitForLoading(other).ok());
+    EXPECT_TRUE(p->stations.deploy(station, strict).ok());
+    ASSERT_TRUE(p->stations.waitForLoading(station).ok());
     // 验收检查不算产线检测：不留检测记录
     EXPECT_EQ(p->quality.summary(station).total, 0);
-    EXPECT_EQ(p->quality.summary(other).total, 0);
+}
+
+// 调试用的口子：允许部署“还没验收”的；“验收没通过”的仍然不行
+TEST_F(Acceptance, TheDebugSwitchLetsUncheckedReleasesThroughButNeverFailedOnes) {
+    const std::string station = p->stations.createStation("一号").value();
+    p->stations.allowUnacceptedReleases(true);
+    EXPECT_TRUE(p->stations.deploy(station, lenient).ok());
+    ASSERT_TRUE(p->stations.waitForLoading(station).ok());
+    ASSERT_FALSE(p->releases.checkAcceptance(lenient, golden()).value().passed);
+    const std::string other = p->stations.createStation("二号").value();
+    EXPECT_EQ(p->stations.deploy(other, lenient).error().code, "station.release_not_accepted");
+    p->stations.allowUnacceptedReleases(false);  // 关上之后回到规则
+    EXPECT_FALSE(p->stations.deploy(other, strict).ok());
 }
 
 TEST_F(Acceptance, TheRecordSurvivesARestartAndOldReleaseFilesStillLoad) {
@@ -301,9 +314,9 @@ TEST_F(Acceptance, TheRecordSurvivesARestartAndOldReleaseFilesStillLoad) {
     EXPECT_EQ(a.value().wrongCases[0].kind, "miss");
     const std::string station = p->stations.createStation("一号").value();
     EXPECT_EQ(p->stations.deploy(station, lenient).error().code, "station.release_not_accepted");
+    // 旧的上线包文件：读得出来，状态是“没验收”，所以也不能部署
     EXPECT_EQ(p->releases.getManifest(strict).value().acceptance, "none");
-    EXPECT_TRUE(p->stations.deploy(station, strict).ok());
-    ASSERT_TRUE(p->stations.waitForLoading(station).ok());
+    EXPECT_FALSE(p->stations.deploy(station, strict).ok());
 }
 
 TEST_F(Acceptance, ACheckThatCannotBeFinishedLeavesNoRecord) {

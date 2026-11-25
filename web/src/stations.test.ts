@@ -10,6 +10,7 @@ const record = (sequence: number, verdict: "OK" | "NG" = "OK", swapped = false):
 
 async function setup() {
   const client = new FakePlatformClient();
+  client.allowUnaccepted = true; // 这里测的是工位页面，不是验收
   await client.createRelease("亮斑@v1");
   const stations = createStations(client);
   await stations.refresh();

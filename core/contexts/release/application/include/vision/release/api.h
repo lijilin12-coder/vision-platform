@@ -87,6 +87,13 @@ struct AcceptanceView {
     std::vector<WrongCaseView> wrongCases;
 };
 
+// 发布语言：上线包文件里带着的那个上线包（docs/ddd/16-release-bundle.md）
+struct BundledRelease {
+    std::string releaseId, recipeVersionId;
+    std::map<std::string, std::string> lockedModels;
+    AcceptanceView acceptance;
+};
+
 // 应用服务。可以从多个线程调用（工位在后台线程里加载上线包）。
 class ReleaseService {
 public:
@@ -109,6 +116,12 @@ public:
     Result<AcceptanceView> checkAcceptance(const std::string& releaseId, const std::string& goldenSetId);
     // 最近一次验收的记录；还没做过时返回失败 release.not_checked
     Result<AcceptanceView> getAcceptance(const std::string& releaseId) const;
+
+    // ---- 上线包文件用的两个操作（由 PackageService 调用）----
+    // 取出一个上线包准备带走。只有可以部署的（没撤回、验收通过）才行（B1）
+    Result<BundledRelease> bundle(const std::string& releaseId) const;
+    // 接收一个从文件里来的上线包，ID 不变。返回 true：新增了；false：本机已经有同一个（B2）
+    Result<bool> adopt(const BundledRelease& bundled);
 
     Result<ReleaseManifest> getManifest(const std::string& releaseId) const;
     Result<ReleaseContent> getContent(const std::string& releaseId) const;
@@ -243,6 +256,8 @@ struct PackageManifest {
     std::vector<std::pair<std::string, int>> operators;  // 用到的算子：ID、主版本号
     std::vector<PackageTemplateEntry> templates;
     std::vector<PackageModelEntry> models;
+    // 有这一项的方案包就是“上线包文件”：除了方案版本，还带着一个验收通过的上线包
+    std::optional<BundledRelease> release;
 };
 
 // 一个方案包的全部内容（已经读进内存、校验和都核对过）
@@ -324,6 +339,13 @@ struct ImportReport {
     bool nothingNew() const { return !recipeAdded && modelsAdded.empty(); }
 };
 
+struct BundleImportReport {
+    ImportReport package;      // 方案版本、模型、模板那一部分
+    std::string releaseId;
+    bool releaseAdded = false;  // 为假：本机已经有这个上线包
+    AcceptanceView acceptance;
+};
+
 class PackageService {
 public:
     PackageService(const RecipeVersionSource& recipes, ImportedRecipes& imported, PackageExchange& exchange,
@@ -336,6 +358,14 @@ public:
     // 只看不导入：清单里有什么
     Result<PackageManifest> inspect(const std::string& filePath);
 
+    // ---- 上线包文件（REL-03，docs/ddd/16-release-bundle.md）----
+    // 上线包文件 = 方案包 + 一个验收通过的上线包。带到产线上导入之后，上线包的 ID 和验收记录都还在，可以直接部署。
+    void useReleases(ReleaseService& releases) { releases_ = &releases; }
+    // 导出：上线包必须没撤回、验收通过（B1）；其余和导出方案包一样
+    Result<ExportReport> exportRelease(const std::string& releaseId, const std::string& filePath);
+    // 导入：先按方案包的规则导入方案版本和模型（K1～K4），再接收上线包（B1、B2）。重复导入不出错
+    Result<BundleImportReport> importRelease(const std::string& filePath);
+
 private:
     const RecipeVersionSource& recipes_;
     ImportedRecipes& imported_;
@@ -344,7 +374,11 @@ private:
     ModelArchive& models_;
     ContentArchive& content_;
     EventPublisher& events_;
+    ReleaseService* releases_ = nullptr;
     std::mutex mutex_;  // 两次导入不要交错
+
+    Result<PackageFile> build(const std::string& recipeVersionId, ExportReport& report);
+    Result<ImportReport> importFile(const PackageFile& package);
 };
 
 // 领域事件：方案包已导入

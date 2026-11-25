@@ -29,6 +29,7 @@ constexpr const char* kUsage = R"(用法：vision-runtime [选项]
   --port <端口>          监听的端口，默认 8750
   --host <地址>          监听的地址，默认 127.0.0.1（只接受本机的连接）。
                          这个服务没有登录和权限：不要让它监听不可信的网络
+  --allow-unaccepted     调试用：允许部署还没有验收的上线包（验收没通过的仍然不行）。不要在正式生产中使用
   --training-url <地址>  训练服务的地址（也可以用环境变量 VISION_TRAINING_URL）
   --web <目录>           界面的文件在哪里，默认 ./web/dist（编译界面：cd web && npm install && npm run build）。
                          目录存在的话，浏览器打开 http://127.0.0.1:8750/ 就是界面
@@ -46,6 +47,7 @@ int main(int argc, char** argv) {
     const std::vector<std::string> args = utf8Args(argc, argv);  // Windows 上数据目录可能带中文
     std::string dataDir = "vision-data", host = "127.0.0.1", trainingUrl, webDir = "web/dist";
     int port = 8750;
+    bool allowUnaccepted = false;
     for (std::size_t i = 0; i < args.size(); ++i) {
         const std::string& arg = args[i];
         const bool hasValue = i + 1 < args.size();
@@ -58,6 +60,8 @@ int main(int argc, char** argv) {
             webDir = args[++i];
         } else if (arg == "--host" && hasValue) {
             host = args[++i];
+        } else if (arg == "--allow-unaccepted") {
+            allowUnaccepted = true;
         } else if (arg == "--training-url" && hasValue) {
             trainingUrl = args[++i];
         } else if (arg == "--port" && hasValue) {
@@ -87,6 +91,10 @@ int main(int argc, char** argv) {
     crash::installCrashHandler(crashOptions);
 
     platform::Platform platform(data, trainingUrl);
+    if (allowUnaccepted) {
+        platform.stations.allowUnacceptedReleases(true);
+        log::warn("runtime", "调试选项 --allow-unaccepted：允许部署还没有验收的上线包。不要在正式生产中使用");
+    }
     runtime::ApiServer server(platform);
     if (server.bind(host, port) < 0) {
         std::cerr << "无法监听 " << host << ":" << port << "（端口是不是被别的程序占用了？）\n";

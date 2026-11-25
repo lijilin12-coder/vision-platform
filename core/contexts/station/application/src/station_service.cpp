@@ -1,5 +1,6 @@
 #include "vision/station/api.h"
 
+#include <atomic>
 #include <algorithm>
 #include <chrono>
 #include <condition_variable>
@@ -80,6 +81,7 @@ struct StationService::Impl {
     std::vector<std::future<void>> loaders;
     ImageSourceFactory* imageSources = nullptr;
     InspectionObserver* observer = nullptr;
+    std::atomic<bool> requireAcceptance{true};
 
     Impl(StationRepository& r, release::ReleaseService& rel, execution::ExecutionService& ex, EventPublisher& ev)
         : repository(r), releases(rel), execution(ex), events(ev) {}
@@ -265,9 +267,13 @@ Status StationService::deploy(const std::string& stationId, const std::string& r
     if (manifest.value().withdrawn) {
         return Status::failure("station.release_withdrawn", "上线包 " + releaseId + " 已经被撤回，不能部署");
     }
+    // L4：只有验收检查通过了的上线包才能部署
     if (manifest.value().acceptance == "failed") {
-        // L4。还没做过验收检查的可以部署（见 docs/ddd/15-acceptance-check.md §4）
         return Status::failure("station.release_not_accepted", "上线包 " + releaseId + " 的验收检查没有通过，不能部署");
+    }
+    if (manifest.value().acceptance != "passed" && impl_->requireAcceptance) {
+        return Status::failure("station.release_not_accepted",
+                               "上线包 " + releaseId + " 还没有做过验收检查，不能部署。请先在方案构建平台上验收");
     }
 
     std::vector<EventPtr> pulled;
@@ -350,6 +356,8 @@ Status StationService::stop(const std::string& stationId) {
 Status StationService::rollback(const std::string& stationId, bool withdraw) {
     return impl_->command(stationId, [withdraw](Station& s) { return s.rollback(withdraw); });
 }
+
+void StationService::allowUnacceptedReleases(bool allow) { impl_->requireAcceptance = !allow; }
 
 void StationService::useInspectionObserver(InspectionObserver& observer) { impl_->observer = &observer; }
 

@@ -132,6 +132,58 @@ Result<AcceptanceView> ReleaseService::checkAcceptance(const std::string& releas
     return view;
 }
 
+Result<BundledRelease> ReleaseService::bundle(const std::string& releaseId) const {
+    using R = Result<BundledRelease>;
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto release = releases_.find(releaseId);
+    if (!release) return R::failure("release.not_found", "找不到上线包 " + releaseId);
+    if (release->status() == ReleaseStatus::Withdrawn) return R::failure("release.withdrawn", "上线包已经被撤回，不能导出");
+    if (release->acceptanceState() != AcceptanceState::Passed) {
+        return R::failure("release.not_accepted", release->acceptance() ? "上线包的验收检查没有通过，不能导出"
+                                                                        : "上线包还没有做过验收检查，不能导出。请先验收");
+    }
+    return BundledRelease{release->id(), release->recipeVersionId(), release->lockedModels(), toView(releaseId, *release->acceptance())};
+}
+
+Result<bool> ReleaseService::adopt(const BundledRelease& b) {
+    using R = Result<bool>;
+    const AcceptanceView& v = b.acceptance;
+    AcceptanceRecord a;
+    a.goldenSetId = v.goldenSetId;
+    a.goldenSetName = v.goldenSetName;
+    a.checkedAtMs = v.checkedAtMs;
+    a.passed = v.passed;
+    a.maxMisses = v.maxMisses;
+    a.maxFalseAlarmRate = v.maxFalseAlarmRate;
+    a.maxErrors = v.maxErrors;
+    a.total = v.total;
+    a.truthOk = v.truthOk;
+    a.truthNg = v.truthNg;
+    a.misses = v.misses;
+    a.falseAlarms = v.falseAlarms;
+    a.errors = v.errors;
+    a.meanMs = v.meanMs;
+    a.maxMs = v.maxMs;
+    for (const auto& w : v.wrongCases) a.wrongCases.push_back({w.caseId, w.imageRef, w.truthNg, w.observed});
+    auto adopted = Release::adopt(b.releaseId, b.recipeVersionId, b.lockedModels, std::move(a));  // B1
+    if (!adopted) return adopted.error();
+    // 它引用的方案版本本机必须已经有了（上线包文件导入时先导入方案版本，再走到这里）
+    if (auto doc = recipes_.find(b.recipeVersionId); !doc) return doc.error();
+
+    std::vector<EventPtr> events;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (auto existing = releases_.find(b.releaseId)) {
+            if (auto st = existing->sameAs(b.recipeVersionId); !st) return st.error();  // B2
+            return false;
+        }
+        if (auto st = releases_.save(adopted.value()); !st) return st.error();
+        events = adopted.value().pullEvents();
+    }
+    events_.publishAll(events);
+    return true;
+}
+
 Result<AcceptanceView> ReleaseService::getAcceptance(const std::string& releaseId) const {
     std::lock_guard<std::mutex> lock(mutex_);
     auto release = releases_.find(releaseId);

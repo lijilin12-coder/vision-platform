@@ -113,6 +113,9 @@ public:
 
     // 对一帧图像做一次产线检测。frameName：这一帧的名字（给人看的，会进检测记录），可以为空
     Result<StationInspection> inspect(const std::string& stationId, const Image& frame, const std::string& frameName = {});
+    // 调试用的口子：允许部署还没有做过验收检查的上线包（验收没通过的仍然不行）。
+    // 默认不允许（规则 L4）。程序的 --allow-unaccepted 选项会打开它；不是给正式生产用的。
+    void allowUnacceptedReleases(bool allow);
     // 每完成一次产线检测通知一声。组装根传入；不设置就没有人被通知
     void useInspectionObserver(InspectionObserver& observer);
 

@@ -477,6 +477,18 @@ void ApiServer::Impl::routes() {
         reply(res, 200, acceptanceJson(a.value()));
     });
 
+    // 导出上线包文件，写到后端那台机器上。请求体 {"path": "某个文件.vrel"}。只有验收通过、没撤回的上线包才能导出
+    server.Post("/api/releases/" + id + "/export", [this](const Request& req, Response& res) {
+        const auto body = bodyObject(req, res);
+        if (!body) return;
+        const auto path = textField(*body, "path", res);
+        if (!path) return;
+        auto r = platform.packages.exportRelease(req.matches[1], *path);
+        if (!r) return replyError(res, r.error());
+        reply(res, 200, {{"path", *path}, {"recipeVersionId", r.value().recipeVersionId}, {"templates", r.value().templates},
+                         {"models", r.value().models}, {"contentBytes", r.value().contentBytes}});
+    });
+
     // ---- 基准图集 ----
     const auto goldenSetJson = [](const release::GoldenSetView& s) {
         int ng = 0;

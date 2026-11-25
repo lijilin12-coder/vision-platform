@@ -125,6 +125,7 @@ export class FakePlatformClient implements PlatformClient {
   }
   // ---- 上线包和工位：同样只有测试需要的那一点 ----
   releases: Release[] = [];
+  allowUnaccepted = false;
   stations = new Map<string, Station>();
   produced: InspectionRecord[] = []; // 测试往这里放“工位新检测出来的记录”，下一次查询时交出去
 
@@ -168,6 +169,12 @@ export class FakePlatformClient implements PlatformClient {
     release.acceptanceState = acceptance.passed ? "passed" : "failed";
     return acceptance;
   }
+  exported: { releaseId: string; path: string }[] = [];
+  async exportRelease(releaseId: string, path: string) {
+    const release = this.releases.find((r) => r.id === releaseId);
+    if (release?.acceptanceState !== "passed") throw new PlatformError("上线包还没有做过验收检查，不能导出。请先验收", "release.not_accepted", 422);
+    this.exported.push({ releaseId, path });
+  }
   async listStations() {
     return [...this.stations.values()].map((s) => ({ ...s, recent: [] }));
   }
@@ -196,8 +203,11 @@ export class FakePlatformClient implements PlatformClient {
   async deploy(stationId: string, releaseId: string) {
     const s = this.station(stationId);
     if (!this.releases.some((r) => r.id === releaseId)) throw new PlatformError(`找不到上线包 ${releaseId}`, "release.not_found", 404);
-    if (this.releases.find((r) => r.id === releaseId)?.acceptanceState === "failed") {
-      throw new PlatformError(`上线包 ${releaseId} 的验收检查没有通过，不能部署`, "station.release_not_accepted", 422);
+    // 规则 L4：只有验收通过的才能部署。allowUnaccepted 相当于后端的调试选项 --allow-unaccepted
+    const acceptance = this.releases.find((r) => r.id === releaseId)?.acceptanceState;
+    if (acceptance === "failed") throw new PlatformError(`上线包 ${releaseId} 的验收检查没有通过，不能部署`, "station.release_not_accepted", 422);
+    if (acceptance !== "passed" && !this.allowUnaccepted) {
+      throw new PlatformError(`上线包 ${releaseId} 还没有做过验收检查，不能部署`, "station.release_not_accepted", 422);
     }
     if (s.runner.running) Object.assign(s, { pendingRelease: releaseId, pendingReady: true });
     else s.activeRelease = releaseId;

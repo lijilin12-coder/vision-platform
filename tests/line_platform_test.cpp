@@ -58,6 +58,7 @@ protected:
         fs::create_directories(root / "images");
         builder = std::make_unique<platform::Platform>(root / "builder");
         line = std::make_unique<platform::LinePlatform>(root / "line");
+        line->stations.allowUnacceptedReleases(true);  // 这里测的不是验收：允许部署没验收的上线包（规则 L4 的测试在 acceptance_test.cpp、release_bundle_test.cpp）
     }
     void TearDown() override {
         line.reset();
