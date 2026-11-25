@@ -47,7 +47,13 @@ constexpr const char* kUsage = R"(用法：vision-line [--data <目录>] <命令
   station deploy <工位ID> <上线包ID>            部署：加载完成后，在下一次检测开始前生效
   station rollback <工位ID> [--withdraw]
   station run <工位ID> [--follow 秒]            让一个工位把图像源里现有的图像检测完
-  station records <工位ID> [--ng] [--limit N]   看保存下来的检测记录（从新到旧；--ng 只看不合格的）
+  station records <工位ID> [--ng] [--unreviewed | --misjudged] [--limit N]
+                                               看保存下来的检测记录（从新到旧）。每行开头是记录的编号。
+                                               --ng 只看不合格的；--unreviewed 还没复判的；--misjudged 复判确认判错了的
+  station review <工位ID> <记录编号> ok|ng [--note 文字] [--by 谁]
+                                               复判：人确认这一次实际是合格（ok）还是不合格（ng）。可以改，以最近一次为准
+  station export-reviewed <工位ID> <目录> [--misjudged]
+                                               把复判过的图像导出成 <目录>/ok 和 <目录>/ng（可以直接拿去建基准图集、导入样本）
   station summary <工位ID>                      检测了多少、良率、每种缺陷出现了多少个
 运行
   serve [<工位ID>...] [--port N] [--exit-when-idle 秒]
@@ -62,6 +68,8 @@ constexpr const char* kUsage = R"(用法：vision-line [--data <目录>] <命令
 选项
   --data <目录>          数据目录，默认 ./vision-line-data
   --events               在控制台显示领域事件
+  --keep-images <哪些>   检测时留下哪些图像：ng（默认，只留不合格的和出错的）/ all（都留，占磁盘）/ none。
+                         想在复判时看得到判 OK 的那些图像（找漏检），要用 all
   --allow-unaccepted     调试用：允许部署还没有验收的上线包（验收没通过的仍然不行）。不要在正式生产中使用
 
 日志在 <数据目录>/logs/vision-line.log，崩溃报告在 <数据目录>/crashes/。
@@ -77,6 +85,7 @@ int main(int argc, char** argv) {
     std::string dataDir = "vision-line-data";
     bool verbose = false;
     bool allowUnaccepted = false;
+    std::string keepImages;
     int exitWhenIdle = 0, port = 8760;
     for (std::size_t i = 0; i < args.size();) {
         if (args[i] == "--data" && i + 1 < args.size()) {
@@ -91,6 +100,9 @@ int main(int argc, char** argv) {
         } else if (args[i] == "--events") {
             verbose = true;
             args.erase(args.begin() + static_cast<std::ptrdiff_t>(i));
+        } else if (args[i] == "--keep-images" && i + 1 < args.size()) {
+            keepImages = args[i + 1];
+            args.erase(args.begin() + static_cast<std::ptrdiff_t>(i), args.begin() + static_cast<std::ptrdiff_t>(i) + 2);
         } else if (args[i] == "--allow-unaccepted") {
             allowUnaccepted = true;
             args.erase(args.begin() + static_cast<std::ptrdiff_t>(i));
@@ -120,6 +132,14 @@ int main(int argc, char** argv) {
 
     platform::LinePlatform app(data);
     app.verboseEvents = verbose;
+    if (!keepImages.empty()) {
+        if (keepImages != "all" && keepImages != "ng" && keepImages != "none") {
+            std::cerr << "--keep-images 只能是 all、ng 或 none\n";
+            return 1;
+        }
+        app.quality.setImagePolicy(keepImages == "all" ? quality::ImagePolicy::All
+                                   : keepImages == "none" ? quality::ImagePolicy::None : quality::ImagePolicy::NgAndError);
+    }
     if (allowUnaccepted) {
         app.stations.allowUnacceptedReleases(true);
         log::warn("line", "调试选项 --allow-unaccepted：允许部署还没有验收的上线包。不要在正式生产中使用");
@@ -147,7 +167,9 @@ int main(int argc, char** argv) {
         }
         // 服务正在运行的话，工位的状态在它的内存里：对工位的操作要交给它，不能在这个进程里另做一份
         // 检测记录在磁盘上，谁都可以读：服务运行着的时候也能直接看
-        if (args[1] == "records" || args[1] == "summary") return cli::runStationCommand(app, args);
+        if (args[1] == "records" || args[1] == "summary" || args[1] == "review" || args[1] == "export-reviewed") {
+            return cli::runStationCommand(app, args);
+        }
         if (const std::string service = line::runningService(data); !service.empty()) {
             const int code = line::forwardStationCommand(service, args);
             if (code >= 0) return code;

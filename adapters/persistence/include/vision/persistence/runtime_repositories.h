@@ -10,6 +10,7 @@
 #include "vision/data/domain/sample.h"
 #include "vision/models/domain/model_version.h"
 #include "vision/quality/domain/inspection_record.h"
+#include "vision/quality/domain/review.h"
 #include "vision/release/domain/golden_set.h"
 #include "vision/release/domain/release.h"
 #include "vision/station/domain/station.h"
@@ -69,6 +70,18 @@ public:
 private:
     // 这个工位的记录文件，从新到旧
     std::vector<std::filesystem::path> files(const std::string& stationId) const;
+    std::filesystem::path dir_;
+};
+
+// <root>/inspection-records/<工位 ID>/reviews.jsonl
+// 复判：每个工位一个文件，一行一条，只往后追加。和检测记录放在同一个目录里（文件名不是日期，不会和记录文件混）。
+class JsonlReviewRepository final : public quality::ReviewRepository {
+public:
+    explicit JsonlReviewRepository(std::filesystem::path root);
+    Status append(const quality::Review& review) override;
+    std::vector<quality::Review> all(const std::string& stationId) override;
+
+private:
     std::filesystem::path dir_;
 };
 

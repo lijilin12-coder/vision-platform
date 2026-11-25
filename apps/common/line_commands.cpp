@@ -448,6 +448,15 @@ int runReleaseCommand(platform::LinePlatform& app, const std::vector<std::string
 
 // ---------- station … ----------
 
+namespace {
+// 复判的结论，给人看
+std::string reviewText(const quality::ReviewView& v) {
+    const std::string truth = v.truthNg ? "实际不合格" : "实际合格";
+    const std::string kind = v.kind == "false_alarm" ? "误报" : v.kind == "miss" ? "漏检" : v.kind == "was_error" ? "系统当时出错" : "系统判对了";
+    return truth + "（" + kind + "）" + (v.reviewer.empty() ? "" : " " + v.reviewer) + (v.note.empty() ? "" : "：" + v.note);
+}
+}  // namespace
+
 int runStationCommand(platform::LinePlatform& app, const std::vector<std::string>& rawArgs) {
     std::vector<std::string> args = rawArgs;
     const std::string sub = args[1];
@@ -508,22 +517,54 @@ int runStationCommand(platform::LinePlatform& app, const std::vector<std::string
         return st ? 0 : fail(st.error());
     }
     if (sub == "records") {
-        // station records <工位ID> [--ng] [--limit N]
+        // station records <工位ID> [--ng] [--unreviewed | --misjudged] [--limit N]
         quality::RecordQuery query;
         if (takeFlag(args, "--ng")) query.verdict = "NG";
+        if (takeFlag(args, "--unreviewed")) query.review = "unreviewed";
+        if (takeFlag(args, "--misjudged")) query.review = "misjudged";
         query.limit = takeIntOption(args, "--limit", 20);
-        if (args.size() < 3) return usageError("station records <工位ID> [--ng] [--limit N]");
+        if (args.size() < 3) return usageError("station records <工位ID> [--ng] [--unreviewed | --misjudged] [--limit N]");
         if (auto v = app.stations.getStation(args[2]); !v) return fail(v.error());
         for (const auto& r : app.quality.query(args[2], query)) {
-            std::cout << r.time << "  #" << r.sequence << "  " << r.verdict << "  " << (r.frameName.empty() ? "-" : r.frameName) << "  上线包 "
-                      << shortId(r.releaseId);
+            std::cout << r.id << "  " << r.time << "  #" << r.sequence << "  " << r.verdict << "  " << (r.frameName.empty() ? "-" : r.frameName)
+                      << "  上线包 " << shortId(r.releaseId);
             if (!r.result.defects.empty()) std::cout << "  缺陷 " << r.result.defects.size() << " 个";
             if (!r.imageSha256.empty()) std::cout << "  图像 " << shortId(r.imageSha256);
+            if (r.review) std::cout << "  复判：" << reviewText(*r.review);
             std::cout << "\n";
             for (const auto& reason : r.reasons) {
                 if (!reason.pass) std::cout << "      " << reason.text << "\n";
             }
         }
+        return 0;
+    }
+    if (sub == "review") {
+        // station review <工位ID> <记录编号> ok|ng [--note 文字] [--by 谁]
+        quality::ReviewRequest request;
+        for (std::size_t i = 5; i + 1 < args.size(); i += 2) {
+            if (args[i] == "--note") request.note = args[i + 1];
+            else if (args[i] == "--by") request.reviewer = args[i + 1];
+            else return usageError("station review <工位ID> <记录编号> ok|ng [--note 文字] [--by 谁]");
+        }
+        if (args.size() < 5 || (args[4] != "ok" && args[4] != "ng")) {
+            return usageError("station review <工位ID> <记录编号> ok|ng [--note 文字] [--by 谁]");
+        }
+        request.truthNg = args[4] == "ng";
+        if (auto v = app.stations.getStation(args[2]); !v) return fail(v.error());
+        auto r = app.quality.review(args[2], args[3], request);
+        if (!r) return fail(r.error());
+        std::cout << "系统判 " << r.value().verdict << "，复判：" << reviewText(*r.value().review) << "\n";
+        return 0;
+    }
+    if (sub == "export-reviewed") {
+        // station export-reviewed <工位ID> <目录> [--misjudged]
+        const bool misjudgedOnly = takeFlag(args, "--misjudged");
+        if (args.size() < 4) return usageError("station export-reviewed <工位ID> <目录> [--misjudged]");
+        auto r = platform::exportReviewedImages(app, args[2], args[3], misjudgedOnly);
+        if (!r) return fail(r.error());
+        std::cout << "已导出到 " << args[3] << "：ok " << r.value().ok << " 幅，ng " << r.value().ng << " 幅";
+        if (r.value().withoutImage > 0) std::cout << "；另有 " << r.value().withoutImage << " 条复判过的记录当时没有留图像";
+        std::cout << "\n";
         return 0;
     }
     if (sub == "summary" && args.size() >= 3) {
@@ -536,11 +577,16 @@ int runStationCommand(platform::LinePlatform& app, const std::vector<std::string
             std::cout << "良率 " << text << "（出错的不算在内）\n";
         }
         for (const auto& [category, count] : s.defectsByCategory) std::cout << "  缺陷 " << category << "：" << count << " 个\n";
+        if (s.reviewed > 0) {
+            std::cout << "复判了 " << s.reviewed << " 条：系统判对了 " << s.reviewedCorrect << "，误报 " << s.falseAlarms << "，漏检 " << s.misses;
+            if (s.reviewedErrors > 0) std::cout << "，系统当时出错 " << s.reviewedErrors;
+            std::cout << "\n";
+        }
         return 0;
     }
     if (sub == "run") return cmdStationRun(app, args);
     if (sub == "stress") return cmdStationStress(app, args);
-    return usageError("station create | list | show | deploy | rollback | run | records | summary | stress（详见 vision-cli help）");
+    return usageError("station create | list | show | deploy | rollback | run | records | review | export-reviewed | summary | stress（详见 vision-cli help）");
 }
 
 // ---------- package ----------

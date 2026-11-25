@@ -29,6 +29,8 @@ constexpr const char* kUsage = R"(用法：vision-runtime [选项]
   --port <端口>          监听的端口，默认 8750
   --host <地址>          监听的地址，默认 127.0.0.1（只接受本机的连接）。
                          这个服务没有登录和权限：不要让它监听不可信的网络
+  --keep-images <哪些>   检测时留下哪些图像：ng（默认，只留不合格的和出错的）/ all（都留，占磁盘）/ none。
+                         想在复判时看得到判 OK 的那些图像（找漏检），要用 all
   --allow-unaccepted     调试用：允许部署还没有验收的上线包（验收没通过的仍然不行）。不要在正式生产中使用
   --training-url <地址>  训练服务的地址（也可以用环境变量 VISION_TRAINING_URL）
   --web <目录>           界面的文件在哪里，默认 ./web/dist（编译界面：cd web && npm install && npm run build）。
@@ -48,6 +50,7 @@ int main(int argc, char** argv) {
     std::string dataDir = "vision-data", host = "127.0.0.1", trainingUrl, webDir = "web/dist";
     int port = 8750;
     bool allowUnaccepted = false;
+    std::string keepImages;
     for (std::size_t i = 0; i < args.size(); ++i) {
         const std::string& arg = args[i];
         const bool hasValue = i + 1 < args.size();
@@ -60,6 +63,8 @@ int main(int argc, char** argv) {
             webDir = args[++i];
         } else if (arg == "--host" && hasValue) {
             host = args[++i];
+        } else if (arg == "--keep-images" && hasValue) {
+            keepImages = args[++i];
         } else if (arg == "--allow-unaccepted") {
             allowUnaccepted = true;
         } else if (arg == "--training-url" && hasValue) {
@@ -91,6 +96,14 @@ int main(int argc, char** argv) {
     crash::installCrashHandler(crashOptions);
 
     platform::Platform platform(data, trainingUrl);
+    if (!keepImages.empty()) {
+        if (keepImages != "all" && keepImages != "ng" && keepImages != "none") {
+            std::cerr << "--keep-images 只能是 all、ng 或 none\n";
+            return 1;
+        }
+        platform.quality.setImagePolicy(keepImages == "all" ? quality::ImagePolicy::All
+                                        : keepImages == "none" ? quality::ImagePolicy::None : quality::ImagePolicy::NgAndError);
+    }
     if (allowUnaccepted) {
         platform.stations.allowUnacceptedReleases(true);
         log::warn("runtime", "调试选项 --allow-unaccepted：允许部署还没有验收的上线包。不要在正式生产中使用");

@@ -2,6 +2,7 @@
 
 // BC-10 质量分析的公开接口（目前只有检测记录这一部分）。
 
+#include <atomic>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -10,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "vision/common/domain_event.h"
 #include "vision/common/result.h"
 #include "vision/kernel/image.h"
 #include "vision/kernel/result_items.h"
@@ -17,6 +19,8 @@
 namespace vision::quality {
 
 class InspectionRecordRepository;  // 领域层的仓储接口，由组装根传入实现
+class ReviewRepository;
+class ReviewBook;
 
 // ===== 端口 =====
 
@@ -54,6 +58,15 @@ struct InspectionToRecord {
     Image frame;  // 这一帧的图像；可以是空的
 };
 
+// 一条检测记录上最近的一次复判
+struct ReviewView {
+    bool truthNg = false;  // 人确认的真实情况：是否不合格
+    std::string kind;      // correct 判对了 / false_alarm 误报 / miss 漏检 / was_error 系统当时出错
+    std::string reviewer, note;
+    std::int64_t timeMs = 0;
+    std::string time;
+};
+
 struct RecordView {
     std::string id, stationId;
     std::int64_t timeMs = 0;
@@ -64,10 +77,12 @@ struct RecordView {
     ResultItems result;
     double totalMs = 0;
     bool swapped = false;
+    std::optional<ReviewView> review;  // 还没有复判过时为空
 };
 
 struct RecordQuery {
     std::string verdict;   // 只要这种判定；空表示都要
+    std::string review;    // 按复判筛选：空 都要 / unreviewed 还没复判的 / misjudged 复判确认判错了的（误报、漏检）
     std::string beforeId;  // 翻页：只要比它更早的
     int limit = 50;
 };
@@ -76,6 +91,14 @@ struct SummaryView {
     long total = 0, ok = 0, ng = 0, error = 0;
     std::optional<double> yield;  // 良率：OK ÷ (OK + NG)
     std::map<std::string, long> defectsByCategory;
+    // 复判：复判过多少条，其中判对了的、误报、漏检、系统当时出错的各多少
+    long reviewed = 0, reviewedCorrect = 0, falseAlarms = 0, misses = 0, reviewedErrors = 0;
+};
+
+// 复判时提交的内容
+struct ReviewRequest {
+    bool truthNg = false;
+    std::string reviewer, note;
 };
 
 // 哪些检测的图像要留下来。图像比记录大得多（一条记录几百字节，一幅图像几百 KB），不能都留。
@@ -90,6 +113,15 @@ enum class ImagePolicy {
 class QualityService {
 public:
     QualityService(InspectionRecordRepository& records, Clock& clock, ImageArchive& images, ImagePolicy policy = ImagePolicy::NgAndError);
+    ~QualityService();
+    void setImagePolicy(ImagePolicy policy) { policy_ = policy; }
+
+    // ---- 复判（QUA-01，docs/ddd/17-review.md）----
+    // 需要复判的存储，和发布事件的地方；组装根传入
+    void useReviews(ReviewRepository& reviews, EventPublisher& events);
+    // 复判一条检测记录：人确认它实际是合格还是不合格。可以重复复判，以最近的一次为准（R3）。
+    // 确认是误判（误报、漏检）时发布 MisjudgmentConfirmed
+    Result<RecordView> review(const std::string& stationId, const std::string& recordId, const ReviewRequest& request);
 
     // 记下一次检测。返回记录的编号。图像存不下来不算失败：记录照样写，只是没有图像
     Result<std::string> record(const InspectionToRecord& inspection);
@@ -103,7 +135,12 @@ private:
     InspectionRecordRepository& records_;
     Clock& clock_;
     ImageArchive& images_;
-    ImagePolicy policy_;
+    std::atomic<ImagePolicy> policy_;
+    ReviewRepository* reviews_ = nullptr;
+    EventPublisher* events_ = nullptr;
+    // 每个工位的复判，按“每条记录最近的一次”整理好。第一次用到时从存储里读
+    mutable std::map<std::string, std::shared_ptr<ReviewBook>> books_;
+    ReviewBook& book(const std::string& stationId) const;  // 调用时必须拿着 mutex_
     mutable std::mutex mutex_;  // 仓储的实现不要求线程安全
     std::int64_t lastTimeMs_ = 0;
     std::uint64_t counter_ = 0;  // 同一毫秒里的第几条

@@ -530,6 +530,38 @@ TEST_F(HttpApi, StationsRunContinuouslyAndHotSwapThroughTheApi) {
     EXPECT_EQ(summary.body["defectsByCategory"].size(), 1u);
     EXPECT_EQ(get("/api/stations/nobody/summary").status, 404);
 
+    // 复判：判 NG 的那一次，人确认其实是合格的 → 误报
+    const std::string ngId = ngRecord["id"];
+    EXPECT_TRUE(ngRecord["review"].is_null());
+    auto reviewed = post(base + "/records/" + ngId + "/review", {{"truth", "OK"}, {"note", "是反光"}});
+    ASSERT_EQ(reviewed.status, 200) << reviewed.raw;
+    EXPECT_EQ(reviewed.body["review"]["kind"], "false_alarm");
+    EXPECT_EQ(reviewed.body["review"]["truth"], "OK");
+    EXPECT_EQ(reviewed.body["review"]["note"], "是反光");
+    EXPECT_EQ(reviewed.body["verdict"], "NG");
+    EXPECT_EQ(post(base + "/records/" + ngId + "/review", {{"truth", "MAYBE"}}).status, 400);
+    EXPECT_EQ(post(base + "/records/" + ngId + "/review").status, 400);
+    EXPECT_EQ(post(base + "/records/1795521600000-999999/review", {{"truth", "OK"}}).status, 404);
+    EXPECT_EQ(post("/api/stations/nobody/records/" + ngId + "/review", {{"truth", "OK"}}).status, 404);
+    records = get(base + "/records?review=misjudged");
+    ASSERT_EQ(records.body["records"].size(), 1u);
+    EXPECT_EQ(records.body["records"][0]["id"], ngId);
+    EXPECT_EQ(get(base + "/records?review=unreviewed").body["records"].size(), 1u);
+    EXPECT_EQ(get(base + "/records?review=whatever").status, 400);
+    const auto afterReview = get(base + "/summary");
+    EXPECT_EQ(afterReview.body["reviewed"], 1);
+    EXPECT_EQ(afterReview.body["falseAlarms"], 1);
+    EXPECT_EQ(afterReview.body["misses"], 0);
+    EXPECT_EQ(afterReview.body["ng"], 1);  // 系统的统计不因为复判而改
+    // 把复判过的图像导出成两个目录
+    const fs::path reviewedDir = dir / pathFromUtf8("复判导出");
+    const auto exported = post(base + "/export-reviewed", {{"directory", pathToUtf8(reviewedDir)}});
+    ASSERT_EQ(exported.status, 200) << exported.raw;
+    EXPECT_EQ(exported.body["ok"], 1);
+    EXPECT_EQ(exported.body["ng"], 0);
+    EXPECT_TRUE(fs::exists(reviewedDir / "ok" / (ngId + ".png")));
+    EXPECT_EQ(post(base + "/export-reviewed").status, 400);
+
     // 回滚；工位列表里看得到运行情况，但不带检测记录
     ASSERT_EQ(post(base + "/rollback").status, 200);
     EXPECT_EQ(get(base).body["activeRelease"], strict);

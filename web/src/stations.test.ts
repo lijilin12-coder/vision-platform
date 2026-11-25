@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { FakePlatformClient } from "./platform/FakePlatformClient";
 import type { InspectionRecord, SavedRecord } from "./platform/types";
-import { createStations } from "./stations";
+import { createStations, reviewLabel } from "./stations";
 
 const record = (sequence: number, verdict: "OK" | "NG" = "OK", swapped = false): InspectionRecord => ({
   sequence, frameName: `${sequence}.png`, verdict, releaseId: "rel-1", swapped, totalMs: 1, reasons: [],
@@ -82,7 +82,7 @@ describe("工位页面", () => {
 
   // ---- 历史记录 ----
   const saved = (n: number, verdict: "OK" | "NG" = "OK"): SavedRecord => ({
-    ...record(n, verdict), id: String(1000 + n), time: "2026-11-24 12:00:00", recipeVersionId: "亮斑@v1", imageId: verdict === "NG" ? `img-${n}` : "",
+    ...record(n, verdict), id: String(1000 + n), time: "2026-11-24 12:00:00", recipeVersionId: "亮斑@v1", imageId: verdict === "NG" ? `img-${n}` : "", review: null,
     result: { defects: verdict === "NG" ? [{ nodeId: "n5", category: "亮斑", centerX: 1, centerY: 1, left: 0, top: 0, width: 2, height: 2, area: 4 }] : [],
       measurements: [], poses: [] },
   });
@@ -120,7 +120,8 @@ describe("工位页面", () => {
     expect(stations.recordImageUrl(h.selected!)).toBe("/api/images/img-15");
     expect(stations.recordImageUrl(saved(1))).toBe(""); // 合格的没有保留图像
     expect(stations.yieldText(null)).toBe("—");
-    expect(stations.yieldText({ total: 1, ok: 0, ng: 0, error: 1, yield: null, defectsByCategory: {} })).toBe("—");
+    expect(stations.yieldText({ total: 1, ok: 0, ng: 0, error: 1, yield: null, defectsByCategory: {}, reviewed: 0, reviewedCorrect: 0,
+      falseAlarms: 0, misses: 0, reviewedErrors: 0 })).toBe("—");
   });
 
   it("历史记录：换一个工位，原来那个工位的记录不留在页面上", async () => {
@@ -132,5 +133,78 @@ describe("工位页面", () => {
     expect(stations.state.history.records).toEqual([]);
     expect(stations.state.history.summary).toBeNull();
     expect(stations.state.history.onlyNg).toBe(true); // 筛选条件是人选的，留着
+  });
+
+  // ---- 复判 ----
+  it("复判：误报和漏检分得清；列表不跳，汇总跟着变", async () => {
+    const { client, stations } = await setup();
+    for (let n = 1; n <= 6; n++) client.saved.push(saved(n, n % 2 === 0 ? "NG" : "OK")); // 2、4、6 判 NG
+    await stations.loadHistory();
+    const h = stations.state.history;
+    expect(await stations.review("OK")).toBe(false); // 还没点开任何一条
+    stations.pickRecord(h.records[0]); // #6，判 NG
+    expect(await stations.review("OK", "  是反光 ")).toBe(true); // 人说其实合格
+    expect(h.selected?.review?.kind).toBe("false_alarm");
+    expect(h.selected?.review?.note).toBe("是反光");
+    expect(reviewLabel(h.records[0].review)).toBe("误报");
+    expect(h.records.map((r) => r.sequence)).toEqual([6, 5, 4, 3, 2, 1]); // 顺序没变
+    stations.pickNext(); // #5，判 OK
+    expect(h.selected?.sequence).toBe(5);
+    await stations.review("NG");
+    expect(reviewLabel(h.selected!.review)).toBe("漏检");
+    stations.pickNext(); // #4，判 NG
+    await stations.review("NG");
+    expect(reviewLabel(h.selected!.review)).toBe("判对了");
+    expect(h.summary).toMatchObject({ reviewed: 3, falseAlarms: 1, misses: 1, reviewedCorrect: 1 });
+    // 改主意：#4 其实是合格的
+    await stations.review("OK");
+    expect(reviewLabel(h.selected!.review)).toBe("误报");
+    expect(h.summary).toMatchObject({ reviewed: 3, falseAlarms: 2, reviewedCorrect: 0 });
+    expect(reviewLabel(null)).toBe("");
+    // 最后一条之后没有下一条：留在原地
+    stations.pickRecord(h.records[5]);
+    stations.pickNext();
+    expect(h.selected?.sequence).toBe(1);
+  });
+
+  it("按复判筛选：还没复判的、确认判错了的", async () => {
+    const { client, stations } = await setup();
+    for (let n = 1; n <= 5; n++) client.saved.push(saved(n, "NG"));
+    await stations.loadHistory();
+    stations.pickRecord(stations.state.history.records[0]); // #5
+    await stations.review("OK"); // 误报
+    stations.pickNext(); // #4
+    await stations.review("NG"); // 判对了
+    await stations.setReviewFilter("misjudged");
+    expect(stations.state.history.records.map((r) => r.sequence)).toEqual([5]);
+    await stations.setReviewFilter("unreviewed");
+    expect(stations.state.history.records.map((r) => r.sequence)).toEqual([3, 2, 1]);
+    await stations.setReviewFilter("");
+    expect(stations.state.history.records.length).toBe(5);
+  });
+
+  it("导出复判过的图像：说清导出了多少、有多少没有图像", async () => {
+    const { client, stations } = await setup();
+    client.saved.push(saved(1, "OK"), saved(2, "NG"));
+    await stations.loadHistory();
+    stations.pickRecord(stations.state.history.records[0]); // #2，NG，有图像
+    await stations.review("OK");
+    stations.pickNext(); // #1，OK，没有图像
+    await stations.review("NG"); // 漏检，但当时没留图像
+    expect(await stations.exportReviewed(" ")).toBe(false);
+    expect(await stations.exportReviewed(" /out ")).toBe(true);
+    expect(client.exportedReviews).toEqual(["/out"]);
+    expect(stations.state.history.notice).toBe("已导出到 /out：ok 1 幅，ng 0 幅；另有 1 条复判过的记录当时没有留图像");
+    stations.dismiss();
+    expect(stations.state.history.notice).toBeNull();
+  });
+
+  it("复判被后端拒绝：显示原因", async () => {
+    const { client, stations } = await setup();
+    client.saved.push(saved(1, "NG"));
+    await stations.loadHistory();
+    stations.pickRecord({ ...stations.state.history.records[0], id: "不存在" });
+    expect(await stations.review("OK")).toBe(false);
+    expect(stations.state.error).toContain("找不到这条检测记录");
   });
 });

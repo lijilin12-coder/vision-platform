@@ -15,6 +15,8 @@ export interface HistoryState {
   records: SavedRecord[]; // 从新到旧
   summary: QualitySummary | null;
   onlyNg: boolean; // 只看不合格的
+  review: "" | "unreviewed" | "misjudged"; // 按复判筛选：都要 / 还没复判的 / 复判确认判错了的
+  notice: string | null; // 做成了一件事的提示（例如导出了多少幅图像）
   hasMore: boolean; // 还有更早的没取
   selected: SavedRecord | null; // 点开看的那一条
 }
@@ -31,7 +33,7 @@ export interface StationsState {
 
 export function createStations(client: PlatformClient) {
   const state = reactive<StationsState>({ stations: [], releases: [], selectedId: null, current: null, records: [], error: null,
-    history: { records: [], summary: null, onlyNg: false, hasMore: false, selected: null } });
+    history: { records: [], summary: null, onlyNg: false, review: "", notice: null, hasMore: false, selected: null } });
   let lastSequence = 0;
 
   // 取一页历史记录。more：接在已有的后面（翻页）；否则从最新的重新开始
@@ -41,7 +43,7 @@ export function createStations(client: PlatformClient) {
     const h = state.history;
     const before = more && h.records.length > 0 ? h.records[h.records.length - 1].id : undefined;
     const [page, summary] = await Promise.all([
-      client.listRecords(id, { verdict: h.onlyNg ? "NG" : undefined, before, limit: kHistoryPage }),
+      client.listRecords(id, { verdict: h.onlyNg ? "NG" : undefined, review: h.review || undefined, before, limit: kHistoryPage }),
       client.getSummary(id),
     ]);
     if (id !== state.selectedId) return; // 等结果的时候换了工位：这一页不要了
@@ -96,7 +98,7 @@ export function createStations(client: PlatformClient) {
       state.selectedId = stationId;
       state.current = null;
       state.records = [];
-      state.history = { records: [], summary: null, onlyNg: state.history.onlyNg, hasMore: false, selected: null };
+      state.history = { records: [], summary: null, onlyNg: state.history.onlyNg, review: state.history.review, notice: null, hasMore: false, selected: null };
       lastSequence = 0;
       await attempt(async () => absorb(await client.getStation(stationId, 0)));
     },
@@ -144,6 +146,43 @@ export function createStations(client: PlatformClient) {
       state.history.onlyNg = onlyNg;
       return attempt(() => fetchHistory(false));
     },
+    setReviewFilter(review: "" | "unreviewed" | "misjudged") {
+      state.history.review = review;
+      return attempt(() => fetchHistory(false));
+    },
+
+    // ---- 复判 ----
+    // 复判点开的那条记录：人确认它实际是合格还是不合格。可以改，以最近的一次为准
+    async review(truth: "OK" | "NG", note = "") {
+      const id = state.selectedId;
+      const picked = state.history.selected;
+      if (!id || !picked) return false;
+      return attempt(async () => {
+        const updated = await client.reviewRecord(id, picked.id, truth, note.trim());
+        // 列表里的那一条换成带着复判的；不重新取整页——人正在一条条往下复判，列表不能跳
+        const i = state.history.records.findIndex((r) => r.id === updated.id);
+        if (i >= 0) state.history.records[i] = updated;
+        if (state.history.selected?.id === updated.id) state.history.selected = updated;
+        state.history.summary = await client.getSummary(id);
+      });
+    },
+    // 复判完一条，点开下一条（更早的那条）。没有下一条时留在原地
+    pickNext() {
+      const h = state.history;
+      const i = h.records.findIndex((r) => r.id === h.selected?.id);
+      if (i >= 0 && i + 1 < h.records.length) h.selected = h.records[i + 1];
+    },
+    // 把复判过的图像导出成两个目录（ok / ng），可以直接拿去建基准图集
+    async exportReviewed(directory: string) {
+      const id = state.selectedId;
+      if (!id || !directory.trim()) return false;
+      return attempt(async () => {
+        const r = await client.exportReviewed(id, directory.trim());
+        state.history.notice = `已导出到 ${directory.trim()}：ok ${r.ok} 幅，ng ${r.ng} 幅` +
+          (r.withoutImage > 0 ? `；另有 ${r.withoutImage} 条复判过的记录当时没有留图像` : "");
+      });
+    },
+
     pickRecord(record: SavedRecord | null) {
       state.history.selected = record;
     },
@@ -157,8 +196,15 @@ export function createStations(client: PlatformClient) {
     frameUrl: (stationId: string, sequence: number) => client.stationFrameUrl(stationId, sequence),
     dismiss() {
       state.error = null;
+      state.history.notice = null;
     },
   };
 }
 
 export type Stations = ReturnType<typeof createStations>;
+
+// 复判的结论，给人看
+export function reviewLabel(review: { kind: string } | null): string {
+  if (!review) return "";
+  return review.kind === "false_alarm" ? "误报" : review.kind === "miss" ? "漏检" : review.kind === "was_error" ? "已补判" : "判对了";
+}

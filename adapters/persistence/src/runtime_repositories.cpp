@@ -282,6 +282,27 @@ std::vector<quality::InspectionRecord> readRecords(const fs::path& file) {
     return records;
 }
 
+// 往文件末尾追加一行 JSON
+Status appendLine(const fs::path& file, const json& j) {
+    // 上一次写到一半就断电了的话，文件的最后一行是残缺的、没有换行符。
+    // 先补一个换行，不然这一条会接在那半行后面，两条一起作废。
+    bool torn = false;
+    {
+        std::ifstream last(file, std::ios::binary | std::ios::ate);
+        if (last && last.tellg() > 0) {
+            last.seekg(-1, std::ios::end);
+            torn = last.get() != '\n';
+        }
+    }
+    std::ofstream out(file, std::ios::binary | std::ios::app);
+    if (torn) out << '\n';
+    // dump 不会产生换行，所以一行就是一条；文字里不是合法 UTF-8 的地方换成替代符号，而不是抛异常
+    out << j.dump(-1, ' ', false, json::error_handler_t::replace) << '\n';
+    out.flush();
+    if (!out) return Status::failure("persistence.write", "写不进去（磁盘满了？）：" + pathToUtf8(file));
+    return Status::success();
+}
+
 // 毫秒时间 → "2026-11-24"（UTC）
 std::string dayOf(std::int64_t timeMs) {
     const std::int64_t days = timeMs / 86400000;
@@ -315,24 +336,7 @@ Status JsonlInspectionRecordRepository::append(const quality::InspectionRecord& 
     const fs::path dir = dir_ / pathFromUtf8(f.stationId);
     std::error_code ec;
     fs::create_directories(dir, ec);
-    // 追加一行。dump 不会产生换行，所以一行就是一条记录；文字里不是合法 UTF-8 的地方换成替代符号，而不是抛异常
-    const fs::path file = dir / (dayOf(f.timeMs) + ".jsonl");
-    // 上一次写到一半就断电了的话，文件的最后一行是残缺的、没有换行符。
-    // 先补一个换行，不然这一条会接在那半行后面，两条一起作废。
-    bool torn = false;
-    {
-        std::ifstream last(file, std::ios::binary | std::ios::ate);
-        if (last && last.tellg() > 0) {
-            last.seekg(-1, std::ios::end);
-            torn = last.get() != '\n';
-        }
-    }
-    std::ofstream out(file, std::ios::binary | std::ios::app);
-    if (torn) out << '\n';
-    out << j.dump(-1, ' ', false, json::error_handler_t::replace) << '\n';
-    out.flush();
-    if (!out) return Status::failure("persistence.write", "检测记录写不进去（磁盘满了？）");
-    return Status::success();
+    return appendLine(dir / (dayOf(f.timeMs) + ".jsonl"), j);
 }
 
 std::vector<fs::path> JsonlInspectionRecordRepository::files(const std::string& stationId) const {
@@ -340,7 +344,8 @@ std::vector<fs::path> JsonlInspectionRecordRepository::files(const std::string& 
     if (!safeFileName(stationId)) return found;
     std::error_code ec;
     for (fs::directory_iterator it(dir_ / pathFromUtf8(stationId), ec), end; !ec && it != end; it.increment(ec)) {
-        if (it->path().extension() == ".jsonl") found.push_back(it->path());
+        // 同一个目录里还有复判的文件 reviews.jsonl：它不是检测记录
+        if (it->path().extension() == ".jsonl" && it->path().filename() != "reviews.jsonl") found.push_back(it->path());
     }
     std::sort(found.begin(), found.end(), std::greater<>());  // 文件名是日期：倒序就是从新到旧
     return found;
@@ -385,6 +390,46 @@ std::vector<quality::InspectionRecord> JsonlInspectionRecordRepository::all(cons
         result.insert(result.end(), std::make_move_iterator(records.begin()), std::make_move_iterator(records.end()));
     }
     return result;
+}
+
+// ---------- JsonlReviewRepository ----------
+
+JsonlReviewRepository::JsonlReviewRepository(fs::path root) : dir_(std::move(root) / "inspection-records") {}
+
+Status JsonlReviewRepository::append(const quality::Review& review) {
+    const auto& f = review.fields();
+    if (!safeFileName(f.stationId)) return Status::failure("persistence.bad_id", "工位 ID 不能用作目录名：" + f.stationId);
+    const fs::path dir = dir_ / pathFromUtf8(f.stationId);
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    return appendLine(dir / "reviews.jsonl", {{"record", f.recordId}, {"station", f.stationId}, {"verdict", f.verdict},
+                                              {"truth", f.truthNg ? "NG" : "OK"}, {"reviewer", f.reviewer}, {"note", f.note},
+                                              {"timeMs", f.timeMs}});
+}
+
+std::vector<quality::Review> JsonlReviewRepository::all(const std::string& stationId) {
+    std::vector<quality::Review> reviews;
+    if (!safeFileName(stationId)) return reviews;
+    std::ifstream in(dir_ / pathFromUtf8(stationId) / "reviews.jsonl", std::ios::binary);
+    std::string line;
+    while (std::getline(in, line)) {
+        if (line.empty()) continue;
+        try {
+            const json j = json::parse(line);
+            quality::Review::Fields f;
+            f.recordId = j.at("record").get<std::string>();
+            f.stationId = j.at("station").get<std::string>();
+            f.verdict = j.at("verdict").get<std::string>();
+            f.truthNg = j.at("truth").get<std::string>() == "NG";
+            f.reviewer = j.at("reviewer").get<std::string>();
+            f.note = j.at("note").get<std::string>();
+            f.timeMs = j.at("timeMs").get<std::int64_t>();
+            if (auto review = quality::Review::create(std::move(f))) reviews.push_back(std::move(review).value());
+        } catch (const std::exception&) {
+            // 残缺的一行（写到一半断电）：跳过，别的不受影响
+        }
+    }
+    return reviews;
 }
 
 // ---------- JsonGoldenSetRepository ----------
