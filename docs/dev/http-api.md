@@ -88,8 +88,9 @@ curl http://127.0.0.1:8750/api/health
 | `POST /api/stations/{id}/start`、`/stop` | | 开始 / 停止持续运行：工位从自己的图像源取图、检测 |
 | `GET /api/stations/{id}/frame` | | 最近检测的那一帧图像（PNG） |
 | `GET /api/stations/{id}/records` | | **保存下来的**检测记录，从新到旧。`?verdict=NG` 只要这种判定；`?review=unreviewed` 还没复判的、`?review=misjudged` 复判确认判错了的；`?before=<记录的 id>` 翻页，只要更早的；`?limit=N`（默认 50，最多 500） |
+| `GET /api/stations/{id}/records/{记录的 id}/image` | | 这条记录当时的图像（PNG）。当时没留、已经过期清掉了：404，原因在 `message` 里 |
 | `POST /api/stations/{id}/records/{记录的 id}/review` | `{"truth": "OK" 或 "NG", "note": "…", "reviewer": "…"}` | **复判**（[说明](../ddd/17-review.md)）：人确认这一次实际是合格还是不合格。后两项可以不给。可以重复，以最近一次为准。回复是那条记录，`review` 里是结论 |
-| `POST /api/stations/{id}/export-reviewed` | `{"directory": "…", "misjudgedOnly": false}` | 把复判过的图像导出成 `<directory>/ok` 和 `<directory>/ng`（后端那台机器上）。回复：`ok`、`ng` 各多少幅，`withoutImage`（复判过但当时没留图像的） |
+| `POST /api/stations/{id}/export-reviewed` | `{"directory": "…", "misjudgedOnly": false}` | 把复判过的图像导出成 `<directory>/ok` 和 `<directory>/ng`（后端那台机器上）。回复：`ok`、`ng` 各多少幅，`withoutImage`（复判过但没有图像的：当时没留，或者已经过期） |
 | `GET /api/stations/{id}/summary` | | 这个工位有记录以来的汇总：`total`、`ok`、`ng`、`error`、`yield`（良率，OK ÷ (OK + NG)；没有可算的时候是 `null`）、`defectsByCategory`；复判的数字 `reviewed`、`reviewedCorrect`、`falseAlarms`（误报）、`misses`（漏检）、`reviewedErrors` |
 
 工位的回复里：`state`（工位的状态）、`activeRelease`、`pendingRelease` 和 `pendingReady`（待切换的上线包、加载好了没有）、
@@ -98,8 +99,8 @@ curl http://127.0.0.1:8750/api/health
 `recent` 是“刚刚检测的”：服务只在内存里给每个工位留最近 100 条，给界面实时显示用。
 
 `records` 是保存在磁盘上的（[说明](../ddd/14-inspection-records.md)），服务重启之后还在。每一条比 `recent` 里的多：
-`id`（记录的编号，越新的越大）、`time`（UTC）和 `timeMs`、`recipeVersionId`、`imageId`、`review`（最近一次复判：`truth`、`kind` 是 `correct` / `false_alarm` / `miss` / `was_error`、`note`、`reviewer`、`time`；没复判过是 `null`）。
-`imageId` 不为空时，用 `GET /api/images/{imageId}` 取当时的图像；默认只保留不合格的和出错的，合格的 `imageId` 是空的。
+`id`（记录的编号，越新的越大）、`time`（UTC）和 `timeMs`、`recipeVersionId`、`imageState`、`review`（最近一次复判：`truth`、`kind` 是 `correct` / `false_alarm` / `miss` / `was_error`、`note`、`reviewer`、`time`；没复判过是 `null`）。
+`imageState` 说的是当时的图像现在的情况（[说明](../ddd/18-image-cache.md)）：`kept` 长期保留着、`cached` 在短期缓存里（默认 72 小时后清掉，复判之后转成长期保留）、`expired` 已经清掉了、`none` 当时就没留。是 `kept` 或 `cached` 时，用 `GET /api/stations/{id}/records/{记录的 id}/image` 取。
 
 调试运行的回复：
 

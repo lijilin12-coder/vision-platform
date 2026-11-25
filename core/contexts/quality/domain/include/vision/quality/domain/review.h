@@ -79,9 +79,9 @@ public:
 
 // 领域事件：复判确认了一次误判（误报或漏检）。数据那一侧可以据此把图像收作样本（规则 P3）
 struct MisjudgmentConfirmed final : DomainEvent {
-    std::string stationId, recordId, kind, imageSha256;
+    std::string stationId, recordId, kind, imageId;
     MisjudgmentConfirmed(std::string s, std::string r, std::string k, std::string i)
-        : stationId(std::move(s)), recordId(std::move(r)), kind(std::move(k)), imageSha256(std::move(i)) {}
+        : stationId(std::move(s)), recordId(std::move(r)), kind(std::move(k)), imageId(std::move(i)) {}
     const char* name() const override { return "MisjudgmentConfirmed"; }
 };
 

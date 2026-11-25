@@ -21,7 +21,7 @@ struct RecordedReason {
 // 检测记录：一次产线检测留下的、事后可以查的东西（术语表：检测记录；NFR-06 可追溯）。
 //
 // 它回答三个问题：
-//   什么时候、哪个工位、哪一幅图像      time、stationId、frameName、imageSha256
+//   什么时候、哪个工位、哪一幅图像      time、stationId、frameName、imageId
 //   用的是什么                          releaseId、recipeVersionId —— 由此可以追到方案的每个参数、用的模型
 //   结果是什么                          verdict、reasons、result（缺陷、测量值、位姿）
 //
@@ -38,7 +38,7 @@ public:
         std::uint64_t sequence = 0;  // 工位的第几次检测（工位重启后可能重新计数，所以不能当编号用）
         std::string releaseId, recipeVersionId;
         std::string frameName;
-        std::string imageSha256;  // 图像的内容哈希；没有保存图像时为空
+        std::string imageId;  // 图像的编号（交给图像存档去找）；没有保存图像时为空。图像可能后来过期被清掉，这里不改（Q1）
         std::string verdict;
         std::vector<RecordedReason> reasons;
         ResultItems result;

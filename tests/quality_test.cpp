@@ -8,6 +8,8 @@
 #include <gtest/gtest.h>
 
 #include <filesystem>
+#include <chrono>
+#include <cmath>
 #include <fstream>
 #include <functional>
 #include <opencv2/imgcodecs.hpp>
@@ -219,13 +221,39 @@ public:
     std::int64_t nowMs() override { return now; }
 };
 
+// 放在内存里的图像存档：记着每幅图像是长期的还是在短期缓存里
 class FakeArchive final : public quality::ImageArchive {
 public:
-    int stored = 0;
     bool broken = false;
-    Result<std::string> store(const Image&) override {
+    std::map<std::string, std::string> images;  // 图像的编号 → kept / cached
+    Result<std::string> store(const std::string&, const std::string& recordId, const Image&, bool longTerm) override {
         if (broken) return Result<std::string>::failure("content.write", "磁盘满了");
-        return "sha-" + std::to_string(++stored);
+        images[recordId] = longTerm ? "kept" : "cached";
+        return recordId;
+    }
+    std::string state(const std::string&, const std::string& imageId) override {
+        const auto it = images.find(imageId);
+        return it == images.end() ? "expired" : it->second;
+    }
+    Result<std::vector<unsigned char>> load(const std::string&, const std::string& imageId) override {
+        if (images.count(imageId) == 0) return Result<std::vector<unsigned char>>::failure("content.not_found", "没有了");
+        return std::vector<unsigned char>{'P', 'N', 'G'};
+    }
+    Status keep(const std::string&, const std::string& imageId) override {
+        if (const auto it = images.find(imageId); it != images.end()) it->second = "kept";
+        return Status::success();
+    }
+    quality::ImageCleanup cleanup(std::int64_t cutoffMs, std::uint64_t) override {
+        quality::ImageCleanup done;
+        for (auto it = images.begin(); it != images.end();) {
+            if (it->second == "cached" && std::stoll(it->first.substr(0, 13)) < cutoffMs) {
+                it = images.erase(it);
+                ++done.expired;
+            } else {
+                ++it;
+            }
+        }
+        return done;
     }
 };
 
@@ -284,13 +312,14 @@ TEST(QualityService, KeepsImagesOnlyForWhatThePolicySays) {
         quality::QualityService quality(repo, clock, archive, policy);
         for (const char* verdict : {"OK", "NG", "ERROR", "OK"}) EXPECT_TRUE(quality.record(inspection(verdict)).ok());
         std::string kept;
-        for (const auto& r : quality.query("s-1")) kept = (r.imageSha256.empty() ? "-" : r.verdict) + (" " + kept);
+        for (const auto& r : quality.query("s-1")) kept = r.imageState + (" " + kept);
         fs::remove_all(dir);
         return kept;
     };
-    EXPECT_EQ(imagesKept(quality::ImagePolicy::NgAndError), "- NG ERROR - ");
-    EXPECT_EQ(imagesKept(quality::ImagePolicy::None), "- - - - ");
-    EXPECT_EQ(imagesKept(quality::ImagePolicy::All), "OK NG ERROR OK ");
+    // 依次是判 OK、NG、ERROR、OK 的四次检测
+    EXPECT_EQ(imagesKept(quality::ImagePolicy::All), "cached kept kept cached ");  // M1、M2
+    EXPECT_EQ(imagesKept(quality::ImagePolicy::NgAndError), "none kept kept none ");
+    EXPECT_EQ(imagesKept(quality::ImagePolicy::None), "none none none none ");
 }
 
 TEST(QualityService, ARecordIsStillWrittenWhenItsImageCannotBeStored) {
@@ -306,8 +335,8 @@ TEST(QualityService, ARecordIsStillWrittenWhenItsImageCannotBeStored) {
     ASSERT_TRUE(quality.record(noFrame).ok());
     const auto records = quality.query("s-1");
     ASSERT_EQ(records.size(), 2u);
-    EXPECT_TRUE(records[0].imageSha256.empty());
-    EXPECT_TRUE(records[1].imageSha256.empty());
+    EXPECT_EQ(records[0].imageState, "none");
+    EXPECT_EQ(records[1].imageState, "none");
     // 说不清用什么检测的（Q2）：不记，并且说明原因
     auto bad = inspection("OK");
     bad.releaseId.clear();
@@ -436,15 +465,16 @@ TEST(InspectionRecordsEndToEnd, EveryStationInspectionLeavesARecordThatSurvivesA
     EXPECT_GT(ng.totalMs, 0);
     ASSERT_FALSE(ng.reasons.empty());
     // 不合格的那一次，图像留下来了，取出来就是当时的那一幅
-    ASSERT_FALSE(ng.imageSha256.empty());
-    const auto bytes = p.contentStore.get(ng.imageSha256);
+    EXPECT_EQ(ng.imageState, "kept");
+    const auto bytes = p.quality.recordImage(station, ng.id);
     ASSERT_TRUE(bytes.ok());
     const cv::Mat saved = cv::imdecode(bytes.value(), cv::IMREAD_UNCHANGED);
     ASSERT_EQ(saved.cols, 160);
     EXPECT_EQ(saved.at<unsigned char>(60, 30), 240);
-    // 合格的不留图像
-    EXPECT_TRUE(records[0].imageSha256.empty());
-    EXPECT_TRUE(records[2].imageSha256.empty());
+    // 合格的进短期缓存：现在还看得到，过了保留期会清掉
+    EXPECT_EQ(records[0].imageState, "cached");
+    EXPECT_EQ(records[2].imageState, "cached");
+    EXPECT_TRUE(p.quality.recordImage(station, records[0].id).ok());
     EXPECT_TRUE(records[0].frameName.empty());
 
     const auto s = p.quality.summary(station);
@@ -582,7 +612,7 @@ struct ReviewFixture {
         quality.useReviews(reviews, bus);
         bus.subscribe("MisjudgmentConfirmed", [this](const EventPtr& e) {
             const auto& m = static_cast<const quality::MisjudgmentConfirmed&>(*e);
-            confirmed.push_back(m.kind + " " + m.recordId + " " + m.imageSha256);
+            confirmed.push_back(m.kind + " " + m.recordId + " " + m.imageId);
         });
     }
     std::string add(const std::string& verdict) {
@@ -621,10 +651,10 @@ TEST(QualityReview, ReviewingARecordTellsFalseAlarmsFromMisses) {
     // 系统当时出错：人补上真实情况，不算误判
     EXPECT_EQ(f.quality.review("s-1", error, {true, "", ""}).value().review->kind, "was_error");
 
-    // 误判各发一个事件，带着当时的图像（判 NG 的留了图像，判 OK 的没留）
+    // 误判各发一个事件，带着当时的图像
     ASSERT_EQ(f.confirmed.size(), 2u);
-    EXPECT_EQ(f.confirmed[0], "false_alarm " + ng + " sha-1");
-    EXPECT_EQ(f.confirmed[1], "miss " + ok + " ");
+    EXPECT_EQ(f.confirmed[0], "false_alarm " + ng + " " + ng);  // 图像的编号就是记录的编号
+    EXPECT_EQ(f.confirmed[1], "miss " + ok + " " + ok);
 
     const auto s = f.quality.summary("s-1");
     EXPECT_EQ(s.total, 3);
@@ -735,7 +765,6 @@ TEST(ReviewEndToEnd, ReviewedImagesBecomeAGoldenSet) {
     const fs::path data = freshDir("数据"), out = freshDir("导出");
     platform::Platform p(data);
     p.stations.allowUnacceptedReleases(true);
-    p.quality.setImagePolicy(quality::ImagePolicy::All);  // 判 OK 的也留图像：漏检才找得回来
     auto& a = p.authoring;
     const auto recipe = a.createRecipe("亮斑").value();
     std::vector<std::string> n;
@@ -758,7 +787,7 @@ TEST(ReviewEndToEnd, ReviewedImagesBecomeAGoldenSet) {
     quality::RecordQuery all;
     const auto records = p.quality.query(station, all);  // 从新到旧：3 个亮斑、2、1、0
     ASSERT_EQ(records.size(), 4u);
-    for (const auto& r : records) EXPECT_FALSE(r.imageSha256.empty());
+    for (const auto& r : records) EXPECT_FALSE(r.imageId.empty());
     // 没复判过：什么都导不出来
     auto exported = platform::exportReviewedImages(p, station, pathToUtf8(out), false);
     ASSERT_TRUE(exported.ok());
@@ -794,11 +823,12 @@ TEST(ReviewEndToEnd, ReviewedImagesBecomeAGoldenSet) {
     fs::remove_all(out);
 }
 
-// 默认只留不合格的图像：复判确认的漏检没有图像可导。导出时要说出来，不能悄悄少一幅
+// 选了“只留不合格的图像”时：复判确认的漏检没有图像可导。导出时要说出来，不能悄悄少一幅
 TEST(ReviewEndToEnd, AMissWithoutAKeptImageIsCountedNotSilentlyDropped) {
     const fs::path data = freshDir("数据"), out = freshDir("导出");
     platform::Platform p(data);
     p.stations.allowUnacceptedReleases(true);
+    p.quality.setImagePolicy(quality::ImagePolicy::NgAndError);  // 相当于 --keep-images ng
     auto& a = p.authoring;
     const auto recipe = a.createRecipe("亮斑").value();
     std::vector<std::string> n;
@@ -815,7 +845,7 @@ TEST(ReviewEndToEnd, AMissWithoutAKeptImageIsCountedNotSilentlyDropped) {
     ASSERT_TRUE(p.stations.deploy(station, release).ok());
     ASSERT_TRUE(p.stations.waitForLoading(station).ok());
     ASSERT_TRUE(p.stations.start(station).ok());
-    ASSERT_TRUE(p.stations.inspect(station, spots(0)).ok());  // 判 OK：默认不留图像
+    ASSERT_TRUE(p.stations.inspect(station, spots(0)).ok());  // 判 OK：这个设置下不留图像
     ASSERT_TRUE(p.stations.inspect(station, spots(2)).ok());  // 判 NG：留
     ASSERT_TRUE(p.stations.stop(station).ok());
     const auto records = p.quality.query(station);
@@ -829,4 +859,266 @@ TEST(ReviewEndToEnd, AMissWithoutAKeptImageIsCountedNotSilentlyDropped) {
     EXPECT_EQ(exported.value().withoutImage, 1);  // 那一次漏检：有复判，没有图像
     fs::remove_all(data);
     fs::remove_all(out);
+}
+
+
+// =====================================================================================
+// 短期图像缓存（F-3，docs/ddd/18-image-cache.md）
+// =====================================================================================
+
+#include "vision/quality/domain/image_retention.h"
+
+// ---------------- 领域层 ----------------
+
+TEST(ImageRetention, M1_M2_WhatIsKeptAndForHowLong) {
+    using quality::ImageKeeping;
+    quality::ImageRetention r;  // 默认
+    EXPECT_EQ(r.at("NG"), ImageKeeping::LongTerm);
+    EXPECT_EQ(r.at("ERROR"), ImageKeeping::LongTerm);
+    EXPECT_EQ(r.at("OK"), ImageKeeping::ShortTerm);
+    EXPECT_EQ(r.retentionMs, 72LL * 3600 * 1000);
+    EXPECT_EQ(r.cutoff(kNoon), kNoon - 72LL * 3600 * 1000);
+    r.cacheAccepted = false;
+    EXPECT_EQ(r.at("OK"), ImageKeeping::Discard);
+    EXPECT_EQ(r.at("NG"), ImageKeeping::LongTerm);
+    r.keepRejected = false;
+    EXPECT_EQ(r.at("NG"), ImageKeeping::Discard);
+
+    EXPECT_EQ(quality::ImageRetention::create(true, true, 24).value().retentionMs, 24LL * 3600 * 1000);
+    EXPECT_TRUE(quality::ImageRetention::create(true, true, 1).ok());
+    for (const double hours : {0.0, 0.5, -3.0, 24.0 * 400, std::nan("")}) {
+        const auto bad = quality::ImageRetention::create(true, true, hours);
+        ASSERT_FALSE(bad.ok()) << hours;
+        EXPECT_EQ(bad.error().code, "quality.retention_invalid");
+    }
+}
+
+// ---------------- 应用服务 ----------------
+
+TEST(ImageCache, M2_M4_AcceptedImagesExpireButTheirRecordsStay) {
+    const fs::path dir = freshDir("数据");
+    ReviewFixture f(dir);
+    const std::string ok = f.add("OK"), ng = f.add("NG");
+    EXPECT_EQ(f.quality.getRecord("s-1", ok).value().imageState, "cached");
+    EXPECT_TRUE(f.quality.recordImage("s-1", ok).ok());
+
+    // 71 小时后：还没到期
+    f.clock.now += 71LL * 3600 * 1000;
+    EXPECT_EQ(f.quality.cleanExpiredImages().expired, 0);
+    EXPECT_EQ(f.quality.getRecord("s-1", ok).value().imageState, "cached");
+    // 再过 2 小时：判 OK 的那一幅过期了；判 NG 的还在
+    f.clock.now += 2LL * 3600 * 1000;
+    EXPECT_EQ(f.quality.cleanExpiredImages().expired, 1);
+    const auto record = f.quality.getRecord("s-1", ok);
+    ASSERT_TRUE(record.ok());  // M4：记录还在，写着它曾经有图像
+    EXPECT_EQ(record.value().imageState, "expired");
+    EXPECT_EQ(record.value().verdict, "OK");
+    const auto image = f.quality.recordImage("s-1", ok);
+    ASSERT_FALSE(image.ok());
+    EXPECT_EQ(image.error().code, "quality.image_not_found");
+    EXPECT_NE(image.error().message.find("保留期"), std::string::npos);
+    EXPECT_EQ(f.quality.getRecord("s-1", ng).value().imageState, "kept");
+    EXPECT_TRUE(f.quality.recordImage("s-1", ng).ok());
+    EXPECT_EQ(f.quality.summary("s-1").total, 2);
+    EXPECT_EQ(f.quality.cleanExpiredImages().expired, 0);  // 再清一次：没有可清的了
+    // 过期之后还能复判（操作员从下道工序知道它有问题），只是没有图像
+    EXPECT_EQ(f.quality.review("s-1", ok, {true, "", ""}).value().review->kind, "miss");
+    EXPECT_EQ(f.quality.recordImage("s-1", "1795521600000-999999").error().code, "quality.record_not_found");
+    fs::remove_all(dir);
+}
+
+TEST(ImageCache, M3_AReviewedImageIsKeptForGood) {
+    const fs::path dir = freshDir("数据");
+    ReviewFixture f(dir);
+    const std::string reviewed = f.add("OK"), untouched = f.add("OK");
+    // 复判——哪怕结论是“系统判对了”——图像就转成长期保留
+    const auto r = f.quality.review("s-1", reviewed, {false, "", ""});
+    ASSERT_TRUE(r.ok());
+    EXPECT_EQ(r.value().review->kind, "correct");
+    EXPECT_EQ(r.value().imageState, "kept");
+    f.clock.now += 100LL * 3600 * 1000;
+    EXPECT_EQ(f.quality.cleanExpiredImages().expired, 1);
+    EXPECT_EQ(f.quality.getRecord("s-1", reviewed).value().imageState, "kept");
+    EXPECT_EQ(f.quality.getRecord("s-1", untouched).value().imageState, "expired");
+    fs::remove_all(dir);
+}
+
+TEST(ImageCache, RetentionCanBeChangedWithinLimits) {
+    const fs::path dir = freshDir("数据");
+    ReviewFixture f(dir);
+    const std::string ok = f.add("OK");
+    EXPECT_EQ(f.quality.setImageRetentionHours(0.2).error().code, "quality.retention_invalid");
+    ASSERT_TRUE(f.quality.setImageRetentionHours(2).ok());
+    f.clock.now += 1LL * 3600 * 1000;
+    EXPECT_EQ(f.quality.cleanExpiredImages().expired, 0);
+    f.clock.now += 2LL * 3600 * 1000;
+    EXPECT_EQ(f.quality.cleanExpiredImages().expired, 1);
+    EXPECT_EQ(f.quality.getRecord("s-1", ok).value().imageState, "expired");
+    // 记录里没有图像的：说的是“当时没留”，不是“过期了”
+    f.quality.setImagePolicy(quality::ImagePolicy::NgAndError);
+    const std::string none = f.add("OK");
+    EXPECT_NE(f.quality.recordImage("s-1", none).error().message.find("当时没有留"), std::string::npos);
+    fs::remove_all(dir);
+}
+
+// ---------------- 存储：真的文件 ----------------
+
+namespace {
+
+struct ImageFiles {
+    explicit ImageFiles(const fs::path& dir) : root(dir), legacy(dir), files(dir, legacy) {}
+    fs::path cached(const std::string& station, const std::string& day, const std::string& id) const {
+        return root / "inspection-images" / station / "cache" / day / (id + ".png");
+    }
+    fs::path kept(const std::string& station, const std::string& id) const { return root / "inspection-images" / station / "kept" / (id + ".png"); }
+    fs::path root;
+    content::FileContentStore legacy;
+    content::InspectionImageFiles files;
+};
+
+const std::int64_t kHour = 3600 * 1000;
+
+}  // namespace
+
+TEST(InspectionImageFiles, KeptAndCachedLiveInSeparatePlacesByStationAndDay) {
+    const fs::path dir = freshDir("数据");
+    ImageFiles f(dir);
+    const std::string ng = quality::makeRecordId(kNoon, 0), ok = quality::makeRecordId(kNoon, 1);
+    EXPECT_EQ(f.files.store("s-1", ng, grayImage(200), true).value(), ng);  // 图像的编号就是记录的编号
+    EXPECT_EQ(f.files.store("s-1", ok, grayImage(90), false).value(), ok);
+    EXPECT_TRUE(fs::exists(f.kept("s-1", ng)));
+    EXPECT_TRUE(fs::exists(f.cached("s-1", "2026-11-24", ok)));
+    EXPECT_EQ(f.files.state("s-1", ng), "kept");
+    EXPECT_EQ(f.files.state("s-1", ok), "cached");
+    EXPECT_EQ(f.files.state("s-1", quality::makeRecordId(kNoon, 9)), "expired");
+    EXPECT_EQ(f.files.state("s-2", ok), "expired");  // 别的工位的看不到
+
+    // 取出来就是存进去的那一幅
+    const auto bytes = f.files.load("s-1", ok);
+    ASSERT_TRUE(bytes.ok());
+    const cv::Mat back = cv::imdecode(bytes.value(), cv::IMREAD_UNCHANGED);
+    ASSERT_EQ(back.cols, 80);
+    EXPECT_EQ(back.at<unsigned char>(10, 10), 90);
+    EXPECT_FALSE(f.files.load("s-1", quality::makeRecordId(kNoon, 9)).ok());
+
+    // M3：转成长期保留——文件挪了地方，内容不变；再转一次、转一个不存在的，都不算出错
+    ASSERT_TRUE(f.files.keep("s-1", ok).ok());
+    EXPECT_EQ(f.files.state("s-1", ok), "kept");
+    EXPECT_FALSE(fs::exists(f.cached("s-1", "2026-11-24", ok)));
+    EXPECT_EQ(f.files.load("s-1", ok).value(), bytes.value());
+    EXPECT_TRUE(f.files.keep("s-1", ok).ok());
+    EXPECT_TRUE(f.files.keep("s-1", quality::makeRecordId(kNoon, 9)).ok());
+
+    // 编号不能被用来走到别的目录去
+    EXPECT_FALSE(f.files.store("../x", ok, grayImage(), false).ok());
+    EXPECT_FALSE(f.files.store("s-1", "../../evil", grayImage(), false).ok());
+    EXPECT_EQ(f.files.state("s-1", "../../etc/passwd"), "expired");
+    EXPECT_FALSE(f.files.load("..", ok).ok());
+    fs::remove_all(dir);
+}
+
+TEST(InspectionImageFiles, CleanupRemovesOnlyExpiredCachedImages) {
+    const fs::path dir = freshDir("数据");
+    ImageFiles f(dir);
+    // 三天里的图像：前天两幅、昨天两幅（一早一晚）、今天一幅；另有一幅前天的长期保留、一幅别的工位的
+    const std::string old1 = quality::makeRecordId(kNoon - 48 * kHour, 0), old2 = quality::makeRecordId(kNoon - 47 * kHour, 0);
+    const std::string early = quality::makeRecordId(kNoon - 30 * kHour, 0), late = quality::makeRecordId(kNoon - 14 * kHour, 0);
+    const std::string today = quality::makeRecordId(kNoon, 0), keptOld = quality::makeRecordId(kNoon - 48 * kHour, 5);
+    for (const auto& id : {old1, old2, early, late, today}) ASSERT_TRUE(f.files.store("s-1", id, grayImage(), false).ok());
+    ASSERT_TRUE(f.files.store("s-1", keptOld, grayImage(), true).ok());
+    ASSERT_TRUE(f.files.store("s-2", old1, grayImage(), false).ok());
+
+    // 保留 24 小时：界线落在昨天中午。前天的整天清掉；昨天的只清早上那一幅
+    const auto done = f.files.cleanup(kNoon - 24 * kHour, 0);
+    EXPECT_EQ(done.expired, 4);  // old1、old2、early，加上二号工位的 old1
+    EXPECT_EQ(done.forSpace, 0);
+    EXPECT_EQ(f.files.state("s-1", old1), "expired");
+    EXPECT_EQ(f.files.state("s-1", early), "expired");
+    EXPECT_EQ(f.files.state("s-1", late), "cached");
+    EXPECT_EQ(f.files.state("s-1", today), "cached");
+    EXPECT_EQ(f.files.state("s-1", keptOld), "kept");  // 长期保留的不受清理影响
+    EXPECT_EQ(f.files.state("s-2", old1), "expired");
+    EXPECT_FALSE(fs::exists(dir / "inspection-images" / "s-1" / "cache" / "2026-11-22"));  // 空了的那一天，目录也删掉
+    EXPECT_EQ(f.files.cleanup(kNoon - 24 * kHour, 0).expired, 0);
+
+    // 什么都没有的时候清理不出错
+    ImageFiles empty(freshDir("空的"));
+    EXPECT_EQ(empty.files.cleanup(kNoon, 0).expired, 0);
+    fs::remove_all(dir);
+    fs::remove_all(empty.root);
+}
+
+// 磁盘快满了：还没到期的也清，从最旧的一天开始；长期保留的不动
+TEST(InspectionImageFiles, WhenTheDiskIsNearlyFullCachedImagesGoEarly) {
+    const fs::path dir = freshDir("数据");
+    ImageFiles f(dir);
+    const std::string yesterday = quality::makeRecordId(kNoon - 24 * kHour, 0), today = quality::makeRecordId(kNoon, 0);
+    const std::string kept = quality::makeRecordId(kNoon, 7);
+    ASSERT_TRUE(f.files.store("s-1", yesterday, grayImage(), false).ok());
+    ASSERT_TRUE(f.files.store("s-1", today, grayImage(), false).ok());
+    ASSERT_TRUE(f.files.store("s-1", kept, grayImage(), true).ok());
+    // 要求的剩余空间是 1 字节：肯定够，什么都不清
+    auto done = f.files.cleanup(kNoon - 72 * kHour, 1);
+    EXPECT_EQ(done.expired + done.forSpace, 0);
+    EXPECT_FALSE(done.spaceLow);
+    // 要求的剩余空间大得不可能满足：缓存清空，并且报告“还是不够”
+    done = f.files.cleanup(kNoon - 72 * kHour, ~std::uint64_t{0});
+    EXPECT_EQ(done.expired, 0);
+    EXPECT_EQ(done.forSpace, 2);
+    EXPECT_TRUE(done.spaceLow);
+    EXPECT_EQ(f.files.state("s-1", yesterday), "expired");
+    EXPECT_EQ(f.files.state("s-1", today), "expired");
+    EXPECT_EQ(f.files.state("s-1", kept), "kept");
+    fs::remove_all(dir);
+}
+
+// 以前的版本把检测图像存在内容仓库里（编号是内容哈希）：升级之后旧记录的图像照样能看
+TEST(InspectionImageFiles, ImagesStoredByOlderVersionsStillLoad) {
+    const fs::path dir = freshDir("数据");
+    ImageFiles f(dir);
+    const std::vector<unsigned char> png = {1, 2, 3, 4};
+    const std::string sha = f.legacy.put(png).value();
+    EXPECT_EQ(f.files.state("s-1", sha), "kept");
+    EXPECT_EQ(f.files.load("s-1", sha).value(), png);
+    EXPECT_TRUE(f.files.keep("s-1", sha).ok());
+    EXPECT_EQ(f.files.cleanup(kNoon + 1000 * kHour, 0).expired, 0);  // 清理不碰内容仓库
+    EXPECT_EQ(f.files.state("s-1", sha), "kept");
+    EXPECT_EQ(f.files.state("s-1", std::string(64, 'a')), "expired");  // 内容仓库里没有的哈希
+    fs::remove_all(dir);
+}
+
+// ---------------- 整条路 ----------------
+
+TEST(ImageCacheEndToEnd, TheJanitorCleansInTheBackgroundWithoutTouchingRecordsOrReviewedImages) {
+    const fs::path data = freshDir("数据");
+    platform::LinePlatform p(data);
+    // 三天前的两次检测（都判 OK），一次现在的。直接交给质量分析：这里不关心工位
+    auto in = inspection("OK");
+    in.frame = grayImage(90);
+    const std::int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    const std::string reviewed = quality::makeRecordId(now - 80 * kHour, 0), stale = quality::makeRecordId(now - 80 * kHour, 1);
+    for (const auto& id : {reviewed, stale}) {
+        auto f = fields(now - 80 * kHour, 0, "OK");
+        f.id = id;
+        f.imageId = p.inspectionImages.store("s-1", id, in.frame, false).value();
+        ASSERT_TRUE(p.inspectionRecords.append(quality::InspectionRecord::create(f).value()).ok());
+    }
+    const std::string fresh = p.quality.record(in).value();
+    ASSERT_TRUE(p.quality.review("s-1", reviewed, {true, "", "下道工序发现的漏检"}).ok());  // 复判过的转成长期保留
+
+    p.quality.setMinFreeBytes(0);  // 这台机器磁盘剩多少不该影响这个测试
+    p.imageJanitor.start(std::chrono::seconds(3600));
+    bool cleaned = false;
+    for (int i = 0; i < 200 && !cleaned; ++i) {
+        cleaned = p.quality.getRecord("s-1", stale).value().imageState == "expired";
+        if (!cleaned) std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    ASSERT_TRUE(cleaned) << "启动之后应该马上清一次";
+    EXPECT_EQ(p.quality.getRecord("s-1", reviewed).value().imageState, "kept");
+    EXPECT_TRUE(p.quality.recordImage("s-1", reviewed).ok());  // 三天前的漏检，图像还在
+    EXPECT_EQ(p.quality.getRecord("s-1", fresh).value().imageState, "cached");
+    EXPECT_EQ(p.quality.query("s-1").size(), 3u);  // 记录一条不少
+    p.imageJanitor.stop();
+    p.imageJanitor.stop();  // 再停一次不出错
+    fs::remove_all(data);
 }

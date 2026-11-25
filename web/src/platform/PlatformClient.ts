@@ -52,6 +52,8 @@ export interface PlatformClient {
   // ---- 保存下来的检测记录 ----
   listRecords(stationId: string, query?: RecordQuery): Promise<SavedRecord[]>; // 从新到旧
   getSummary(stationId: string): Promise<QualitySummary>;
+  // 一条检测记录当时的图像，可以直接放进 <img src>。只有 imageState 是 kept 或 cached 时才取得到
+  recordImageUrl(stationId: string, recordId: string): string;
   // 复判一条记录：实际是合格还是不合格。可以重复，以最近一次为准。返回带着复判的那条记录
   reviewRecord(stationId: string, recordId: string, truth: "OK" | "NG", note?: string): Promise<SavedRecord>;
   // 把复判过的图像导出成 <directory>/ok 和 <directory>/ng（后端那台机器上）

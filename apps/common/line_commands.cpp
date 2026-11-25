@@ -529,7 +529,9 @@ int runStationCommand(platform::LinePlatform& app, const std::vector<std::string
             std::cout << r.id << "  " << r.time << "  #" << r.sequence << "  " << r.verdict << "  " << (r.frameName.empty() ? "-" : r.frameName)
                       << "  上线包 " << shortId(r.releaseId);
             if (!r.result.defects.empty()) std::cout << "  缺陷 " << r.result.defects.size() << " 个";
-            if (!r.imageSha256.empty()) std::cout << "  图像 " << shortId(r.imageSha256);
+            if (r.imageState == "kept") std::cout << "  图像已保留";
+            if (r.imageState == "cached") std::cout << "  图像在缓存里";
+            if (r.imageState == "expired") std::cout << "  图像已过期";
             if (r.review) std::cout << "  复判：" << reviewText(*r.review);
             std::cout << "\n";
             for (const auto& reason : r.reasons) {
@@ -563,7 +565,7 @@ int runStationCommand(platform::LinePlatform& app, const std::vector<std::string
         auto r = platform::exportReviewedImages(app, args[2], args[3], misjudgedOnly);
         if (!r) return fail(r.error());
         std::cout << "已导出到 " << args[3] << "：ok " << r.value().ok << " 幅，ng " << r.value().ng << " 幅";
-        if (r.value().withoutImage > 0) std::cout << "；另有 " << r.value().withoutImage << " 条复判过的记录当时没有留图像";
+        if (r.value().withoutImage > 0) std::cout << "；另有 " << r.value().withoutImage << " 条复判过的记录没有图像（当时没留，或者已经过期）";
         std::cout << "\n";
         return 0;
     }

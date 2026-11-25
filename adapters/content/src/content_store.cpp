@@ -8,6 +8,7 @@
 
 #include "vision/common/id.h"
 #include "vision/common/path.h"
+#include "vision/common/time.h"
 #include "vision/imaging/cv_bridge.h"
 
 namespace vision::content {
@@ -143,14 +144,161 @@ Result<std::vector<unsigned char>> FileContentStore::get(const std::string& sha2
 
 // ---------------- 检测时的图像 ----------------
 
-Result<std::string> InspectionImages::store(const Image& image) {
+namespace {
+
+// 以前存在内容仓库里的检测图像：编号是 64 位十六进制的内容哈希
+bool isLegacyImageId(const std::string& id) { return id.size() == 64 && id.find_first_not_of("0123456789abcdef") == std::string::npos; }
+
+// 记录的编号 "1795521600000-000042" → 它的时间（毫秒）。不是这种样子的返回 -1
+std::int64_t timeOfRecordId(const std::string& id) {
+    if (id.size() < 14 || id[13] != '-' || id.find_first_not_of("0123456789") != 13) return -1;
+    if (id.find_first_not_of("0123456789", 14) != std::string::npos) return -1;
+    return std::stoll(id.substr(0, 13));
+}
+
+// 工位 ID 要拿来当目录名：不能带路径分隔符，不能是 . 或 ..
+bool safeName(const std::string& name) {
+    return !name.empty() && name != "." && name != ".." && name.find_first_of("/\\:") == std::string::npos;
+}
+
+int removeFile(const fs::path& file) {
+    std::error_code ec;
+    return fs::remove(file, ec) ? 1 : 0;
+}
+
+// 删掉一个目录，返回里面有多少个文件
+int removeDirectory(const fs::path& dir) {
+    std::error_code ec;
+    int files = 0;
+    for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) ++files;
+    fs::remove_all(dir, ec);
+    return files;
+}
+
+}  // namespace
+
+InspectionImageFiles::InspectionImageFiles(const fs::path& root, FileContentStore& legacy)
+    : dir_(root / "inspection-images"), legacy_(legacy) {}
+
+fs::path InspectionImageFiles::keptFile(const std::string& stationId, const std::string& imageId) const {
+    return dir_ / pathFromUtf8(stationId) / "kept" / (imageId + ".png");
+}
+
+fs::path InspectionImageFiles::cachedFile(const std::string& stationId, const std::string& imageId) const {
+    return dir_ / pathFromUtf8(stationId) / "cache" / utcDay(timeOfRecordId(imageId)) / (imageId + ".png");
+}
+
+Result<std::string> InspectionImageFiles::store(const std::string& stationId, const std::string& recordId, const Image& image,
+                                                bool longTerm) {
+    using R = Result<std::string>;
+    if (!safeName(stationId) || timeOfRecordId(recordId) < 0) return R::failure("content.bad_id", "工位或记录的编号不能用作文件名");
     std::vector<unsigned char> png;
     try {
-        if (!cv::imencode(".png", imaging::view(image), png)) return Result<std::string>::failure("content.encode", "图像编码失败");
+        if (!cv::imencode(".png", imaging::view(image), png)) return R::failure("content.encode", "图像编码失败");
     } catch (const cv::Exception& e) {
-        return Result<std::string>::failure("content.encode", std::string("图像编码失败：") + e.what());
+        return R::failure("content.encode", std::string("图像编码失败：") + e.what());
     }
-    return store_.put(png);
+    const fs::path file = longTerm ? keptFile(stationId, recordId) : cachedFile(stationId, recordId);
+    std::error_code ec;
+    fs::create_directories(file.parent_path(), ec);
+    std::ofstream out(file, std::ios::binary | std::ios::trunc);
+    out.write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
+    out.flush();
+    if (!out) {
+        out.close();
+        fs::remove(file, ec);  // 写了一半的不留：留着会被当成一幅完整的图像
+        return R::failure("content.write", "检测图像写不进去（磁盘满了？）");
+    }
+    return recordId;  // 图像的编号就是记录的编号
+}
+
+std::string InspectionImageFiles::state(const std::string& stationId, const std::string& imageId) {
+    std::error_code ec;
+    if (isLegacyImageId(imageId)) return legacy_.get(imageId) ? "kept" : "expired";
+    if (!safeName(stationId) || timeOfRecordId(imageId) < 0) return "expired";
+    if (fs::exists(keptFile(stationId, imageId), ec)) return "kept";
+    if (fs::exists(cachedFile(stationId, imageId), ec)) return "cached";
+    return "expired";
+}
+
+Result<std::vector<unsigned char>> InspectionImageFiles::load(const std::string& stationId, const std::string& imageId) {
+    using R = Result<std::vector<unsigned char>>;
+    if (isLegacyImageId(imageId)) return legacy_.get(imageId);
+    if (!safeName(stationId) || timeOfRecordId(imageId) < 0) return R::failure("content.not_found", "找不到这幅检测图像");
+    for (const auto& file : {keptFile(stationId, imageId), cachedFile(stationId, imageId)}) {
+        std::ifstream in(file, std::ios::binary);
+        if (!in) continue;
+        std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        if (!bytes.empty()) return bytes;
+    }
+    return R::failure("content.not_found", "找不到这幅检测图像（可能已经过了保留期）");
+}
+
+Status InspectionImageFiles::keep(const std::string& stationId, const std::string& imageId) {
+    if (isLegacyImageId(imageId) || !safeName(stationId) || timeOfRecordId(imageId) < 0) return Status::success();
+    const fs::path from = cachedFile(stationId, imageId), to = keptFile(stationId, imageId);
+    std::error_code ec;
+    if (!fs::exists(from, ec)) return Status::success();  // 已经是长期的，或者已经过期：没什么可做的
+    fs::create_directories(to.parent_path(), ec);
+    fs::rename(from, to, ec);  // 同一个磁盘上的改名：要么成了，要么没动，不会出现半个文件
+    if (ec) return Status::failure("content.write", "图像转成长期保留时失败：" + ec.message());
+    return Status::success();
+}
+
+quality::ImageCleanup InspectionImageFiles::cleanup(std::int64_t cutoffMs, std::uint64_t minFreeBytes) {
+    quality::ImageCleanup done;
+    std::error_code ec;
+    // 所有工位的缓存目录：（日期，目录）
+    std::vector<std::pair<std::string, fs::path>> days;
+    for (fs::directory_iterator station(dir_, ec), end; !ec && station != end; station.increment(ec)) {
+        std::error_code inner;
+        for (fs::directory_iterator day(station->path() / "cache", inner), dayEnd; !inner && day != dayEnd; day.increment(inner)) {
+            if (day->is_directory(inner)) days.emplace_back(pathToUtf8(day->path().filename()), day->path());
+        }
+    }
+    std::sort(days.begin(), days.end());  // 日期是 "2026-11-25" 这样的：按文字排就是按时间排
+
+    // 第一步：过期的。整天都过期的目录一起删；跨着界线的那一天逐个文件看
+    const std::string cutoffDay = utcDay(cutoffMs);
+    std::vector<std::pair<std::string, fs::path>> remaining;
+    for (const auto& [day, path] : days) {
+        if (day < cutoffDay) {
+            done.expired += removeDirectory(path);
+        } else if (day == cutoffDay) {
+            int left = 0;
+            std::error_code inner;
+            for (fs::directory_iterator file(path, inner), fileEnd; !inner && file != fileEnd; file.increment(inner)) {
+                const std::int64_t time = timeOfRecordId(pathToUtf8(file->path().stem()));
+                if (time >= 0 && time < cutoffMs) {
+                    done.expired += removeFile(file->path());
+                } else {
+                    ++left;
+                }
+            }
+            if (left == 0) {
+                fs::remove(path, inner);
+            } else {
+                remaining.emplace_back(day, path);
+            }
+        } else {
+            remaining.emplace_back(day, path);
+        }
+    }
+
+    // 第二步：磁盘快满了。从最旧的一天开始再删，直到剩余空间够了，或者缓存清空了。
+    // 检测比“事后能看图”要紧：不能因为留图把磁盘写满、让检测记录都写不进去
+    if (minFreeBytes == 0) return done;
+    const auto low = [&] {
+        const auto space = fs::space(dir_, ec);
+        return !ec && space.available < minFreeBytes;
+    };
+    fs::create_directories(dir_, ec);  // 目录还不存在时 space 会失败
+    for (const auto& [day, path] : remaining) {
+        if (!low()) return done;
+        done.forSpace += removeDirectory(path);
+    }
+    done.spaceLow = low();
+    return done;
 }
 
 // ---------------- 匹配模板 ----------------

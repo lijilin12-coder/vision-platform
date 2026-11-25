@@ -129,8 +129,9 @@ json recordJson(const quality::RecordView& r) {
     for (const auto& reason : r.reasons) reasons.push_back({{"nodeId", reason.nodeId}, {"pass", reason.pass}, {"text", reason.text}});
     json j = {{"id", r.id}, {"time", r.time}, {"timeMs", r.timeMs}, {"sequence", r.sequence}, {"frameName", r.frameName},
               {"verdict", r.verdict}, {"releaseId", r.releaseId}, {"recipeVersionId", r.recipeVersionId},
-              // imageId：留下了图像的话，用 GET /api/images/{imageId} 取；没有留就是空的
-              {"imageId", r.imageSha256}, {"swapped", r.swapped}, {"totalMs", r.totalMs},
+              // imageState：none 当时没留 / cached 在短期缓存里（会过期）/ kept 长期保留 / expired 已经清掉了。
+              // 是 cached 或 kept 时，用 GET /api/stations/{工位}/records/{记录}/image 取
+              {"imageId", r.imageId}, {"imageState", r.imageState}, {"swapped", r.swapped}, {"totalMs", r.totalMs},
               {"reasons", std::move(reasons)}, {"result", resultJson(r.result)}, {"review", nullptr}};
     if (r.review) {
         j["review"] = {{"truth", r.review->truthNg ? "NG" : "OK"}, {"kind", r.review->kind}, {"note", r.review->note},
@@ -670,6 +671,12 @@ void ApiServer::Impl::routes() {
         json list = json::array();
         for (const auto& r : platform.quality.query(stationId, query)) list.push_back(recordJson(r));
         reply(res, 200, {{"records", std::move(list)}});
+    });
+    // 一条检测记录当时的图像（PNG）。当时没留、已经过期：404，原因在 message 里
+    server.Get("/api/stations/" + id + "/records/" + id + "/image", [this](const Request& req, Response& res) {
+        auto png = platform.quality.recordImage(req.matches[1], req.matches[2]);
+        if (!png) return replyError(res, png.error());
+        res.set_content(reinterpret_cast<const char*>(png.value().data()), png.value().size(), "image/png");
     });
     // 复判：人确认这一次实际是合格还是不合格。请求体 {"truth": "OK" | "NG", "note": "…", "reviewer": "…"}，后两项可以不给。
     // 可以重复复判，以最近的一次为准。回复是这条记录（带着复判的结论）

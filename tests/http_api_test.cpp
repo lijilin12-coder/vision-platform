@@ -504,13 +504,16 @@ TEST_F(HttpApi, StationsRunContinuouslyAndHotSwapThroughTheApi) {
     ASSERT_EQ(records.status, 200) << records.raw;
     ASSERT_EQ(records.body["records"].size(), 2u);
     EXPECT_EQ(records.body["records"][0]["frameName"], "2.png");
-    EXPECT_EQ(records.body["records"][0]["imageId"], "");
+    EXPECT_EQ(records.body["records"][0]["imageState"], "cached");  // 判 OK 的在短期缓存里
     const auto ngRecord = records.body["records"][1];
     EXPECT_EQ(ngRecord["verdict"], "NG");
     EXPECT_EQ(ngRecord["releaseId"], strict);
     EXPECT_EQ(ngRecord["result"]["defects"].size(), 2u);
     EXPECT_EQ(ngRecord["time"].get<std::string>().size(), 19u);
-    const auto kept = client->Get("/api/images/" + ngRecord["imageId"].get<std::string>());
+    EXPECT_EQ(ngRecord["imageState"], "kept");
+    EXPECT_EQ(get(base + "/records/1795521600000-999999/image").status, 404);
+    EXPECT_EQ(get("/api/stations/nobody/records/" + ngRecord["id"].get<std::string>() + "/image").status, 404);
+    const auto kept = client->Get(base + "/records/" + ngRecord["id"].get<std::string>() + "/image");
     ASSERT_TRUE(kept && kept->status == 200);
     EXPECT_EQ(kept->get_header_value("Content-Type"), "image/png");
     // 筛选、翻页

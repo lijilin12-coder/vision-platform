@@ -68,8 +68,12 @@ constexpr const char* kUsage = R"(用法：vision-line [--data <目录>] <命令
 选项
   --data <目录>          数据目录，默认 ./vision-line-data
   --events               在控制台显示领域事件
-  --keep-images <哪些>   检测时留下哪些图像：ng（默认，只留不合格的和出错的）/ all（都留，占磁盘）/ none。
-                         想在复判时看得到判 OK 的那些图像（找漏检），要用 all
+  --keep-images <哪些>   检测时留下哪些图像：
+                           all（默认）不合格的和出错的长期保留；判 OK 的留一段时间，过期自动清掉
+                           ng   只留不合格的和出错的。判 OK 的不留——事后发现漏检时没有图像可看
+                           none 都不留
+  --image-retention-hours <小时>
+                         判 OK 的图像留多久，默认 72。复判过的图像会转成长期保留，不受它影响
   --allow-unaccepted     调试用：允许部署还没有验收的上线包（验收没通过的仍然不行）。不要在正式生产中使用
 
 日志在 <数据目录>/logs/vision-line.log，崩溃报告在 <数据目录>/crashes/。
@@ -85,7 +89,7 @@ int main(int argc, char** argv) {
     std::string dataDir = "vision-line-data";
     bool verbose = false;
     bool allowUnaccepted = false;
-    std::string keepImages;
+    std::string keepImages, retentionHours;
     int exitWhenIdle = 0, port = 8760;
     for (std::size_t i = 0; i < args.size();) {
         if (args[i] == "--data" && i + 1 < args.size()) {
@@ -102,6 +106,9 @@ int main(int argc, char** argv) {
             args.erase(args.begin() + static_cast<std::ptrdiff_t>(i));
         } else if (args[i] == "--keep-images" && i + 1 < args.size()) {
             keepImages = args[i + 1];
+            args.erase(args.begin() + static_cast<std::ptrdiff_t>(i), args.begin() + static_cast<std::ptrdiff_t>(i) + 2);
+        } else if (args[i] == "--image-retention-hours" && i + 1 < args.size()) {
+            retentionHours = args[i + 1];
             args.erase(args.begin() + static_cast<std::ptrdiff_t>(i), args.begin() + static_cast<std::ptrdiff_t>(i) + 2);
         } else if (args[i] == "--allow-unaccepted") {
             allowUnaccepted = true;
@@ -132,14 +139,11 @@ int main(int argc, char** argv) {
 
     platform::LinePlatform app(data);
     app.verboseEvents = verbose;
-    if (!keepImages.empty()) {
-        if (keepImages != "all" && keepImages != "ng" && keepImages != "none") {
-            std::cerr << "--keep-images 只能是 all、ng 或 none\n";
-            return 1;
-        }
-        app.quality.setImagePolicy(keepImages == "all" ? quality::ImagePolicy::All
-                                   : keepImages == "none" ? quality::ImagePolicy::None : quality::ImagePolicy::NgAndError);
+    if (auto st = platform::applyImageOptions(app, keepImages, retentionHours); !st) {
+        std::cerr << st.error().message << "\n";
+        return 1;
     }
+    (void)app.quality.cleanExpiredImages();  // 启动时清一次过期的检测图像
     if (allowUnaccepted) {
         app.stations.allowUnacceptedReleases(true);
         log::warn("line", "调试选项 --allow-unaccepted：允许部署还没有验收的上线包。不要在正式生产中使用");
@@ -185,6 +189,7 @@ int main(int argc, char** argv) {
             std::cerr << "这个数据目录上已经有一个服务在运行了\n";
             return 1;
         }
+        app.imageJanitor.start();  // 服务长时间运行：每小时清一次过期的检测图像
         line::ControlApi api(app);
         const int bound = api.bind("127.0.0.1", port);
         if (bound < 0) {

@@ -140,6 +140,9 @@ export class HttpPlatformClient implements PlatformClient {
   getSummary(stationId: string) {
     return this.request<QualitySummary>("GET", `/api/stations/${stationId}/summary`);
   }
+  recordImageUrl(stationId: string, recordId: string) {
+    return `${this.base}/api/stations/${stationId}/records/${recordId}/image`;
+  }
   reviewRecord(stationId: string, recordId: string, truth: "OK" | "NG", note = "") {
     return this.request<SavedRecord>("POST", `/api/stations/${stationId}/records/${recordId}/review`, { truth, note });
   }

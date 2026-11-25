@@ -216,7 +216,11 @@ export interface SavedRecord extends InspectionRecord {
   id: string; // 记录的编号：越新的越大
   time: string; // 给人看的时间（UTC）
   recipeVersionId: string;
-  imageId: string; // 当时的图像；没有保留时是空的（默认只保留不合格的和出错的）
+  // 当时的图像现在的情况：
+  //   kept 长期保留着（判 NG、ERROR 的，以及复判过的）
+  //   cached 在短期缓存里：现在看得到，过了保留期（默认 72 小时）会清掉；复判之后转成长期保留
+  //   expired 已经清掉了；none 当时就没留
+  imageState: "kept" | "cached" | "expired" | "none";
   review: Review | null; // 最近一次复判；还没复判过是 null
 }
 
