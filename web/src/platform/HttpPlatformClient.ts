@@ -132,12 +132,19 @@ export class HttpPlatformClient implements PlatformClient {
   async listRecords(stationId: string, query: RecordQuery = {}) {
     const params = new URLSearchParams();
     if (query.verdict) params.set("verdict", query.verdict);
+    if (query.review) params.set("review", query.review);
     if (query.before) params.set("before", query.before);
     if (query.limit) params.set("limit", String(query.limit));
     return (await this.request<{ records: SavedRecord[] }>("GET", `/api/stations/${stationId}/records?${params}`)).records;
   }
   getSummary(stationId: string) {
     return this.request<QualitySummary>("GET", `/api/stations/${stationId}/summary`);
+  }
+  reviewRecord(stationId: string, recordId: string, truth: "OK" | "NG", note = "") {
+    return this.request<SavedRecord>("POST", `/api/stations/${stationId}/records/${recordId}/review`, { truth, note });
+  }
+  exportReviewed(stationId: string, directory: string) {
+    return this.request<{ ok: number; ng: number; withoutImage: number }>("POST", `/api/stations/${stationId}/export-reviewed`, { directory });
   }
   stationFrameUrl(stationId: string, sequence: number) {
     return `${this.base}/api/stations/${stationId}/frame?s=${sequence}`;

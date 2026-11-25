@@ -7,12 +7,14 @@
 
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <string>
 
 #include "vision/catalog/api.h"
 #include "vision/common/log.h"
+#include "vision/common/path.h"
 #include "vision/content/content_store.h"
 #include "vision/eventbus/in_memory_event_bus.h"
 #include "vision/exchange/package_file.h"
@@ -133,6 +135,7 @@ struct LinePlatform {
 
     // 质量分析（BC-10）：每次产线检测记一条。不合格的和出错的连图像一起留下
     persistence::JsonlInspectionRecordRepository inspectionRecords;
+    persistence::JsonlReviewRepository reviews;  // 复判
     SystemClock clock;
     content::InspectionImages inspectionImages;
     quality::QualityService quality;
@@ -168,6 +171,7 @@ struct LinePlatform {
           stationRepository(dataDir),
           stations(stationRepository, releases, execution, bus),
           inspectionRecords(dataDir),
+          reviews(dataDir),
           inspectionImages(contentStore),
           quality(inspectionRecords, clock, inspectionImages),
           recordInspections(quality) {
@@ -177,6 +181,7 @@ struct LinePlatform {
 #endif
         releases.useLoadCheck(loadCheck);
         packages.useReleases(releases);
+        quality.useReviews(reviews, bus);
         stations.useImageSources(imageSources);
         stations.useInspectionObserver(recordInspections);
         bus.subscribe("*", [this](const EventPtr& e) {
@@ -191,5 +196,47 @@ struct LinePlatform {
         });
     }
 };
+
+// 把复判过的检测的图像导出成两个目录：<目录>/ok（人确认是合格的）和 <目录>/ng（人确认是不合格的）。
+// 这正是建基准图集、导入样本要的样子——复判的结果由此回到方案构建那一侧（数据闭环，规则 P3）。
+// 只有当时留下了图像的记录才导得出来。misjudgedOnly：只要复判确认判错了的（误报、漏检）。
+struct ReviewedExport {
+    int ok = 0, ng = 0;
+    int withoutImage = 0;  // 复判过、但当时没有留图像的
+};
+inline Result<ReviewedExport> exportReviewedImages(LinePlatform& app, const std::string& stationId, const std::string& directory,
+                                                   bool misjudgedOnly) {
+    namespace fs = std::filesystem;
+    using R = Result<ReviewedExport>;
+    if (auto v = app.stations.getStation(stationId); !v) return v.error();
+    const fs::path root = pathFromUtf8(directory);
+    std::error_code ec;
+    fs::create_directories(root / "ok", ec);
+    fs::create_directories(root / "ng", ec);
+    if (ec) return R::failure("quality.export_failed", "建不了目录 " + directory);
+    ReviewedExport report;
+    quality::RecordQuery query;
+    query.limit = 500;
+    for (;;) {
+        const auto page = app.quality.query(stationId, query);
+        for (const auto& r : page) {
+            if (!r.review || (misjudgedOnly && r.review->kind != "false_alarm" && r.review->kind != "miss")) continue;
+            if (r.imageSha256.empty()) {
+                ++report.withoutImage;
+                continue;
+            }
+            auto bytes = app.contentStore.get(r.imageSha256);
+            if (!bytes) return R::failure(bytes.error().code, "记录 " + r.id + " 的图像读不出来：" + bytes.error().message);
+            // 文件名用记录的编号：不会重名，也能从文件找回是哪一次检测
+            const fs::path file = root / (r.review->truthNg ? "ng" : "ok") / (r.id + ".png");
+            std::ofstream out(file, std::ios::binary | std::ios::trunc);
+            out.write(reinterpret_cast<const char*>(bytes.value().data()), static_cast<std::streamsize>(bytes.value().size()));
+            if (!out) return R::failure("quality.export_failed", "写不进 " + pathToUtf8(file));
+            ++(r.review->truthNg ? report.ng : report.ok);
+        }
+        if (static_cast<int>(page.size()) < query.limit) return report;
+        query.beforeId = page.back().id;
+    }
+}
 
 }  // namespace vision::platform

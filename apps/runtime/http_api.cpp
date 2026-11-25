@@ -121,6 +121,24 @@ json outputJson(const Value& value) {
     return std::visit(Visitor{}, value);
 }
 
+json resultJson(const ResultItems& result);
+
+// 一条保存下来的检测记录。review：最近一次复判，没有复判过时是 null
+json recordJson(const quality::RecordView& r) {
+    json reasons = json::array();
+    for (const auto& reason : r.reasons) reasons.push_back({{"nodeId", reason.nodeId}, {"pass", reason.pass}, {"text", reason.text}});
+    json j = {{"id", r.id}, {"time", r.time}, {"timeMs", r.timeMs}, {"sequence", r.sequence}, {"frameName", r.frameName},
+              {"verdict", r.verdict}, {"releaseId", r.releaseId}, {"recipeVersionId", r.recipeVersionId},
+              // imageId：留下了图像的话，用 GET /api/images/{imageId} 取；没有留就是空的
+              {"imageId", r.imageSha256}, {"swapped", r.swapped}, {"totalMs", r.totalMs},
+              {"reasons", std::move(reasons)}, {"result", resultJson(r.result)}, {"review", nullptr}};
+    if (r.review) {
+        j["review"] = {{"truth", r.review->truthNg ? "NG" : "OK"}, {"kind", r.review->kind}, {"note", r.review->note},
+                       {"reviewer", r.review->reviewer}, {"time", r.review->time}, {"timeMs", r.review->timeMs}};
+    }
+    return j;
+}
+
 json acceptanceJson(const release::AcceptanceView& a) {
     json wrong = json::array();
     for (const auto& w : a.wrongCases) {
@@ -637,6 +655,10 @@ void ApiServer::Impl::routes() {
         quality::RecordQuery query;
         query.verdict = req.get_param_value("verdict");
         query.beforeId = req.get_param_value("before");
+        query.review = req.get_param_value("review");
+        if (!query.review.empty() && query.review != "unreviewed" && query.review != "misjudged") {
+            return replyBadRequest(res, "review 只能是 unreviewed 或 misjudged");
+        }
         if (!query.verdict.empty() && query.verdict != "OK" && query.verdict != "NG" && query.verdict != "ERROR") {
             return replyBadRequest(res, "verdict 只能是 OK、NG 或 ERROR");
         }
@@ -646,23 +668,50 @@ void ApiServer::Impl::routes() {
             return replyBadRequest(res, "limit 必须是一个数字");
         }
         json list = json::array();
-        for (const auto& r : platform.quality.query(stationId, query)) {
-            json reasons = json::array();
-            for (const auto& reason : r.reasons) reasons.push_back({{"nodeId", reason.nodeId}, {"pass", reason.pass}, {"text", reason.text}});
-            // imageId：留下了图像的话，用 GET /api/images/{imageId} 取；没有留就是空的
-            list.push_back({{"id", r.id}, {"time", r.time}, {"timeMs", r.timeMs}, {"sequence", r.sequence}, {"frameName", r.frameName},
-                            {"verdict", r.verdict}, {"releaseId", r.releaseId}, {"recipeVersionId", r.recipeVersionId},
-                            {"imageId", r.imageSha256}, {"swapped", r.swapped}, {"totalMs", r.totalMs},
-                            {"reasons", std::move(reasons)}, {"result", resultJson(r.result)}});
-        }
+        for (const auto& r : platform.quality.query(stationId, query)) list.push_back(recordJson(r));
         reply(res, 200, {{"records", std::move(list)}});
+    });
+    // 复判：人确认这一次实际是合格还是不合格。请求体 {"truth": "OK" | "NG", "note": "…", "reviewer": "…"}，后两项可以不给。
+    // 可以重复复判，以最近的一次为准。回复是这条记录（带着复判的结论）
+    server.Post("/api/stations/" + id + "/records/" + id + "/review", [this](const Request& req, Response& res) {
+        const std::string stationId = req.matches[1];
+        if (auto view = platform.stations.getStation(stationId); !view) return replyError(res, view.error());
+        const auto body = bodyObject(req, res);
+        if (!body) return;
+        const auto truth = textField(*body, "truth", res);
+        if (!truth) return;
+        if (*truth != "OK" && *truth != "NG") return replyBadRequest(res, "truth 只能是 OK 或 NG");
+        quality::ReviewRequest request;
+        request.truthNg = *truth == "NG";
+        try {
+            request.note = body->value("note", std::string());
+            request.reviewer = body->value("reviewer", std::string());
+        } catch (const std::exception&) {
+            return replyBadRequest(res, "note 和 reviewer 必须是文字");
+        }
+        auto r = platform.quality.review(stationId, req.matches[2], request);
+        if (!r) return replyError(res, r.error());
+        reply(res, 200, recordJson(r.value()));
+    });
+    // 把复判过的图像导出成 <directory>/ok 和 <directory>/ng（后端那台机器上）。请求体 {"directory": "…", "misjudgedOnly": false}
+    server.Post("/api/stations/" + id + "/export-reviewed", [this](const Request& req, Response& res) {
+        const auto body = bodyObject(req, res);
+        if (!body) return;
+        const auto directory = textField(*body, "directory", res);
+        if (!directory) return;
+        const bool misjudgedOnly = body->contains("misjudgedOnly") && (*body)["misjudgedOnly"].is_boolean() && (*body)["misjudgedOnly"].get<bool>();
+        auto r = platform::exportReviewedImages(platform, req.matches[1], *directory, misjudgedOnly);
+        if (!r) return replyError(res, r.error());
+        reply(res, 200, {{"directory", *directory}, {"ok", r.value().ok}, {"ng", r.value().ng}, {"withoutImage", r.value().withoutImage}});
     });
     // 这个工位有记录以来的汇总：检测了多少、良率、每种缺陷出现了多少个
     server.Get("/api/stations/" + id + "/summary", [this](const Request& req, Response& res) {
         const std::string stationId = req.matches[1];
         if (auto view = platform.stations.getStation(stationId); !view) return replyError(res, view.error());
         const auto s = platform.quality.summary(stationId);
-        json j = {{"total", s.total}, {"ok", s.ok}, {"ng", s.ng}, {"error", s.error}, {"defectsByCategory", s.defectsByCategory}};
+        json j = {{"total", s.total}, {"ok", s.ok}, {"ng", s.ng}, {"error", s.error}, {"defectsByCategory", s.defectsByCategory},
+                  {"reviewed", s.reviewed}, {"reviewedCorrect", s.reviewedCorrect}, {"falseAlarms", s.falseAlarms}, {"misses", s.misses},
+                  {"reviewedErrors", s.reviewedErrors}};
         j["yield"] = s.yield ? json(*s.yield) : json(nullptr);
         reply(res, 200, j);
     });

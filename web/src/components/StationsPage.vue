@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, onUnmounted, ref } from "vue";
+import { reviewLabel } from "../stations";
 import type { Stations } from "../stations";
 
 // 工位页面：工位列表、部署和回滚、绑定图像目录、开始 / 停止、最近检测的图像和结果。
@@ -22,6 +23,15 @@ function onHistoryImageLoad(event: Event) {
   const img = event.target as HTMLImageElement;
   historyBox.value = `0 0 ${img.naturalWidth} ${img.naturalHeight}`;
 }
+const reviewNote = ref("");
+const exportDir = ref("");
+// 复判完一条就跳到下一条：一条条往下过的时候不用回去点列表
+async function review(truth: "OK" | "NG") {
+  if (await stations.review(truth, reviewNote.value)) {
+    reviewNote.value = "";
+    stations.pickNext();
+  }
+}
 async function show(which: "live" | "history") {
   view.value = which;
   if (which === "history") await stations.loadHistory();
@@ -30,6 +40,8 @@ async function show(which: "live" | "history") {
 onMounted(async () => {
   await stations.refresh();
   if (!state.selectedId && state.stations.length > 0) await select(state.stations[0].id);
+  // 从别的页面切回来：选中的工位还在，把它绑定的图像目录填回输入框
+  else folder.value = state.current?.imageSource.location ?? "";
   // 隔半秒问一次后端有没有新的检测。页面离开时停掉
   timer = setInterval(() => void stations.poll(), 500);
 });
@@ -168,9 +180,24 @@ const stateNames: Record<string, string> = { stopped: "已停止", running: "运
           <span class="count ng small">NG {{ history.summary.ng }}</span>
           <span class="count error small">ERROR {{ history.summary.error }}</span>
           <span class="muted" v-for="(n, category) in history.summary.defectsByCategory" :key="category">缺陷“{{ category }}” {{ n }} 个</span>
+          <span v-if="history.summary.reviewed > 0" data-history-reviewed>
+            已复判 <strong>{{ history.summary.reviewed }}</strong> 条：误报 <strong class="bad">{{ history.summary.falseAlarms }}</strong>，漏检 <strong class="bad">{{ history.summary.misses }}</strong>
+          </span>
           <span class="spacer" />
+          <select :value="history.review" data-history-review-filter @change="stations.setReviewFilter(($event.target as HTMLSelectElement).value as '' | 'unreviewed' | 'misjudged')">
+            <option value="">复判：全部</option>
+            <option value="unreviewed">还没复判的</option>
+            <option value="misjudged">确认判错了的</option>
+          </select>
           <label><input type="checkbox" :checked="history.onlyNg" data-history-only-ng @change="stations.setOnlyNg(($event.target as HTMLInputElement).checked)" /> 只看不合格</label>
           <button data-history-refresh @click="stations.loadHistory()">刷新</button>
+        </div>
+        <div v-if="history.notice" class="message ok" data-history-notice @click="stations.dismiss()">{{ history.notice }} <span class="close">点一下关闭</span></div>
+        <div class="row" v-if="history.summary && history.summary.reviewed > 0">
+          <span class="label">复判的图像</span>
+          <input v-model="exportDir" placeholder="导出到哪个目录（后端那台机器上），例如 ./reviewed" data-review-export-dir />
+          <button :disabled="!exportDir.trim()" data-review-export @click="stations.exportReviewed(exportDir)">导出成 ok / ng 两个目录</button>
+          <span class="muted">可以直接拿去建基准图集</span>
         </div>
         <div class="live">
           <div class="frame-area">
@@ -187,19 +214,30 @@ const stateNames: Record<string, string> = { stopped: "已停止", running: "运
               </div>
               <div v-else class="muted empty" data-history-no-image>这一次没有保留图像（只保留不合格的和出错的）。</div>
               <div v-for="(r, i) in picked.reasons" :key="i" :class="r.pass ? 'pass' : 'fail'">{{ r.pass ? "✓" : "✗" }} {{ r.text }}</div>
+              <div class="review-box" data-review-box>
+                <strong>复判</strong>
+                <span v-if="picked.review" class="review-now" :class="picked.review.kind" data-review-now>
+                  实际{{ picked.review.truth === "NG" ? "不合格" : "合格" }}（{{ reviewLabel(picked.review) }}）<template v-if="picked.review.note">：{{ picked.review.note }}</template>
+                </span>
+                <span v-else class="muted">这一次实际上是——</span>
+                <button data-review-ok @click="review('OK')">实际合格</button>
+                <button data-review-ng @click="review('NG')">实际不合格</button>
+                <input v-model="reviewNote" placeholder="备注（可以不填）" data-review-note />
+              </div>
               <div class="muted">上线包 {{ stations.releaseName(picked.releaseId) }} · 方案版本 {{ picked.recipeVersionId }} · {{ picked.totalMs.toFixed(1) }} ms</div>
             </template>
             <div v-else class="muted empty">点右边的一条记录，看当时的图像和判定依据。</div>
           </div>
           <div class="records">
             <table>
-              <thead><tr><th>时间（UTC）</th><th>#</th><th>图像</th><th>判定</th><th>原因</th><th>上线包</th></tr></thead>
+              <thead><tr><th>时间（UTC）</th><th>#</th><th>图像</th><th>判定</th><th>复判</th><th>原因</th><th>上线包</th></tr></thead>
               <tbody>
                 <tr v-for="r in history.records" :key="r.id" class="pick" :class="{ active: picked?.id === r.id }" :data-history-record="r.id" @click="stations.pickRecord(r)">
                   <td>{{ r.time }}</td>
                   <td>{{ r.sequence }}</td>
                   <td>{{ r.frameName }}</td>
                   <td><span class="badge" :class="r.verdict">{{ r.verdict }}</span></td>
+                  <td><span v-if="r.review" class="review-tag" :class="r.review.kind" :data-review-kind="r.review.kind">{{ reviewLabel(r.review) }}</span></td>
                   <td class="reason">{{ r.reasons.filter((x) => !x.pass).map((x) => x.text).join("；") }}</td>
                   <td class="muted">{{ r.releaseId.slice(0, 8) }}</td>
                 </tr>
@@ -238,6 +276,13 @@ const stateNames: Record<string, string> = { stopped: "已停止", running: "运
 .label { width: 90px; color: var(--muted); }
 .row input { flex: 1; max-width: 420px; }
 .pending { color: #b45309; }
+.message.ok { background: #f0fdf4; color: #15803d; border-color: #bbf7d0; }
+.bad { color: var(--ng); }
+.review-box { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 8px 0; padding: 8px 10px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; }
+.review-box input { flex: 1; min-width: 120px; }
+.review-now, .review-tag { padding: 1px 8px; border-radius: 10px; background: #dcfce7; color: #15803d; white-space: nowrap; }
+.review-now.false_alarm, .review-now.miss, .review-tag.false_alarm, .review-tag.miss { background: #fee2e2; color: #b91c1c; font-weight: 600; }
+.review-now.was_error, .review-tag.was_error { background: #e5e7eb; color: #374151; }
 .views { display: flex; gap: 0; }
 .views button { border-radius: 0; border-right-width: 0; }
 .views button:first-child { border-radius: 4px 0 0 4px; }

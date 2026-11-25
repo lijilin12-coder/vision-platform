@@ -5,6 +5,7 @@
 
 #include "vision/common/log.h"
 #include "vision/quality/domain/inspection_record.h"
+#include "vision/quality/domain/review.h"
 
 namespace vision::quality {
 
@@ -25,7 +26,7 @@ std::string formatTime(std::int64_t timeMs) {
     return buffer;
 }
 
-RecordView toView(const InspectionRecord& r) {
+RecordView toView(const InspectionRecord& r, const Review* review = nullptr) {
     RecordView v;
     v.id = r->id;
     v.stationId = r->stationId;
@@ -41,6 +42,10 @@ RecordView toView(const InspectionRecord& r) {
     v.result = r->result;
     v.totalMs = r->totalMs;
     v.swapped = r->swapped;
+    if (review != nullptr) {
+        const auto& f = review->fields();
+        v.review = ReviewView{f.truthNg, reviewKindName(review->kind()), f.reviewer, f.note, f.timeMs, formatTime(f.timeMs)};
+    }
     return v;
 }
 
@@ -53,10 +58,61 @@ struct QualityService::Totals {
 QualityService::QualityService(InspectionRecordRepository& records, Clock& clock, ImageArchive& images, ImagePolicy policy)
     : records_(records), clock_(clock), images_(images), policy_(policy) {}
 
+QualityService::~QualityService() = default;
+
+void QualityService::useReviews(ReviewRepository& reviews, EventPublisher& events) {
+    reviews_ = &reviews;
+    events_ = &events;
+}
+
+ReviewBook& QualityService::book(const std::string& stationId) const {
+    auto& b = books_[stationId];
+    if (!b) {
+        b = std::make_shared<ReviewBook>();
+        if (reviews_ != nullptr) {
+            for (const auto& review : reviews_->all(stationId)) b->add(review);
+        }
+    }
+    return *b;
+}
+
+Result<RecordView> QualityService::review(const std::string& stationId, const std::string& recordId, const ReviewRequest& request) {
+    using R = Result<RecordView>;
+    if (reviews_ == nullptr) return R::failure("quality.no_reviews", "这个程序没有接上复判的存储");
+    EventPtr event;
+    RecordView view;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto record = records_.find(stationId, recordId);  // R1
+        if (!record) return R::failure("quality.record_not_found", "找不到这条检测记录");
+        Review::Fields f;
+        f.recordId = recordId;
+        f.stationId = stationId;
+        f.verdict = (*record)->verdict;
+        f.truthNg = request.truthNg;
+        f.reviewer = request.reviewer;
+        f.note = request.note;
+        f.timeMs = clock_.nowMs();
+        auto review = Review::create(std::move(f));
+        if (!review) return review.error();
+        ReviewBook& reviews = book(stationId);  // 先读出已有的，再追加：不然刚写的这条会被读进来再算一遍
+        if (auto st = reviews_->append(review.value()); !st) return st.error();
+        reviews.add(review.value());
+        if (review.value().misjudged()) {
+            event = std::make_shared<MisjudgmentConfirmed>(stationId, recordId, reviewKindName(review.value().kind()),
+                                                           (*record)->imageSha256);
+        }
+        view = toView(*record, reviews.latest(recordId));
+    }
+    if (event && events_ != nullptr) events_->publish(event);  // 在锁外发布
+    return view;
+}
+
 Result<std::string> QualityService::record(const InspectionToRecord& in) {
     // 图像：按策略决定留不留。存图像比较慢，放在锁外面做
     std::string imageSha256;
-    const bool keep = policy_ == ImagePolicy::All || (policy_ == ImagePolicy::NgAndError && in.verdict != "OK");
+    const ImagePolicy policy = policy_;
+    const bool keep = policy == ImagePolicy::All || (policy == ImagePolicy::NgAndError && in.verdict != "OK");
     if (keep && !in.frame.empty()) {
         auto stored = images_.store(in.frame);
         if (stored) {
@@ -99,21 +155,34 @@ Result<std::string> QualityService::record(const InspectionToRecord& in) {
 }
 
 std::vector<RecordView> QualityService::query(const std::string& stationId, const RecordQuery& q) const {
+    const int limit = q.limit < 1 ? 1 : q.limit > 500 ? 500 : q.limit;
     RecordFilter filter;
     filter.verdict = q.verdict;
     filter.beforeId = q.beforeId;
-    filter.limit = q.limit < 1 ? 1 : q.limit > 500 ? 500 : q.limit;
+    filter.limit = limit;
     std::lock_guard<std::mutex> lock(mutex_);
+    const ReviewBook& reviews = book(stationId);
     std::vector<RecordView> views;
-    for (const auto& r : records_.query(stationId, filter)) views.push_back(toView(r));
-    return views;
+    // 按复判筛选是在这里做的（存储只认识检测记录）：一页一页往前取，直到凑够或者取完
+    for (;;) {
+        const auto page = records_.query(stationId, filter);
+        for (const auto& r : page) {
+            const Review* review = reviews.latest(r->id);
+            if (q.review == "unreviewed" && review != nullptr) continue;
+            if (q.review == "misjudged" && (review == nullptr || !review->misjudged())) continue;
+            views.push_back(toView(r, review));
+            if (static_cast<int>(views.size()) >= limit) return views;
+        }
+        if (q.review.empty() || static_cast<int>(page.size()) < filter.limit) return views;
+        filter.beforeId = page.back()->id;
+    }
 }
 
 Result<RecordView> QualityService::getRecord(const std::string& stationId, const std::string& recordId) const {
     std::lock_guard<std::mutex> lock(mutex_);
     auto r = records_.find(stationId, recordId);
     if (!r) return Result<RecordView>::failure("quality.record_not_found", "找不到这条检测记录");
-    return toView(*r);
+    return toView(*r, book(stationId).latest(recordId));
 }
 
 SummaryView QualityService::summary(const std::string& stationId) const {
@@ -121,7 +190,8 @@ SummaryView QualityService::summary(const std::string& stationId) const {
     auto& totals = totals_[stationId];
     if (!totals) totals = std::make_shared<Totals>(Totals{summarize(records_.all(stationId))});
     const Summary& s = totals->summary;
-    return {s.total, s.ok, s.ng, s.error, s.yield(), s.defectsByCategory};
+    const ReviewSummary& r = book(stationId).summary();
+    return {s.total, s.ok, s.ng, s.error, s.yield(), s.defectsByCategory, r.reviewed, r.correct, r.falseAlarms, r.misses, r.wasError};
 }
 
 }  // namespace vision::quality

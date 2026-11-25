@@ -453,3 +453,380 @@ TEST(InspectionRecordsEndToEnd, EveryStationInspectionLeavesARecordThatSurvivesA
     EXPECT_EQ(s.defectsByCategory.size(), 1u);
     fs::remove_all(data);
 }
+
+// =====================================================================================
+// 复判（QUA-01，docs/ddd/17-review.md）
+// =====================================================================================
+
+#include "vision/quality/domain/review.h"
+
+namespace {
+
+quality::Review review(const std::string& recordId, const std::string& verdict, bool truthNg, std::int64_t timeMs = kNoon) {
+    quality::Review::Fields f;
+    f.recordId = recordId;
+    f.stationId = "s-1";
+    f.verdict = verdict;
+    f.truthNg = truthNg;
+    f.timeMs = timeMs;
+    return quality::Review::create(std::move(f)).value();
+}
+
+}  // namespace
+
+// ---------------- 领域层 ----------------
+
+TEST(Review, R4_TheConclusionComesFromVerdictAndTruth) {
+    using quality::ReviewKind;
+    EXPECT_EQ(review("r", "NG", false).kind(), ReviewKind::FalseAlarm);  // 判了不合格，实际合格：误报
+    EXPECT_EQ(review("r", "OK", true).kind(), ReviewKind::Miss);         // 判了合格，实际不合格：漏检
+    EXPECT_EQ(review("r", "OK", false).kind(), ReviewKind::Correct);
+    EXPECT_EQ(review("r", "NG", true).kind(), ReviewKind::Correct);
+    EXPECT_EQ(review("r", "ERROR", true).kind(), ReviewKind::WasError);  // 系统没检测下来：不算误报也不算漏检
+    EXPECT_EQ(review("r", "ERROR", false).kind(), ReviewKind::WasError);
+    EXPECT_TRUE(review("r", "NG", false).misjudged());
+    EXPECT_TRUE(review("r", "OK", true).misjudged());
+    EXPECT_FALSE(review("r", "OK", false).misjudged());
+    EXPECT_FALSE(review("r", "ERROR", true).misjudged());
+    EXPECT_STREQ(quality::reviewKindName(ReviewKind::FalseAlarm), "false_alarm");
+    EXPECT_STREQ(quality::reviewKindName(ReviewKind::Miss), "miss");
+}
+
+TEST(Review, MustPointAtARecordAndCarryAKnownVerdict) {
+    const auto broken = [](const std::function<void(quality::Review::Fields&)>& change) {
+        quality::Review::Fields f;
+        f.recordId = "r";
+        f.stationId = "s-1";
+        f.verdict = "NG";
+        f.timeMs = kNoon;
+        change(f);
+        const auto r = quality::Review::create(std::move(f));
+        return !r.ok() && r.error().code == "quality.review_invalid";
+    };
+    EXPECT_FALSE(broken([](auto&) {}));
+    EXPECT_TRUE(broken([](auto& f) { f.recordId.clear(); }));
+    EXPECT_TRUE(broken([](auto& f) { f.stationId.clear(); }));
+    EXPECT_TRUE(broken([](auto& f) { f.verdict = "MAYBE"; }));
+    EXPECT_TRUE(broken([](auto& f) { f.timeMs = 0; }));
+}
+
+TEST(Review, R3_OnlyTheLatestReviewOfARecordCounts) {
+    quality::ReviewBook book;
+    EXPECT_EQ(book.latest("a"), nullptr);
+    book.add(review("a", "NG", false));  // 误报
+    book.add(review("b", "OK", true));   // 漏检
+    book.add(review("c", "OK", false));  // 判对了
+    book.add(review("d", "ERROR", true));
+    auto s = book.summary();
+    EXPECT_EQ(s.reviewed, 4);
+    EXPECT_EQ(s.falseAlarms, 1);
+    EXPECT_EQ(s.misses, 1);
+    EXPECT_EQ(s.correct, 1);
+    EXPECT_EQ(s.wasError, 1);
+    // 改主意：a 其实是不合格的（系统判对了）；b 其实是合格的
+    book.add(review("a", "NG", true, kNoon + 1));
+    book.add(review("b", "OK", false, kNoon + 2));
+    s = book.summary();
+    EXPECT_EQ(s.reviewed, 4);  // 还是 4 条记录
+    EXPECT_EQ(s.falseAlarms, 0);
+    EXPECT_EQ(s.misses, 0);
+    EXPECT_EQ(s.correct, 3);
+    EXPECT_TRUE(book.latest("a")->fields().truthNg);
+    EXPECT_EQ(book.latest("a")->fields().timeMs, kNoon + 1);
+}
+
+// ---------------- 存储 ----------------
+
+TEST(ReviewFiles, AppendOnlyNextToTheRecordsWithoutBeingMistakenForThem) {
+    const fs::path dir = freshDir("数据");
+    persistence::JsonlInspectionRecordRepository records(dir);
+    persistence::JsonlReviewRepository reviews(dir);
+    ASSERT_TRUE(records.append(record(kNoon, 0, "NG")).ok());
+    auto first = review(quality::makeRecordId(kNoon, 0), "NG", false, kNoon + 5);
+    ASSERT_TRUE(reviews.append(first).ok());
+    quality::Review::Fields f = first.fields();
+    f.truthNg = true;
+    f.reviewer = "小李";
+    f.note = "确实有\"划痕\"\n第二行";  // 引号、换行都要原样回来
+    f.timeMs = kNoon + 9;
+    ASSERT_TRUE(reviews.append(quality::Review::create(f).value()).ok());
+    EXPECT_TRUE(fs::exists(dir / "inspection-records" / "s-1" / "reviews.jsonl"));
+
+    persistence::JsonlReviewRepository reopened(dir);
+    const auto all = reopened.all("s-1");
+    ASSERT_EQ(all.size(), 2u);  // 两次都在（R3：之前那次留着）
+    EXPECT_FALSE(all[0]->truthNg);
+    EXPECT_TRUE(all[1]->truthNg);
+    EXPECT_EQ(all[1]->reviewer, "小李");
+    EXPECT_EQ(all[1]->note, "确实有\"划痕\"\n第二行");
+    EXPECT_EQ(all[1]->verdict, "NG");
+    EXPECT_TRUE(reopened.all("nobody").empty());
+    EXPECT_TRUE(reopened.all("../s-1").empty());
+    // 复判的文件和检测记录在同一个目录里：读检测记录时不能把它当成记录
+    EXPECT_EQ(records.all("s-1").size(), 1u);
+    EXPECT_EQ(records.query("s-1", {}).size(), 1u);
+    // 残缺的最后一行只丢那一条
+    { std::ofstream(dir / "inspection-records" / "s-1" / "reviews.jsonl", std::ios::binary | std::ios::app) << "{\"record\":\"x\",\"sta"; }
+    EXPECT_EQ(reopened.all("s-1").size(), 2u);
+    ASSERT_TRUE(reopened.append(first).ok());
+    EXPECT_EQ(reopened.all("s-1").size(), 3u);
+    fs::remove_all(dir);
+}
+
+// ---------------- 应用服务 ----------------
+
+namespace {
+
+struct ReviewFixture {
+    explicit ReviewFixture(const fs::path& dir) : records(dir), reviews(dir), quality(records, clock, archive) {
+        quality.useReviews(reviews, bus);
+        bus.subscribe("MisjudgmentConfirmed", [this](const EventPtr& e) {
+            const auto& m = static_cast<const quality::MisjudgmentConfirmed&>(*e);
+            confirmed.push_back(m.kind + " " + m.recordId + " " + m.imageSha256);
+        });
+    }
+    std::string add(const std::string& verdict) {
+        clock.now += 10;
+        return quality.record(inspection(verdict)).value();
+    }
+    persistence::JsonlInspectionRecordRepository records;
+    persistence::JsonlReviewRepository reviews;
+    FakeClock clock;
+    FakeArchive archive;
+    eventbus::InMemoryEventBus bus;
+    quality::QualityService quality;
+    std::vector<std::string> confirmed;
+};
+
+}  // namespace
+
+TEST(QualityReview, ReviewingARecordTellsFalseAlarmsFromMisses) {
+    const fs::path dir = freshDir("数据");
+    ReviewFixture f(dir);
+    const std::string ng = f.add("NG"), ok = f.add("OK"), error = f.add("ERROR");
+    EXPECT_FALSE(f.quality.getRecord("s-1", ng).value().review.has_value());  // 还没复判
+
+    // 判了 NG，人确认其实是合格的：误报
+    auto r = f.quality.review("s-1", ng, {false, "小李", "是反光"});
+    ASSERT_TRUE(r.ok()) << r.error().message;
+    ASSERT_TRUE(r.value().review.has_value());
+    EXPECT_EQ(r.value().review->kind, "false_alarm");
+    EXPECT_FALSE(r.value().review->truthNg);
+    EXPECT_EQ(r.value().review->reviewer, "小李");
+    EXPECT_EQ(r.value().review->note, "是反光");
+    EXPECT_EQ(r.value().review->time.size(), 19u);
+    EXPECT_EQ(r.value().verdict, "NG");  // 检测记录本身没有变（Q1）
+    // 判了 OK，其实不合格：漏检
+    EXPECT_EQ(f.quality.review("s-1", ok, {true, "", ""}).value().review->kind, "miss");
+    // 系统当时出错：人补上真实情况，不算误判
+    EXPECT_EQ(f.quality.review("s-1", error, {true, "", ""}).value().review->kind, "was_error");
+
+    // 误判各发一个事件，带着当时的图像（判 NG 的留了图像，判 OK 的没留）
+    ASSERT_EQ(f.confirmed.size(), 2u);
+    EXPECT_EQ(f.confirmed[0], "false_alarm " + ng + " sha-1");
+    EXPECT_EQ(f.confirmed[1], "miss " + ok + " ");
+
+    const auto s = f.quality.summary("s-1");
+    EXPECT_EQ(s.total, 3);
+    EXPECT_EQ(s.ng, 1);  // 系统的统计不因为复判而改
+    EXPECT_EQ(s.reviewed, 3);
+    EXPECT_EQ(s.falseAlarms, 1);
+    EXPECT_EQ(s.misses, 1);
+    EXPECT_EQ(s.reviewedErrors, 1);
+    EXPECT_EQ(s.reviewedCorrect, 0);
+
+    // R1：记录必须存在；别的工位的记录不行
+    EXPECT_EQ(f.quality.review("s-1", "1795521600000-999999", {false, "", ""}).error().code, "quality.record_not_found");
+    EXPECT_EQ(f.quality.review("s-2", ng, {false, "", ""}).error().code, "quality.record_not_found");
+    EXPECT_EQ(f.quality.summary("s-1").reviewed, 3);
+    fs::remove_all(dir);
+}
+
+TEST(QualityReview, R3_ChangingYourMindKeepsHistoryAndTheLatestWins) {
+    const fs::path dir = freshDir("数据");
+    ReviewFixture f(dir);
+    const std::string ng = f.add("NG");
+    ASSERT_TRUE(f.quality.review("s-1", ng, {false, "", "看着像反光"}).ok());  // 误报
+    f.clock.now += 1000;
+    const auto again = f.quality.review("s-1", ng, {true, "", "拿到零件看了：真有划痕"});
+    ASSERT_TRUE(again.ok());
+    EXPECT_EQ(again.value().review->kind, "correct");
+    EXPECT_EQ(again.value().review->note, "拿到零件看了：真有划痕");
+    auto s = f.quality.summary("s-1");
+    EXPECT_EQ(s.reviewed, 1);
+    EXPECT_EQ(s.falseAlarms, 0);
+    EXPECT_EQ(s.reviewedCorrect, 1);
+    EXPECT_EQ(f.reviews.all("s-1").size(), 2u);  // 两次都留着
+    EXPECT_EQ(f.confirmed.size(), 1u);           // 第二次不是误判，不再发事件
+
+    // 程序重启之后，结论还是最近的那一次
+    ReviewFixture restarted(dir);
+    EXPECT_EQ(restarted.quality.getRecord("s-1", ng).value().review->kind, "correct");
+    s = restarted.quality.summary("s-1");
+    EXPECT_EQ(s.reviewed, 1);
+    EXPECT_EQ(s.reviewedCorrect, 1);
+    // 重启后接着复判，不会把磁盘上已有的再算一遍
+    ASSERT_TRUE(restarted.quality.review("s-1", ng, {false, "", ""}).ok());
+    s = restarted.quality.summary("s-1");
+    EXPECT_EQ(s.reviewed, 1);
+    EXPECT_EQ(s.falseAlarms, 1);
+    EXPECT_EQ(s.reviewedCorrect, 0);
+    fs::remove_all(dir);
+}
+
+TEST(QualityReview, FilterByReviewStateAcrossPages) {
+    const fs::path dir = freshDir("数据");
+    ReviewFixture f(dir);
+    std::vector<std::string> ids;
+    for (int i = 0; i < 40; ++i) ids.push_back(f.add(i % 2 == 0 ? "NG" : "OK"));
+    // 最早的 3 条和最新的 1 条：误判；另外复判对了 2 条
+    for (const std::size_t i : {std::size_t{0}, std::size_t{1}, std::size_t{2}, std::size_t{39}}) {
+        ASSERT_TRUE(f.quality.review("s-1", ids[i], {i % 2 != 0, "", ""}).ok());  // NG 的说合格、OK 的说不合格
+    }
+    ASSERT_TRUE(f.quality.review("s-1", ids[10], {true, "", ""}).ok());   // NG、确实不合格
+    ASSERT_TRUE(f.quality.review("s-1", ids[11], {false, "", ""}).ok());  // OK、确实合格
+
+    quality::RecordQuery q;
+    q.review = "misjudged";
+    q.limit = 3;  // 一页 3 条：误判的散在最新和最早的两头，中间隔着三十多条——要翻好几页才凑得齐
+    auto page = f.quality.query("s-1", q);
+    ASSERT_EQ(page.size(), 3u);
+    EXPECT_EQ(page[0].id, ids[39]);
+    EXPECT_EQ(page[1].id, ids[2]);
+    EXPECT_EQ(page[2].id, ids[1]);
+    q.beforeId = page.back().id;
+    page = f.quality.query("s-1", q);
+    ASSERT_EQ(page.size(), 1u);
+    EXPECT_EQ(page[0].id, ids[0]);
+
+    q = {};
+    q.review = "unreviewed";
+    q.limit = 500;
+    EXPECT_EQ(f.quality.query("s-1", q).size(), 34u);
+    q.verdict = "NG";  // 两个条件一起：还没复判的、判 NG 的
+    const auto ngUnreviewed = f.quality.query("s-1", q);
+    EXPECT_EQ(ngUnreviewed.size(), 17u);
+    for (const auto& r : ngUnreviewed) EXPECT_FALSE(r.review.has_value());
+    // 不按复判筛选时，每条记录上带着它的复判
+    q = {};
+    q.limit = 500;
+    int reviewed = 0;
+    for (const auto& r : f.quality.query("s-1", q)) reviewed += r.review ? 1 : 0;
+    EXPECT_EQ(reviewed, 6);
+    fs::remove_all(dir);
+}
+
+TEST(QualityReview, WithoutReviewStorageItSaysSo) {
+    const fs::path dir = freshDir("数据");
+    persistence::JsonlInspectionRecordRepository records(dir);
+    FakeClock clock;
+    FakeArchive archive;
+    quality::QualityService quality(records, clock, archive);
+    const std::string id = quality.record(inspection("NG")).value();
+    EXPECT_EQ(quality.review("s-1", id, {false, "", ""}).error().code, "quality.no_reviews");
+    EXPECT_EQ(quality.summary("s-1").reviewed, 0);
+    EXPECT_EQ(quality.query("s-1").size(), 1u);
+    fs::remove_all(dir);
+}
+
+// ---------------- 整条路：复判 → 导出成两个目录 → 建基准图集 ----------------
+
+TEST(ReviewEndToEnd, ReviewedImagesBecomeAGoldenSet) {
+    const fs::path data = freshDir("数据"), out = freshDir("导出");
+    platform::Platform p(data);
+    p.stations.allowUnacceptedReleases(true);
+    p.quality.setImagePolicy(quality::ImagePolicy::All);  // 判 OK 的也留图像：漏检才找得回来
+    auto& a = p.authoring;
+    const auto recipe = a.createRecipe("亮斑").value();
+    std::vector<std::string> n;
+    for (const char* op : {"vision.image_input", "vision.to_gray", "vision.threshold", "vision.blob", "vision.judge_count"}) {
+        n.push_back(a.addNode(recipe, op).value());
+    }
+    ASSERT_TRUE(a.connect(recipe, n[0] + ".image", n[1] + ".image").ok());
+    ASSERT_TRUE(a.connect(recipe, n[1] + ".image", n[2] + ".image").ok());
+    ASSERT_TRUE(a.connect(recipe, n[2] + ".region", n[3] + ".region").ok());
+    ASSERT_TRUE(a.connect(recipe, n[3] + ".blobs", n[4] + ".blobs").ok());
+    ASSERT_TRUE(a.setParam(recipe, n[2], "value", 200.0).ok());
+    const std::string release = p.releases.createRelease(a.publish(recipe).value()).value();
+    const std::string station = p.stations.createStation("一号").value();
+    ASSERT_TRUE(p.stations.deploy(station, release).ok());
+    ASSERT_TRUE(p.stations.waitForLoading(station).ok());
+    ASSERT_TRUE(p.stations.start(station).ok());
+    for (const int count : {0, 1, 2, 3}) ASSERT_TRUE(p.stations.inspect(station, spots(count)).ok());
+    ASSERT_TRUE(p.stations.stop(station).ok());
+
+    quality::RecordQuery all;
+    const auto records = p.quality.query(station, all);  // 从新到旧：3 个亮斑、2、1、0
+    ASSERT_EQ(records.size(), 4u);
+    for (const auto& r : records) EXPECT_FALSE(r.imageSha256.empty());
+    // 没复判过：什么都导不出来
+    auto exported = platform::exportReviewedImages(p, station, pathToUtf8(out), false);
+    ASSERT_TRUE(exported.ok());
+    EXPECT_EQ(exported.value().ok + exported.value().ng, 0);
+
+    ASSERT_TRUE(p.quality.review(station, records[0].id, {true, "", ""}).ok());   // NG，确实不合格
+    ASSERT_TRUE(p.quality.review(station, records[2].id, {false, "", ""}).ok());  // NG（1 个亮斑），其实可以放行：误报
+    ASSERT_TRUE(p.quality.review(station, records[3].id, {true, "", ""}).ok());   // OK，其实不合格：漏检
+
+    exported = platform::exportReviewedImages(p, station, pathToUtf8(out / pathFromUtf8("全部")), false);
+    ASSERT_TRUE(exported.ok()) << exported.error().message;
+    EXPECT_EQ(exported.value().ok, 1);
+    EXPECT_EQ(exported.value().ng, 2);
+    EXPECT_TRUE(fs::exists(out / pathFromUtf8("全部") / "ok" / (records[2].id + ".png")));
+    EXPECT_TRUE(fs::exists(out / pathFromUtf8("全部") / "ng" / (records[3].id + ".png")));
+    // 只要误判的
+    exported = platform::exportReviewedImages(p, station, pathToUtf8(out / "misjudged"), true);
+    ASSERT_TRUE(exported.ok());
+    EXPECT_EQ(exported.value().ok, 1);
+    EXPECT_EQ(exported.value().ng, 1);
+    EXPECT_EQ(platform::exportReviewedImages(p, "nobody", pathToUtf8(out), false).error().code, "station.not_found");
+
+    // 导出的两个目录就是建基准图集要的样子。拿它验收当前的方案：正好暴露出那一次误报和那一次漏检
+    const auto golden = platform::createGoldenSetFromFolders(p, "复判出来的", pathToUtf8(out / pathFromUtf8("全部") / "ok"),
+                                                             pathToUtf8(out / pathFromUtf8("全部") / "ng"), {});
+    ASSERT_TRUE(golden.ok()) << golden.error().message;
+    const auto acceptance = p.releases.checkAcceptance(release, golden.value());
+    ASSERT_TRUE(acceptance.ok()) << acceptance.error().message;
+    EXPECT_FALSE(acceptance.value().passed);
+    EXPECT_EQ(acceptance.value().falseAlarms, 1);
+    EXPECT_EQ(acceptance.value().misses, 1);
+    fs::remove_all(data);
+    fs::remove_all(out);
+}
+
+// 默认只留不合格的图像：复判确认的漏检没有图像可导。导出时要说出来，不能悄悄少一幅
+TEST(ReviewEndToEnd, AMissWithoutAKeptImageIsCountedNotSilentlyDropped) {
+    const fs::path data = freshDir("数据"), out = freshDir("导出");
+    platform::Platform p(data);
+    p.stations.allowUnacceptedReleases(true);
+    auto& a = p.authoring;
+    const auto recipe = a.createRecipe("亮斑").value();
+    std::vector<std::string> n;
+    for (const char* op : {"vision.image_input", "vision.to_gray", "vision.threshold", "vision.blob", "vision.judge_count"}) {
+        n.push_back(a.addNode(recipe, op).value());
+    }
+    ASSERT_TRUE(a.connect(recipe, n[0] + ".image", n[1] + ".image").ok());
+    ASSERT_TRUE(a.connect(recipe, n[1] + ".image", n[2] + ".image").ok());
+    ASSERT_TRUE(a.connect(recipe, n[2] + ".region", n[3] + ".region").ok());
+    ASSERT_TRUE(a.connect(recipe, n[3] + ".blobs", n[4] + ".blobs").ok());
+    ASSERT_TRUE(a.setParam(recipe, n[2], "value", 200.0).ok());
+    const std::string release = p.releases.createRelease(a.publish(recipe).value()).value();
+    const std::string station = p.stations.createStation("一号").value();
+    ASSERT_TRUE(p.stations.deploy(station, release).ok());
+    ASSERT_TRUE(p.stations.waitForLoading(station).ok());
+    ASSERT_TRUE(p.stations.start(station).ok());
+    ASSERT_TRUE(p.stations.inspect(station, spots(0)).ok());  // 判 OK：默认不留图像
+    ASSERT_TRUE(p.stations.inspect(station, spots(2)).ok());  // 判 NG：留
+    ASSERT_TRUE(p.stations.stop(station).ok());
+    const auto records = p.quality.query(station);
+    ASSERT_TRUE(p.quality.review(station, records[1].id, {true, "", "下道工序发现的"}).ok());  // 漏检
+    ASSERT_TRUE(p.quality.review(station, records[0].id, {true, "", ""}).ok());               // 判对了
+
+    const auto exported = platform::exportReviewedImages(p, station, pathToUtf8(out), false);
+    ASSERT_TRUE(exported.ok());
+    EXPECT_EQ(exported.value().ng, 1);
+    EXPECT_EQ(exported.value().ok, 0);
+    EXPECT_EQ(exported.value().withoutImage, 1);  // 那一次漏检：有复判，没有图像
+    fs::remove_all(data);
+    fs::remove_all(out);
+}

@@ -341,6 +341,7 @@ try {
   await page.waitForFunction(() => document.querySelector("[data-station-state]")?.textContent === "已停止");
   check(true, "停止");
 
+  check((await page.inputValue("[data-station-folder]")) === lineImages, "从别的页面切回来，图像目录还显示在输入框里");
   console.log("历史记录：保存在磁盘上的检测记录");
   await page.click("[data-view-history]");
   await page.waitForFunction(() => document.querySelectorAll("[data-history-record]").length === 3);
@@ -358,6 +359,42 @@ try {
   await page.locator("[data-history-record]").nth(1).click();
   await page.waitForSelector("[data-history-no-image]");
   check(true, "合格的那一条没有保留图像，页面说明了原因");
+
+  console.log("复判：人确认系统判得对不对");
+  // 最早的那一条（判 NG）：人说其实是合格的 → 误报。复判完自动跳到下一条
+  await page.locator("[data-history-record]").nth(1).click();
+  await page.fill("[data-review-note]", "是反光");
+  await page.click("[data-review-ok]");
+  await page.waitForSelector('[data-review-kind]');
+  // 第一条是 3.png（判 NG），第二条 2.png（判 OK），第三条 1.png（判 NG）。刚才复判的是第二条：判 OK、实际合格 → 判对了
+  check((await page.locator('[data-review-kind="correct"]').count()) === 1, "判 OK、人确认合格：标成“判对了”");
+  // 自动跳到了第三条（1.png，判 NG）：人说其实合格 → 误报
+  await page.waitForFunction(() => document.querySelector("[data-history-image]")?.complete);
+  await page.click("[data-review-ok]");
+  await page.waitForSelector('[data-review-kind="false_alarm"]');
+  // 汇总是复判之后另外取的，比列表晚一点到：等它更新
+  await page.waitForFunction(() => document.querySelector("[data-history-reviewed]")?.textContent.replace(/\s+/g, " ").includes("已复判 2 条：误报 1，漏检 0"));
+  check(true, "汇总：已复判 2 条，误报 1");
+  await shot("8-review");
+  // 第一条（3.png，判 NG）：确实不合格
+  await page.locator("[data-history-record]").nth(0).click();
+  await page.click("[data-review-ng]");
+  await page.waitForFunction(() => document.querySelectorAll("[data-review-kind]").length === 3);
+  await page.selectOption("[data-history-review-filter]", "misjudged");
+  await page.waitForFunction(() => document.querySelectorAll("[data-history-record]").length === 1);
+  check((await page.locator('[data-review-kind="false_alarm"]').count()) === 1, "只看确认判错了的：剩那一条误报");
+  await page.selectOption("[data-history-review-filter]", "unreviewed");
+  await page.waitForFunction(() => document.querySelectorAll("[data-history-record]").length === 0);
+  check(true, "还没复判的：没有了");
+  await page.selectOption("[data-history-review-filter]", "");
+  // 导出复判过的图像：留了图像的只有判 NG 的两条——一条实际合格（进 ok），一条实际不合格（进 ng）
+  const reviewedDir = join(work, "复判导出");
+  await page.fill("[data-review-export-dir]", reviewedDir);
+  await page.click("[data-review-export]");
+  await page.waitForSelector("[data-history-notice]");
+  const exportNotice = await page.textContent("[data-history-notice]");
+  check(exportNotice.includes("ok 1 幅，ng 1 幅") && exportNotice.includes("另有 1 条"), `导出了复判过的图像：${exportNotice.replace("点一下关闭", "").trim()}`);
+  check(readdirSync(join(reviewedDir, "ok")).length === 1 && readdirSync(join(reviewedDir, "ng")).length === 1, "磁盘上确实有 ok、ng 两个目录，各 1 幅");
 
   check(consoleErrors.length === 0, `浏览器控制台没有报错${consoleErrors.length ? "：" + consoleErrors.slice(0, 3).join(" | ") : ""}`);
 } finally {

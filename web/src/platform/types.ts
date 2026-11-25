@@ -217,6 +217,16 @@ export interface SavedRecord extends InspectionRecord {
   time: string; // 给人看的时间（UTC）
   recipeVersionId: string;
   imageId: string; // 当时的图像；没有保留时是空的（默认只保留不合格的和出错的）
+  review: Review | null; // 最近一次复判；还没复判过是 null
+}
+
+// 复判：人确认这一次检测实际是合格还是不合格
+export interface Review {
+  truth: "OK" | "NG";
+  kind: "correct" | "false_alarm" | "miss" | "was_error"; // 系统判对了 / 误报 / 漏检 / 系统当时出错
+  note: string;
+  reviewer: string;
+  time: string;
 }
 
 // 一个工位有记录以来的汇总
@@ -227,10 +237,17 @@ export interface QualitySummary {
   error: number;
   yield: number | null; // 良率：OK ÷ (OK + NG)。还没有可算的时候是 null
   defectsByCategory: Record<string, number>;
+  // 复判：复判过多少条，其中系统判对了的、误报、漏检、系统当时出错的各多少
+  reviewed: number;
+  reviewedCorrect: number;
+  falseAlarms: number;
+  misses: number;
+  reviewedErrors: number;
 }
 
 export interface RecordQuery {
   verdict?: "OK" | "NG" | "ERROR";
+  review?: "unreviewed" | "misjudged"; // 还没复判的 / 复判确认判错了的
   before?: string; // 翻页：只要比这个编号更早的
   limit?: number;
 }

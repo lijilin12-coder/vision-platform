@@ -232,18 +232,40 @@ export class FakePlatformClient implements PlatformClient {
   saved: SavedRecord[] = []; // 测试往这里放“保存下来的检测记录”，从旧到新
   async listRecords(stationId: string, query: RecordQuery = {}) {
     this.station(stationId);
+    const misjudged = (r: SavedRecord) => r.review?.kind === "false_alarm" || r.review?.kind === "miss";
     return [...this.saved]
       .reverse()
       .filter((r) => (!query.verdict || r.verdict === query.verdict) && (!query.before || r.id < query.before))
+      .filter((r) => (query.review === "unreviewed" ? !r.review : query.review === "misjudged" ? misjudged(r) : true))
       .slice(0, query.limit ?? 50);
   }
   async getSummary(stationId: string): Promise<QualitySummary> {
     this.station(stationId);
     const count = (v: string) => this.saved.filter((r) => r.verdict === v).length;
+    const kind = (k: string) => this.saved.filter((r) => r.review?.kind === k).length;
     const [ok, ng] = [count("OK"), count("NG")];
     const defectsByCategory: Record<string, number> = {};
     for (const r of this.saved) for (const d of r.result.defects) defectsByCategory[d.category] = (defectsByCategory[d.category] ?? 0) + 1;
-    return { total: this.saved.length, ok, ng, error: count("ERROR"), yield: ok + ng > 0 ? ok / (ok + ng) : null, defectsByCategory };
+    return { total: this.saved.length, ok, ng, error: count("ERROR"), yield: ok + ng > 0 ? ok / (ok + ng) : null, defectsByCategory,
+      reviewed: this.saved.filter((r) => r.review).length, reviewedCorrect: kind("correct"), falseAlarms: kind("false_alarm"),
+      misses: kind("miss"), reviewedErrors: kind("was_error") };
+  }
+  async reviewRecord(stationId: string, recordId: string, truth: "OK" | "NG", note = "") {
+    this.station(stationId);
+    const r = this.saved.find((x) => x.id === recordId);
+    if (!r) throw new PlatformError("找不到这条检测记录", "quality.record_not_found", 404);
+    const kind = r.verdict === "ERROR" ? "was_error" : r.verdict === truth ? "correct" : r.verdict === "NG" ? "false_alarm" : "miss";
+    r.review = { truth, kind, note, reviewer: "", time: "2026-11-25 08:00:00" };
+    return { ...r };
+  }
+  exportedReviews: string[] = [];
+  async exportReviewed(stationId: string, directory: string) {
+    this.station(stationId);
+    this.exportedReviews.push(directory);
+    const reviewed = this.saved.filter((r) => r.review);
+    const withImage = reviewed.filter((r) => r.imageId);
+    return { ok: withImage.filter((r) => r.review!.truth === "OK").length, ng: withImage.filter((r) => r.review!.truth === "NG").length,
+      withoutImage: reviewed.length - withImage.length };
   }
   stationFrameUrl(stationId: string, sequence: number) {
     return `/api/stations/${stationId}/frame?s=${sequence}`;
