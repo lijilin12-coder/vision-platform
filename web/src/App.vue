@@ -4,6 +4,7 @@ import FlowCanvas from "./components/FlowCanvas.vue";
 import OperatorPalette from "./components/OperatorPalette.vue";
 import ParamPanel from "./components/ParamPanel.vue";
 import PreviewPanel from "./components/PreviewPanel.vue";
+import ReleasesPage from "./components/ReleasesPage.vue";
 import StationsPage from "./components/StationsPage.vue";
 import { useEditor } from "./useEditor";
 
@@ -11,7 +12,7 @@ const editor = useEditor();
 const state = editor.state;
 const fileInput = ref<HTMLInputElement | null>(null);
 const newName = ref("");
-const page = ref<"editor" | "stations">("editor");
+const page = ref<"editor" | "releases" | "stations">("editor");
 
 onMounted(() => editor.init());
 
@@ -35,6 +36,7 @@ async function create() {
       <strong class="brand">视觉检测平台</strong>
       <nav class="tabs">
         <a :class="{ active: page === 'editor' }" data-tab="editor" @click="page = 'editor'">方案编辑</a>
+        <a :class="{ active: page === 'releases' }" data-tab="releases" @click="page = 'releases'">上线包</a>
         <a :class="{ active: page === 'stations' }" data-tab="stations" @click="page = 'stations'">工位</a>
       </nav>
       <template v-if="page === 'editor'">
@@ -66,6 +68,7 @@ async function create() {
       <aside class="right"><ParamPanel /></aside>
       <section class="bottom"><PreviewPanel /></section>
     </template>
+    <section v-else-if="page === 'releases'" class="whole"><ReleasesPage /></section>
     <section v-else class="whole"><StationsPage /></section>
   </div>
 </template>

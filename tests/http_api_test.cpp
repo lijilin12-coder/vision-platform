@@ -546,6 +546,77 @@ TEST_F(HttpApi, StationsRunContinuouslyAndHotSwapThroughTheApi) {
     EXPECT_EQ(get("/api/stations/nobody").status, 404);
 }
 
+// 验收检查：用两个目录做基准图集 → 给上线包验收 → 没通过的部署不了
+TEST_F(HttpApi, AcceptanceCheckThroughTheApi) {
+    const auto writeTo = [&](const fs::path& folder, const std::string& name, int spots, int width) {
+        fs::create_directories(folder);
+        const std::string content = png(spots, width);
+        std::ofstream(folder / name, std::ios::binary) << content;
+    };
+    const fs::path okDir = dir / pathFromUtf8("基准") / "ok", ngDir = dir / pathFromUtf8("基准") / "ng";
+    writeTo(okDir, "1.png", 0, 640);
+    writeTo(okDir, "2.png", 0, 600);  // 尺寸不同：内容不同，不是同一个样本
+    writeTo(ngDir, "1.png", 1, 640);
+    writeTo(ngDir, "2.png", 3, 640);
+
+    EXPECT_TRUE(get("/api/golden-sets").body["goldenSets"].empty());
+    const auto created = post("/api/golden-sets", {{"name", "亮斑基准"}, {"okDirectory", pathToUtf8(okDir)}, {"ngDirectory", pathToUtf8(ngDir)}});
+    ASSERT_EQ(created.status, 201) << created.raw;
+    EXPECT_EQ(created.body["cases"], 4);
+    EXPECT_EQ(created.body["truthNg"], 2);
+    EXPECT_EQ(created.body["criteria"]["maxMisses"], 0);
+    const std::string set = created.body["id"];
+    EXPECT_EQ(get("/api/golden-sets").body["goldenSets"].size(), 1u);
+    EXPECT_EQ(post("/api/golden-sets", {{"name", "x"}, {"okDirectory", pathToUtf8(dir / "nope")}}).status, 404);
+    EXPECT_EQ(post("/api/golden-sets", {{"okDirectory", pathToUtf8(okDir)}}).status, 400);  // 没有名称
+    EXPECT_EQ(post("/api/golden-sets", {{"name", "x"}, {"okDirectory", 5}}).status, 400);
+
+    const auto releaseWith = [&](int maxCount) {
+        const std::string recipe = brightSpotRecipe("亮斑 ≤ " + std::to_string(maxCount));
+        EXPECT_EQ(put("/api/recipes/" + recipe + "/nodes/n5/params/maxCount", {{"value", maxCount}}).status, 200);
+        const auto published = post("/api/recipes/" + recipe + "/publish");
+        return post("/api/releases", {{"recipeVersionId", published.body.value("versionId", "")}}).body.value("releaseId", std::string());
+    };
+    const std::string strict = releaseWith(0), lenient = releaseWith(2);
+    const auto find = [&](const std::string& releaseId) {
+        const auto listed = get("/api/releases");
+        for (const auto& r : listed.body["releases"]) {
+            if (r["id"] == releaseId) return r;
+        }
+        return json();
+    };
+    EXPECT_EQ(find(strict)["acceptanceState"], "none");
+    EXPECT_TRUE(find(strict)["acceptance"].is_null());
+
+    auto checked = post("/api/releases/" + strict + "/acceptance", {{"goldenSetId", set}});
+    ASSERT_EQ(checked.status, 200) << checked.raw;
+    EXPECT_TRUE(checked.body["passed"].get<bool>());
+    EXPECT_EQ(checked.body["total"], 4);
+    EXPECT_TRUE(checked.body["wrongCases"].empty());
+    EXPECT_EQ(find(strict)["acceptanceState"], "passed");
+    EXPECT_EQ(find(strict)["acceptance"]["goldenSetName"], "亮斑基准");
+
+    checked = post("/api/releases/" + lenient + "/acceptance", {{"goldenSetId", set}});
+    ASSERT_EQ(checked.status, 200) << checked.raw;  // 检查做完了，结论是不行：不是出错
+    EXPECT_FALSE(checked.body["passed"].get<bool>());
+    EXPECT_EQ(checked.body["misses"], 1);
+    ASSERT_EQ(checked.body["wrongCases"].size(), 1u);
+    EXPECT_EQ(checked.body["wrongCases"][0]["caseId"], "ng/1.png");
+    EXPECT_EQ(checked.body["wrongCases"][0]["kind"], "miss");
+    EXPECT_EQ(find(lenient)["acceptanceState"], "failed");
+
+    EXPECT_EQ(post("/api/releases/" + strict + "/acceptance", {{"goldenSetId", "nobody"}}).status, 404);
+    EXPECT_EQ(post("/api/releases/nobody/acceptance", {{"goldenSetId", set}}).status, 404);
+    EXPECT_EQ(post("/api/releases/" + strict + "/acceptance").status, 400);
+
+    // 没通过的部署不了；通过的可以
+    const std::string station = post("/api/stations", {{"name", "一号工位"}}).body["id"];
+    const auto refused = post("/api/stations/" + station + "/deploy", {{"releaseId", lenient}});
+    EXPECT_EQ(refused.status, 422);
+    EXPECT_EQ(refused.body["code"], "station.release_not_accepted");
+    EXPECT_EQ(post("/api/stations/" + station + "/deploy", {{"releaseId", strict}}).status, 200);
+}
+
 // 通过标准 3（服务一侧）：改一个参数 → 重新运行 → 取回一幅中间结果，一共要多久。
 // 这里只打印数字、设一个很宽的上限（测试机的快慢差别很大）；正式的数字记在结论报告里。
 TEST_F(HttpApi, ParameterChangeToPreviewRoundTripIsFast) {

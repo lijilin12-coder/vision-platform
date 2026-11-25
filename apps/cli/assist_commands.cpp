@@ -367,8 +367,36 @@ int runGoldenCommand(App& app, const std::vector<std::string>& args) {
         }
         return cmdGoldenSample(app, args[2], lighting, scenario, workflow);
     }
+    if (sub == "create" && args.size() >= 3) {
+        // golden create <名称> [--ok <目录>] [--ng <目录>] [--max-misses N] [--max-false-alarm-rate R] [--max-errors N]
+        std::string ok, ng;
+        release::CriteriaView criteria;
+        try {
+            for (std::size_t i = 3; i + 1 < args.size(); i += 2) {
+                if (args[i] == "--ok") ok = args[i + 1];
+                else if (args[i] == "--ng") ng = args[i + 1];
+                else if (args[i] == "--max-misses") criteria.maxMisses = std::stoi(args[i + 1]);
+                else if (args[i] == "--max-false-alarm-rate") criteria.maxFalseAlarmRate = std::stod(args[i + 1]);
+                else if (args[i] == "--max-errors") criteria.maxErrors = std::stoi(args[i + 1]);
+                else {
+                    std::cerr << "不认识的选项 " << args[i] << "\n";
+                    return 1;
+                }
+            }
+        } catch (const std::exception&) {
+            std::cerr << "选项的值必须是数字\n";
+            return 1;
+        }
+        auto id = platform::createGoldenSetFromFolders(app, args[2], ok, ng, criteria);
+        if (!id) return fail(id.error());
+        std::cout << id.value() << "\n";
+        return 0;
+    }
     if (sub == "list") {
-        for (const auto& id : app.goldenSets.listGoldenSets()) std::cout << id << "\n";
+        for (const auto& id : app.goldenSets.listGoldenSets()) {
+            const auto set = app.goldenSets.getGoldenSet(id);
+            std::cout << id << "  " << (set ? set.value().name + "（" + std::to_string(set.value().cases.size()) + " 个用例）" : "?") << "\n";
+        }
         return 0;
     }
     if (sub == "show" && args.size() >= 3) return cmdGoldenShow(app, args[2]);

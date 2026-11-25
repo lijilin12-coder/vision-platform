@@ -1,6 +1,6 @@
 import type { PlatformClient } from "./PlatformClient";
 import { PlatformError } from "./types";
-import type { DebugRun, ModelInfo, OperatorMeta, ParamValue, Recipe, RecipeSummary, QualitySummary, RecordQuery, Release, Roi, SavedRecord, Station, UploadedImage } from "./types";
+import type { Acceptance, DebugRun, GoldenSet, NewGoldenSet, ModelInfo, OperatorMeta, ParamValue, Recipe, RecipeSummary, QualitySummary, RecordQuery, Release, Roi, SavedRecord, Station, UploadedImage } from "./types";
 
 // PlatformClient 的 HTTP 实现：对着 vision-runtime 的接口（docs/dev/http-api.md）。
 // 整个界面里，只有这个文件发 HTTP 请求。
@@ -92,6 +92,15 @@ export class HttpPlatformClient implements PlatformClient {
   }
   async createRelease(recipeVersionId: string) {
     return (await this.request<{ releaseId: string }>("POST", "/api/releases", { recipeVersionId })).releaseId;
+  }
+  async listGoldenSets() {
+    return (await this.request<{ goldenSets: GoldenSet[] }>("GET", "/api/golden-sets")).goldenSets;
+  }
+  createGoldenSet(definition: NewGoldenSet) {
+    return this.request<GoldenSet>("POST", "/api/golden-sets", definition);
+  }
+  checkAcceptance(releaseId: string, goldenSetId: string) {
+    return this.request<Acceptance>("POST", `/api/releases/${releaseId}/acceptance`, { goldenSetId });
   }
   async listStations() {
     return (await this.request<{ stations: Station[] }>("GET", "/api/stations")).stations;

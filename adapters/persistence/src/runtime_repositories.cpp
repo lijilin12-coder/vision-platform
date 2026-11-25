@@ -50,18 +50,57 @@ Status JsonReleaseRepository::save(const release::Release& r) {
               {"recipeVersion", r.recipeVersionId()},
               {"lockedModels", r.lockedModels()},
               {"status", r.status() == release::ReleaseStatus::Withdrawn ? "withdrawn" : "active"}};
-    return writeFileAtomically(dir_ / (r.id() + ".json"), j.dump(2));
+    if (const auto& a = r.acceptance()) {
+        json wrong = json::array();
+        for (const auto& w : a->wrongCases) {
+            wrong.push_back({{"case", w.caseId}, {"image", w.imageRef}, {"truth", w.truthNg ? "NG" : "OK"}, {"observed", w.observed}});
+        }
+        j["acceptance"] = {{"goldenSet", a->goldenSetId}, {"goldenSetName", a->goldenSetName}, {"checkedAtMs", a->checkedAtMs},
+                           {"passed", a->passed},
+                           {"criteria", {{"maxMisses", a->maxMisses}, {"maxFalseAlarmRate", a->maxFalseAlarmRate}, {"maxErrors", a->maxErrors}}},
+                           {"total", a->total}, {"truthOk", a->truthOk}, {"truthNg", a->truthNg}, {"misses", a->misses},
+                           {"falseAlarms", a->falseAlarms}, {"errors", a->errors}, {"meanMs", a->meanMs}, {"maxMs", a->maxMs},
+                           {"wrongCases", std::move(wrong)}};
+    }
+    return writeFileAtomically(dir_ / (r.id() + ".json"), j.dump(2, ' ', false, json::error_handler_t::replace));
 }
 
 std::optional<release::Release> JsonReleaseRepository::find(const release::ReleaseId& id) try {
     if (!safeFileName(id)) return std::nullopt;
     auto j = readJson(dir_ / (id + ".json"));
     if (!j) return std::nullopt;
+    // 验收记录：以前存下的上线包文件里没有这一项——那就是“还没做过”
+    std::optional<release::AcceptanceRecord> acceptance;
+    if (j->contains("acceptance")) {
+        const auto& a = j->at("acceptance");
+        release::AcceptanceRecord r;
+        r.goldenSetId = a.at("goldenSet").get<std::string>();
+        r.goldenSetName = a.at("goldenSetName").get<std::string>();
+        r.checkedAtMs = a.at("checkedAtMs").get<std::int64_t>();
+        r.passed = a.at("passed").get<bool>();
+        r.maxMisses = a.at("criteria").at("maxMisses").get<int>();
+        r.maxFalseAlarmRate = a.at("criteria").at("maxFalseAlarmRate").get<double>();
+        r.maxErrors = a.at("criteria").at("maxErrors").get<int>();
+        r.total = a.at("total").get<int>();
+        r.truthOk = a.at("truthOk").get<int>();
+        r.truthNg = a.at("truthNg").get<int>();
+        r.misses = a.at("misses").get<int>();
+        r.falseAlarms = a.at("falseAlarms").get<int>();
+        r.errors = a.at("errors").get<int>();
+        r.meanMs = a.at("meanMs").get<double>();
+        r.maxMs = a.at("maxMs").get<double>();
+        for (const auto& w : a.at("wrongCases")) {
+            r.wrongCases.push_back({w.at("case").get<std::string>(), w.at("image").get<std::string>(),
+                                    w.at("truth").get<std::string>() == "NG", w.at("observed").get<std::string>()});
+        }
+        acceptance = std::move(r);
+    }
     return release::Release::restore(
         j->at("id").get<std::string>(), j->at("recipeVersion").get<std::string>(),
         j->at("lockedModels").get<std::map<std::string, std::string>>(),
         j->at("status").get<std::string>() == "withdrawn" ? release::ReleaseStatus::Withdrawn
-                                                          : release::ReleaseStatus::Active);
+                                                          : release::ReleaseStatus::Active,
+        std::move(acceptance));
 } catch (const std::exception&) {
     return std::nullopt;  // POC：文件损坏视为不存在
 }

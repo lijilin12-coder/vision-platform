@@ -13,7 +13,7 @@
 // 环境变量 SCREENSHOT=<目录> 时，把几个关键时刻的画面存成图片。
 
 import { execFileSync, spawn } from "node:child_process";
-import { copyFileSync, mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { copyFileSync, mkdtempSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -59,7 +59,13 @@ try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: shots ? 2 : 1 });
   const consoleErrors = [];
   // 后端拒绝一个操作（422）时浏览器会自动在控制台记一笔，那是预期之中的；别的报错才算问题
-  page.on("console", (m) => m.type() === "error" && !/status of 422/.test(m.text()) && consoleErrors.push(m.text()));
+  // 404 只在明确说了“接下来这一步会找不到”的时候才放过：平时一个 404 多半是真的少了东西
+  let expected404 = 0;
+  page.on("console", (m) => {
+    if (m.type() !== "error" || /status of 422/.test(m.text())) return;
+    if (/status of 404/.test(m.text()) && expected404 > 0) return void expected404--;
+    consoleErrors.push(m.text());
+  });
   page.on("pageerror", (e) => consoleErrors.push(String(e)));
   const shot = async (name) => {
     if (!shots) return;
@@ -216,6 +222,41 @@ try {
   await page.click("[data-make-release]");
   await page.waitForFunction(() => !document.querySelector("[data-make-release]"));
 
+  console.log("上线包页面：建基准图集 → 验收 → 没通过的部署不了");
+  const golden = join(work, "基准");
+  mkdirSync(join(golden, "ok"), { recursive: true });
+  mkdirSync(join(golden, "ng"), { recursive: true });
+  for (const f of readdirSync(images)) copyFileSync(join(images, f), join(golden, f.startsWith("ok") ? "ok" : "ng", f));
+  await page.click('[data-tab="releases"]');
+  await page.waitForFunction(() => document.querySelectorAll("[data-release]").length === 2);
+  check((await page.locator('[data-release-state="none"]').count()) === 2, "两个上线包都还没有验收");
+  await page.fill("[data-golden-name]", "亮斑基准");
+  await page.fill("[data-golden-ok]", join(golden, "ok"));
+  await page.fill("[data-golden-ng]", join(work, "没有这个目录"));
+  expected404 = 1;
+  await page.click("[data-golden-new]");
+  await page.waitForSelector("[data-release-error]");
+  check((await page.textContent("[data-release-error]")).includes("找不到目录"), "目录写错了：显示了后端的原因");
+  await page.fill("[data-golden-ng]", join(golden, "ng"));
+  await page.click("[data-golden-new]");
+  await page.waitForSelector('[data-golden="亮斑基准"]');
+  check((await page.textContent('[data-golden="亮斑基准"]')).includes("4 个用例"), "基准图集建好了：4 个用例");
+  // 按版本号点上线包：严格的是 v2，宽松的是 v3
+  const releaseRow = (version) => page.locator("[data-release]").filter({ hasText: ` ${version}（` });
+  await releaseRow("v2").click();
+  check((await page.locator("[data-accept-none]").count()) === 1, "还没验收的上线包：页面说明了");
+  await page.click("[data-accept]");
+  await page.waitForFunction(() => document.querySelector("[data-accept-verdict]")?.textContent.startsWith("通过"));
+  check(true, "严格的方案：验收通过");
+  await releaseRow("v3").click();
+  await page.click("[data-accept]");
+  await page.waitForFunction(() => document.querySelector("[data-accept-verdict]")?.textContent.startsWith("没有通过"));
+  check((await page.textContent("[data-accept-verdict]")).includes("漏检 2 张"), "宽松的方案：没有通过，原因是漏检 2 张");
+  check((await page.locator("[data-wrong-case]").count()) === 2, "判错的 2 个用例列出来了");
+  check((await page.locator('[data-release-state="passed"]').count()) === 1 && (await page.locator('[data-release-state="failed"]').count()) === 1,
+        "左边的列表里：一个通过、一个没通过");
+  await shot("7-acceptance");
+
   await page.click('[data-tab="stations"]');
   await page.fill("[data-station-name]", "一号工位");
   await page.click("[data-station-new]");
@@ -247,6 +288,29 @@ try {
   check((await page.textContent("[data-station-state]")) === "运行中", "工位在运行，第一幅图像判 NG");
   await page.waitForFunction(() => document.querySelector("[data-station-frame]")?.complete && document.querySelector("[data-station-frame]").naturalWidth === 640);
   check((await page.locator(".overlay .defect").count()) === 3, "最近一帧显示出来了，上面有 3 个缺陷框");
+  // 宽松的那个验收没有通过：部署不了
+  await page.selectOption("[data-station-release]", { label: await optionFor("v3") });
+  check((await optionFor("v3")).includes("验收没有通过"), "下拉框里就看得出它没通过验收");
+  await page.click("[data-station-deploy]");
+  await page.waitForSelector("[data-station-error]");
+  check((await page.textContent("[data-station-error]")).includes("验收检查没有通过"), "没通过验收的上线包部署不了");
+  await page.click("[data-station-error]");
+  // 假设人看过之后认为标准定严了：新建一个允许漏检 2 张的基准图集，重新验收 → 通过
+  await page.click('[data-tab="releases"]');
+  await page.fill("[data-golden-name]", "亮斑基准（宽）");
+  await page.fill("[data-golden-ok]", join(golden, "ok"));
+  await page.fill("[data-golden-ng]", join(golden, "ng"));
+  await page.fill("[data-golden-misses]", "2");
+  await page.click("[data-golden-new]");
+  await page.waitForSelector('[data-golden="亮斑基准（宽）"]');
+  await page.locator("[data-release]").filter({ hasText: " v3（" }).click();
+  await page.click("[data-accept]");
+  await page.waitForFunction(() => document.querySelector("[data-accept-verdict]")?.textContent.startsWith("通过"));
+  check(true, "换一个标准重新验收：通过了（以最近的一次为准）");
+  await page.click('[data-tab="stations"]');
+  await page.waitForSelector("[data-station-state]");
+  // 回到工位页面时它会重新取一遍上线包：等下拉框里的状态更新了再选（不然选的是一个马上就要变的名字）
+  await page.waitForFunction(() => [...document.querySelectorAll("[data-station-release] option")].every((o) => !o.textContent.includes("没有通过")));
   // 运行中部署宽松的那个；放进一幅新图像 → 检测开始前切换 → 同样的图像这次是 OK
   await page.selectOption("[data-station-release]", { label: await optionFor("v3") });
   await page.click("[data-station-deploy]");

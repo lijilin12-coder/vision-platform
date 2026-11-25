@@ -296,7 +296,7 @@ export function createEditor(client: PlatformClient, options: { autoRunDelayMs?:
       await attempt(async () => {
         const releaseId = await client.createRelease(versionId);
         state.publishedVersionId = null;
-        state.notice = `已做成上线包 ${releaseId.slice(0, 8)}。到“工位”页面里部署它`;
+        state.notice = `已做成上线包 ${releaseId.slice(0, 8)}。到“上线包”页面里验收，再到“工位”页面里部署`;
       });
     },
 

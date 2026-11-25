@@ -65,6 +65,7 @@ constexpr const char* kUsage = R"(用法：vision-cli [--data <目录>] <命令>
   release create <方案版本ID>                   用方案版本创建上线包，输出上线包 ID
   release list
   release show <上线包ID>
+  release accept <上线包ID> <基准图集ID>         验收检查：在基准图集上跑一遍，对照真实判定。没通过的上线包不能部署
   release withdraw <上线包ID>                   撤回：不允许再部署
 方案包：把方案版本连同它用到的模板、模型打成一个文件，带到另一台机器上
   package export <方案版本ID> <文件.vpkg>       导出。方案用到的模型必须已经发布
@@ -96,6 +97,9 @@ constexpr const char* kUsage = R"(用法：vision-cli [--data <目录>] <命令>
                                                width：测量零件的宽度（配 width-measure 工作流）；
                                                locate：零件位置和角度随机，先定位再测量（配 locate-width-measure 工作流，任务书里带匹配模板）；
                                                --workflow：任务书里改用另一个工作流，例如 bright-spot-normalized
+  golden create <名称> [--ok <目录>] [--ng <目录>] [--max-misses N] [--max-false-alarm-rate R] [--max-errors N]
+                                               用两个目录做一个基准图集：--ok 目录里的图像真实判定是合格，--ng 里的是不合格。
+                                               后面三个是验收标准（默认都是 0：不许漏检、不许误报、不许出错；误报率写小数，0.02 就是 2%）
   golden list | golden show <基准图集ID>
   assist run <任务书.json> (--advisor search | --script <顾问脚本.json> | --llm <大模型配置.json>)
                                                [--no-statistics] [--report <报告.md>]

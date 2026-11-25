@@ -69,12 +69,12 @@ describe("工位页面", () => {
   it("上线包显示成“方案名 版本（编号的开头）”：同一个方案的几个版本分得清", async () => {
     const { client, stations } = await setup();
     client.releases = [
-      { id: "aaaaaaaa-1111", recipeVersionId: "r1@v1", recipeName: "亮斑检测", withdrawn: false },
-      { id: "bbbbbbbb-2222", recipeVersionId: "r1@v2", recipeName: "亮斑检测", withdrawn: false },
+      { id: "aaaaaaaa-1111", recipeVersionId: "r1@v1", recipeName: "亮斑检测", withdrawn: false, acceptanceState: "passed", acceptance: null },
+      { id: "bbbbbbbb-2222", recipeVersionId: "r1@v2", recipeName: "亮斑检测", withdrawn: false, acceptanceState: "none", acceptance: null },
     ];
     await stations.refresh();
     expect(stations.releaseName("aaaaaaaa-1111")).toBe("亮斑检测 v1（aaaaaaaa）");
-    expect(stations.releaseName("bbbbbbbb-2222")).toBe("亮斑检测 v2（bbbbbbbb）");
+    expect(stations.releaseName("bbbbbbbb-2222")).toBe("亮斑检测 v2（bbbbbbbb） · 未验收"); // 没验收的标出来
     expect(stations.releaseName("")).toBe("（无）");
     expect(stations.releaseName("cccccccc-3333")).toBe("cccccccc"); // 列表里没有的：只显示编号
   });
