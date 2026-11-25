@@ -2,6 +2,7 @@
 
 // BC-4 上线管理的公开接口（POC-9 需要的最小部分）。
 
+#include <cstdint>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -24,6 +25,7 @@ struct ReleaseManifest {
     std::string recipeVersionId;
     std::map<std::string, std::string> lockedModels;  // 模型槽位 → 模型版本 ID
     bool withdrawn = false;
+    std::string acceptance = "none";  // 验收检查：none（还没做过）/ passed / failed
 };
 
 // 上线包的全部内容：清单 + 方案版本文档。加载上线包时用。
@@ -49,6 +51,42 @@ public:
     virtual Status canLoad(const authoring::RecipeVersionDocument& recipe) = 0;
 };
 
+// 端口：用一个方案版本检测一幅图像（用途是“检查”：不算产线检测，不留检测记录）。
+// 图像读不出来返回失败——那是基准图集坏了，验收检查做不下去；
+// 检测本身出错不算失败，而是这个用例的判定为 ERROR。
+struct CaseRun {
+    std::string verdict;  // OK / NG / ERROR
+    double durationMs = 0;
+};
+class CaseRunner {
+public:
+    virtual ~CaseRunner() = default;
+    virtual Result<CaseRun> run(const authoring::RecipeVersionDocument& recipe, const std::string& imageRef) = 0;
+};
+
+struct WrongCaseView {
+    std::string caseId, imageRef;
+    bool truthNg = false;
+    std::string observed;
+    std::string kind;  // 漏检 miss / 误报 false_alarm / 出错 error
+};
+
+// 验收记录
+struct AcceptanceView {
+    std::string releaseId;
+    std::string goldenSetId, goldenSetName;
+    std::int64_t checkedAtMs = 0;
+    bool passed = false;
+    int maxMisses = 0;
+    double maxFalseAlarmRate = 0;
+    int maxErrors = 0;
+    int total = 0, truthOk = 0, truthNg = 0;
+    int misses = 0, falseAlarms = 0, errors = 0;
+    double falseAlarmRate = 0;
+    double meanMs = 0, maxMs = 0;
+    std::vector<WrongCaseView> wrongCases;
+};
+
 // 应用服务。可以从多个线程调用（工位在后台线程里加载上线包）。
 class ReleaseService {
 public:
@@ -60,6 +98,18 @@ public:
     void useLoadCheck(LoadCheck& check) { loadCheck_ = &check; }
     Status withdraw(const std::string& releaseId);
 
+    // ---- 验收检查（REL-05，docs/ddd/15-acceptance-check.md）----
+    // 需要基准图集和“跑一个用例”的能力；组装根传入（只有方案构建平台有基准图集）
+    void useAcceptance(GoldenSetRepository& goldenSets, CaseRunner& runner) {
+        goldenSets_ = &goldenSets;
+        caseRunner_ = &runner;
+    }
+    // 用上线包里的方案版本把基准图集的每个用例检测一遍，对照真实判定，按验收标准得出通过 / 没通过，记在上线包上。
+    // 没通过也是一个正常的结果（返回成功，passed 为假）。做不下去（图像读不出来等）才返回失败，那时不留记录。
+    Result<AcceptanceView> checkAcceptance(const std::string& releaseId, const std::string& goldenSetId);
+    // 最近一次验收的记录；还没做过时返回失败 release.not_checked
+    Result<AcceptanceView> getAcceptance(const std::string& releaseId) const;
+
     Result<ReleaseManifest> getManifest(const std::string& releaseId) const;
     Result<ReleaseContent> getContent(const std::string& releaseId) const;
     std::vector<std::string> listReleases() const;
@@ -69,6 +119,8 @@ private:
     const RecipeVersionSource& recipes_;
     EventPublisher& events_;
     LoadCheck* loadCheck_ = nullptr;
+    GoldenSetRepository* goldenSets_ = nullptr;
+    CaseRunner* caseRunner_ = nullptr;
     mutable std::mutex mutex_;  // 保护仓储：仓储的实现不要求线程安全
 };
 

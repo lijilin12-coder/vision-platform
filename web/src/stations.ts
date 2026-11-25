@@ -1,5 +1,6 @@
 import { reactive } from "vue";
 import type { PlatformClient } from "./platform/PlatformClient";
+import { acceptanceLabel, releaseTitle } from "./releases";
 import type { InspectionRecord, QualitySummary, Release, SavedRecord, Station } from "./platform/types";
 
 // 工位页面的状态和操作。和编辑器一样：组件只做显示，和后端打交道的事在这里。
@@ -132,8 +133,8 @@ export function createStations(client: PlatformClient) {
       if (!releaseId) return "（无）";
       const r = state.releases.find((x) => x.id === releaseId);
       if (!r) return releaseId.slice(0, 8);
-      const version = r.recipeVersionId.includes("@") ? " " + r.recipeVersionId.slice(r.recipeVersionId.lastIndexOf("@") + 1) : "";
-      return `${r.recipeName}${version}（${releaseId.slice(0, 8)}）`;
+      // 没验收的、没通过的标出来：没通过的后端不让部署，在下拉框里就该看得出
+      return releaseTitle(r) + (r.acceptanceState === "passed" ? "" : " · " + acceptanceLabel(r));
     },
 
     // ---- 历史记录 ----

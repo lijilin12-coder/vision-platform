@@ -142,11 +142,61 @@ export interface ModelInfo {
   kind: string;
 }
 
+// 验收检查里判错的一个用例
+export interface WrongCase {
+  caseId: string;
+  imageRef: string;
+  truth: "OK" | "NG"; // 人确认的真实判定
+  observed: "OK" | "NG" | "ERROR"; // 检测给出的
+  kind: "miss" | "false_alarm" | "error"; // 漏检 / 误报 / 出错
+}
+
+// 验收记录：上线包在一个基准图集上跑了一遍，对照真实判定的结果
+export interface Acceptance {
+  releaseId: string;
+  goldenSetId: string;
+  goldenSetName: string;
+  checkedAtMs: number;
+  passed: boolean;
+  criteria: { maxMisses: number; maxFalseAlarmRate: number; maxErrors: number };
+  total: number;
+  truthOk: number;
+  truthNg: number;
+  misses: number;
+  falseAlarms: number;
+  errors: number;
+  falseAlarmRate: number;
+  meanMs: number;
+  maxMs: number;
+  wrongCases: WrongCase[];
+}
+
 export interface Release {
   id: string;
   recipeVersionId: string;
   recipeName: string;
   withdrawn: boolean;
+  acceptanceState: "none" | "passed" | "failed"; // 没验收 / 通过 / 没通过（没通过的不能部署）
+  acceptance: Acceptance | null;
+}
+
+// 基准图集：带有真实判定的一组图像 + 验收标准
+export interface GoldenSet {
+  id: string;
+  name: string;
+  cases: number;
+  truthOk: number;
+  truthNg: number;
+  criteria: { maxMisses: number; maxFalseAlarmRate: number; maxErrors: number };
+}
+
+export interface NewGoldenSet {
+  name: string;
+  okDirectory: string; // 后端那台机器上的目录：里面的图像真实判定是合格
+  ngDirectory: string; // 里面的是不合格
+  maxMisses: number;
+  maxFalseAlarmRate: number; // 小数：0.02 就是 2%
+  maxErrors: number;
 }
 
 // 工位上的一次检测

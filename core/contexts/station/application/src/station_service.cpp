@@ -265,6 +265,10 @@ Status StationService::deploy(const std::string& stationId, const std::string& r
     if (manifest.value().withdrawn) {
         return Status::failure("station.release_withdrawn", "上线包 " + releaseId + " 已经被撤回，不能部署");
     }
+    if (manifest.value().acceptance == "failed") {
+        // L4。还没做过验收检查的可以部署（见 docs/ddd/15-acceptance-check.md §4）
+        return Status::failure("station.release_not_accepted", "上线包 " + releaseId + " 的验收检查没有通过，不能部署");
+    }
 
     std::vector<EventPtr> pulled;
     {

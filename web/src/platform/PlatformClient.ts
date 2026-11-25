@@ -1,4 +1,4 @@
-import type { DebugRun, ModelInfo, OperatorMeta, ParamValue, Recipe, RecipeSummary, QualitySummary, RecordQuery, Release, Roi, SavedRecord, Station, UploadedImage } from "./types";
+import type { Acceptance, DebugRun, GoldenSet, NewGoldenSet, ModelInfo, OperatorMeta, ParamValue, Recipe, RecipeSummary, QualitySummary, RecordQuery, Release, Roi, SavedRecord, Station, UploadedImage } from "./types";
 
 // 界面使用平台的唯一入口。
 //
@@ -28,6 +28,12 @@ export interface PlatformClient {
   // ---- 上线包和工位 ----
   listReleases(): Promise<Release[]>;
   createRelease(recipeVersionId: string): Promise<string>; // 返回上线包 ID
+  // ---- 基准图集和验收检查 ----
+  listGoldenSets(): Promise<GoldenSet[]>;
+  createGoldenSet(definition: NewGoldenSet): Promise<GoldenSet>;
+  // 没通过也是正常返回（passed 为 false）；做不下去才抛错
+  checkAcceptance(releaseId: string, goldenSetId: string): Promise<Acceptance>;
+
   listStations(): Promise<Station[]>;
   createStation(name: string): Promise<Station>;
   // afterSequence：只要序号比它大的检测记录

@@ -367,6 +367,22 @@ int cmdStationStress(platform::LinePlatform& app, std::vector<std::string> args)
 
 // ---------- release … ----------
 
+namespace {
+void printAcceptance(const release::AcceptanceView& a) {
+    std::cout << "  验收检查  " << (a.passed ? "通过" : "没有通过") << "（基准图集 " << a.goldenSetName << "，" << a.total << " 个用例：合格 "
+              << a.truthOk << "，不合格 " << a.truthNg << "）\n";
+    char rate[40], limit[40];
+    std::snprintf(rate, sizeof rate, "%.1f%%", a.falseAlarmRate * 100);
+    std::snprintf(limit, sizeof limit, "%.1f%%", a.maxFalseAlarmRate * 100);
+    std::cout << "    漏检 " << a.misses << "（上限 " << a.maxMisses << "）  误报 " << a.falseAlarms << "，误报率 " << rate << "（上限 " << limit
+              << "）  出错 " << a.errors << "（上限 " << a.maxErrors << "）\n";
+    for (const auto& w : a.wrongCases) {
+        std::cout << "    ✗ " << (w.kind == "miss" ? "漏检" : w.kind == "false_alarm" ? "误报" : "出错") << "  " << w.caseId << "  真实 "
+                  << (w.truthNg ? "NG" : "OK") << "，判成 " << w.observed << "\n";
+    }
+}
+}  // namespace
+
 int runReleaseCommand(platform::LinePlatform& app, const std::vector<std::string>& args) {
     const std::string& sub = args[1];
     if (sub == "create" && args.size() >= 3) {
@@ -378,7 +394,8 @@ int runReleaseCommand(platform::LinePlatform& app, const std::vector<std::string
     if (sub == "list") {
         for (const auto& id : app.releases.listReleases()) {
             const auto m = app.releases.getManifest(id);
-            std::cout << id << "  " << (m ? m.value().recipeVersionId : "?") << (m && m.value().withdrawn ? "  （已撤回）" : "") << "\n";
+            const std::string acceptance = !m ? "" : m.value().acceptance == "passed" ? "  验收通过" : m.value().acceptance == "failed" ? "  验收没有通过" : "  未验收";
+            std::cout << id << "  " << (m ? m.value().recipeVersionId : "?") << acceptance << (m && m.value().withdrawn ? "  （已撤回）" : "") << "\n";
         }
         return 0;
     }
@@ -390,13 +407,25 @@ int runReleaseCommand(platform::LinePlatform& app, const std::vector<std::string
         if (m.value().lockedModels.empty()) std::cout << "  （无）";
         std::cout << "\n";
         for (const auto& [slot, model] : m.value().lockedModels) std::cout << "    " << slot << " → " << model << "\n";
+        if (auto a = app.releases.getAcceptance(args[2])) {
+            printAcceptance(a.value());
+        } else {
+            std::cout << "  验收检查  还没有做过\n";
+        }
         return 0;
+    }
+    if (sub == "accept" && args.size() >= 4) {
+        // release accept <上线包ID> <基准图集ID>
+        auto a = app.releases.checkAcceptance(args[2], args[3]);
+        if (!a) return fail(a.error());
+        printAcceptance(a.value());
+        return a.value().passed ? 0 : 2;  // 没通过：退出码 2，脚本里可以据此停下来
     }
     if (sub == "withdraw" && args.size() >= 3) {
         auto st = app.releases.withdraw(args[2]);
         return st ? 0 : fail(st.error());
     }
-    return usageError("release create <方案版本ID> | list | show <上线包ID> | withdraw <上线包ID>");
+    return usageError("release create <方案版本ID> | list | show <上线包ID> | accept <上线包ID> <基准图集ID> | withdraw <上线包ID>");
 }
 
 // ---------- station … ----------

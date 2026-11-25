@@ -1,6 +1,6 @@
 import type { PlatformClient } from "./PlatformClient";
 import { PlatformError } from "./types";
-import type { DebugRun, InspectionRecord, OperatorMeta, ParamValue, Recipe, Release, Roi, Station, QualitySummary, RecordQuery, SavedRecord } from "./types";
+import type { Acceptance, GoldenSet, NewGoldenSet, DebugRun, InspectionRecord, OperatorMeta, ParamValue, Recipe, Release, Roi, Station, QualitySummary, RecordQuery, SavedRecord } from "./types";
 
 // 测试用的假后端：在内存里记着方案，按很少的几条规则回答。
 // 有了它，编辑器的状态和操作可以不启动 vision-runtime、不开浏览器就测。
@@ -138,8 +138,35 @@ export class FakePlatformClient implements PlatformClient {
   }
   async createRelease(recipeVersionId: string) {
     const id = `rel-${this.releases.length + 1}`;
-    this.releases.push({ id, recipeVersionId, recipeName: recipeVersionId, withdrawn: false });
+    this.releases.push({ id, recipeVersionId, recipeName: recipeVersionId, withdrawn: false, acceptanceState: "none", acceptance: null });
     return id;
+  }
+  goldenSets: GoldenSet[] = [];
+  missesFor: Record<string, number> = {}; // 测试用：哪个上线包在验收时会漏检几张
+  async listGoldenSets() {
+    return this.goldenSets;
+  }
+  async createGoldenSet(d: NewGoldenSet) {
+    if (!d.okDirectory && !d.ngDirectory) throw new PlatformError("两个目录里都没有找到图像", "golden.no_images", 422);
+    const set: GoldenSet = { id: `gs-${this.goldenSets.length + 1}`, name: d.name, cases: 4, truthOk: 2, truthNg: 2,
+      criteria: { maxMisses: d.maxMisses, maxFalseAlarmRate: d.maxFalseAlarmRate, maxErrors: d.maxErrors } };
+    this.goldenSets.push(set);
+    return set;
+  }
+  async checkAcceptance(releaseId: string, goldenSetId: string): Promise<Acceptance> {
+    const release = this.releases.find((r) => r.id === releaseId);
+    if (!release) throw new PlatformError(`找不到上线包 ${releaseId}`, "release.not_found", 404);
+    const set = this.goldenSets.find((g) => g.id === goldenSetId);
+    if (!set) throw new PlatformError(`找不到基准图集 ${goldenSetId}`, "golden.not_found", 404);
+    const misses = this.missesFor[releaseId] ?? 0;
+    const acceptance: Acceptance = { releaseId, goldenSetId, goldenSetName: set.name, checkedAtMs: 1, passed: misses <= set.criteria.maxMisses,
+      criteria: set.criteria, total: set.cases, truthOk: set.truthOk, truthNg: set.truthNg, misses, falseAlarms: 0, errors: 0,
+      falseAlarmRate: 0, meanMs: 1, maxMs: 1,
+      wrongCases: Array.from({ length: misses }, (_, i) => ({ caseId: `ng/${i + 1}.png`, imageRef: `/g/ng/${i + 1}.png`, truth: "NG" as const,
+        observed: "OK" as const, kind: "miss" as const })) };
+    release.acceptance = acceptance;
+    release.acceptanceState = acceptance.passed ? "passed" : "failed";
+    return acceptance;
   }
   async listStations() {
     return [...this.stations.values()].map((s) => ({ ...s, recent: [] }));
@@ -169,6 +196,9 @@ export class FakePlatformClient implements PlatformClient {
   async deploy(stationId: string, releaseId: string) {
     const s = this.station(stationId);
     if (!this.releases.some((r) => r.id === releaseId)) throw new PlatformError(`找不到上线包 ${releaseId}`, "release.not_found", 404);
+    if (this.releases.find((r) => r.id === releaseId)?.acceptanceState === "failed") {
+      throw new PlatformError(`上线包 ${releaseId} 的验收检查没有通过，不能部署`, "station.release_not_accepted", 422);
+    }
     if (s.runner.running) Object.assign(s, { pendingRelease: releaseId, pendingReady: true });
     else s.activeRelease = releaseId;
     return { ...s };

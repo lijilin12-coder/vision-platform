@@ -73,13 +73,16 @@ curl http://127.0.0.1:8750/api/health
 
 | 请求 | 请求体 | 说明 |
 |---|---|---|
-| `GET /api/releases` | | 上线包：`id`、`recipeVersionId`、`recipeName`、`withdrawn` |
+| `GET /api/releases` | | 上线包：`id`、`recipeVersionId`、`recipeName`、`withdrawn`、`acceptanceState`（`none` 没验收 / `passed` / `failed`）、`acceptance`（最近一次验收的记录，没有时是 `null`） |
 | `POST /api/releases` | `{"recipeVersionId": "…@v1"}` | 用一个已发布的方案版本做成上线包。方案版本加载不了（例如用了没发布的模型）时被拒绝 |
+| `POST /api/releases/{id}/acceptance` | `{"goldenSetId": "…"}` | **验收检查**（[说明](../ddd/15-acceptance-check.md)）：在基准图集上跑一遍，对照真实判定。回复是验收记录：`passed`、`criteria`、`total`、`misses`（漏检）、`falseAlarms` 和 `falseAlarmRate`（误报）、`errors`、`wrongCases`（判错的用例）。**没通过也是 200**（`passed` 为 `false`）；做不下去（图像读不出来等）才是 4xx。用例多的时候要等一会儿 |
+| `GET /api/golden-sets` | | 基准图集：`id`、`name`、`cases`、`truthOk`、`truthNg`、`criteria` |
+| `POST /api/golden-sets` | `{"name", "okDirectory", "ngDirectory", "maxMisses", "maxFalseAlarmRate", "maxErrors"}` | 用后端那台机器上的两个目录做一个基准图集。目录可以只给一个；三个标准不给就是 0；误报率是小数（0.02 = 2%） |
 | `GET /api/stations` | | 所有工位的状态（不带检测记录） |
 | `POST /api/stations` | `{"name": "一号工位"}` | 新建 |
 | `GET /api/stations/{id}?after=N` | | 一个工位的状态，加上序号大于 N 的检测记录。界面隔半秒问一次，每次只取新的 |
 | `PUT /api/stations/{id}/image-source` | `{"kind": "folder", "location": "某个目录"}` | 绑定图像源。只能在工位停止时做 |
-| `POST /api/stations/{id}/deploy` | `{"releaseId": "…"}` | 部署：后台加载，下一次检测开始前生效 |
+| `POST /api/stations/{id}/deploy` | `{"releaseId": "…"}` | 部署：后台加载，下一次检测开始前生效。已撤回的、验收没有通过的上线包被拒绝（422） |
 | `POST /api/stations/{id}/rollback` | | 回滚到上一个上线包 |
 | `POST /api/stations/{id}/start`、`/stop` | | 开始 / 停止持续运行：工位从自己的图像源取图、检测 |
 | `GET /api/stations/{id}/frame` | | 最近检测的那一帧图像（PNG） |

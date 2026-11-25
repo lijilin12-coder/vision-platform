@@ -121,6 +121,20 @@ json outputJson(const Value& value) {
     return std::visit(Visitor{}, value);
 }
 
+json acceptanceJson(const release::AcceptanceView& a) {
+    json wrong = json::array();
+    for (const auto& w : a.wrongCases) {
+        wrong.push_back({{"caseId", w.caseId}, {"imageRef", w.imageRef}, {"truth", w.truthNg ? "NG" : "OK"}, {"observed", w.observed},
+                         {"kind", w.kind}});
+    }
+    return {{"releaseId", a.releaseId}, {"goldenSetId", a.goldenSetId}, {"goldenSetName", a.goldenSetName},
+            {"checkedAtMs", a.checkedAtMs}, {"passed", a.passed},
+            {"criteria", {{"maxMisses", a.maxMisses}, {"maxFalseAlarmRate", a.maxFalseAlarmRate}, {"maxErrors", a.maxErrors}}},
+            {"total", a.total}, {"truthOk", a.truthOk}, {"truthNg", a.truthNg}, {"misses", a.misses}, {"falseAlarms", a.falseAlarms},
+            {"errors", a.errors}, {"falseAlarmRate", a.falseAlarmRate}, {"meanMs", a.meanMs}, {"maxMs", a.maxMs},
+            {"wrongCases", std::move(wrong)}};
+}
+
 json resultJson(const ResultItems& result) {
     json defects = json::array(), measurements = json::array(), poses = json::array();
     for (const auto& d : result.defects) {
@@ -434,8 +448,10 @@ void ApiServer::Impl::routes() {
             // 方案的名称：给人看的。方案版本找不到时（不应该发生）留空
             std::string recipeName;
             if (auto doc = platform.recipeSource.find(m.value().recipeVersionId)) recipeName = doc.value().recipeName;
-            list.push_back({{"id", releaseId}, {"recipeVersionId", m.value().recipeVersionId}, {"recipeName", recipeName},
-                            {"withdrawn", m.value().withdrawn}});
+            json entry = {{"id", releaseId}, {"recipeVersionId", m.value().recipeVersionId}, {"recipeName", recipeName},
+                          {"withdrawn", m.value().withdrawn}, {"acceptanceState", m.value().acceptance}, {"acceptance", nullptr}};
+            if (auto a = platform.releases.getAcceptance(releaseId)) entry["acceptance"] = acceptanceJson(a.value());
+            list.push_back(std::move(entry));
         }
         reply(res, 200, {{"releases", std::move(list)}});
     });
@@ -447,6 +463,59 @@ void ApiServer::Impl::routes() {
         auto release = platform.releases.createRelease(*version);
         if (!release) return replyError(res, release.error());
         reply(res, 201, {{"releaseId", release.value()}});
+    });
+
+    // 验收检查：在一个基准图集上把上线包跑一遍。请求体 {"goldenSetId": "…"}。
+    // 没通过也是 200（passed 为 false）：检查做完了，只是结论是“不行”。用例多的时候这个请求要等一会儿
+    server.Post("/api/releases/" + id + "/acceptance", [this](const Request& req, Response& res) {
+        const auto body = bodyObject(req, res);
+        if (!body) return;
+        const auto goldenSet = textField(*body, "goldenSetId", res);
+        if (!goldenSet) return;
+        auto a = platform.releases.checkAcceptance(req.matches[1], *goldenSet);
+        if (!a) return replyError(res, a.error());
+        reply(res, 200, acceptanceJson(a.value()));
+    });
+
+    // ---- 基准图集 ----
+    const auto goldenSetJson = [](const release::GoldenSetView& s) {
+        int ng = 0;
+        for (const auto& c : s.cases) ng += c.truthNg ? 1 : 0;
+        return json{{"id", s.id}, {"name", s.name}, {"cases", s.cases.size()}, {"truthOk", static_cast<int>(s.cases.size()) - ng},
+                    {"truthNg", ng},
+                    {"criteria", {{"maxMisses", s.criteria.maxMisses}, {"maxFalseAlarmRate", s.criteria.maxFalseAlarmRate},
+                                  {"maxErrors", s.criteria.maxErrors}}}};
+    };
+    server.Get("/api/golden-sets", [this, goldenSetJson](const Request&, Response& res) {
+        json list = json::array();
+        for (const auto& setId : platform.goldenSets.listGoldenSets()) {
+            if (auto s = platform.goldenSets.getGoldenSet(setId)) list.push_back(goldenSetJson(s.value()));
+        }
+        reply(res, 200, {{"goldenSets", std::move(list)}});
+    });
+    // 用后端那台机器上的两个目录做一个基准图集。
+    // 请求体 {"name", "okDirectory", "ngDirectory", "maxMisses", "maxFalseAlarmRate", "maxErrors"}；目录可以只给一个，标准不给就是 0
+    server.Post("/api/golden-sets", [this, goldenSetJson](const Request& req, Response& res) {
+        const auto body = bodyObject(req, res);
+        if (!body) return;
+        const auto name = textField(*body, "name", res);
+        if (!name) return;
+        release::CriteriaView criteria;
+        std::string ok, ng;
+        try {
+            ok = body->value("okDirectory", std::string());
+            ng = body->value("ngDirectory", std::string());
+            criteria.maxMisses = body->value("maxMisses", 0);
+            criteria.maxFalseAlarmRate = body->value("maxFalseAlarmRate", 0.0);
+            criteria.maxErrors = body->value("maxErrors", 0);
+        } catch (const std::exception&) {
+            return replyBadRequest(res, "目录必须是文字，验收标准必须是数字");
+        }
+        auto created = platform::createGoldenSetFromFolders(platform, *name, ok, ng, criteria);
+        if (!created) return replyError(res, created.error());
+        auto s = platform.goldenSets.getGoldenSet(created.value());
+        if (!s) return replyError(res, s.error());
+        reply(res, 201, goldenSetJson(s.value()));
     });
 
     // ---- 工位 ----
