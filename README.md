@@ -8,7 +8,8 @@
 - **界面**：Web（Vue 3），鸿蒙端为原生 ArkUI 外壳加 ArkWeb
 - **模型工具链**：独立的 Linux 服务（Python + Docker）
 
-> 当前阶段：**POC**。已完成：POC-1（核心骨架，[报告](docs/poc/poc-1-report.md)）、POC-9（热切换，[报告](docs/poc/poc-9-report.md)）、POC-11（方案助手的最小闭环，[报告](docs/poc/poc-11-report.md)）、POC-12（大模型顾问，[报告](docs/poc/poc-12-report.md)，鸿蒙部分未验证）。
+> 当前阶段：后端到了 MVP，界面可以演示一整圈：搭方案 → 验收 → 上线包文件 → 产线运行 → 检测记录 → 复判 → 用复判的图像验收下一版方案。
+> 做完了什么、还差什么见 [docs/07-backend-mvp.md](docs/07-backend-mvp.md)；想动手试，照着 [docs/dev/web-demo.md](docs/dev/web-demo.md) 走一遍。
 
 ## 快速开始
 
@@ -24,63 +25,21 @@ VID=$(./build/apps/vision-cli recipe publish $RID)
 
 ## 文档
 
-### 领域设计（DDD）
+文档很多，从 **[docs/README.md（文档地图）](docs/README.md)** 进去：它按主题列出该读哪一份，并且分清了现在的设计、历史记录和教程。
 
-| 文档 | 内容 |
-|---|---|
-| [docs/ddd/00-vision.md](docs/ddd/00-vision.md) | 领域愿景 |
-| [docs/ddd/01-event-storming.md](docs/ddd/01-event-storming.md) | 事件风暴、热点问题与决定 |
-| [docs/ddd/02-glossary.md](docs/ddd/02-glossary.md) | 统一语言（术语表） |
-| [docs/ddd/03-subdomains.md](docs/ddd/03-subdomains.md) | 子域划分 |
-| [docs/ddd/04-context-map.md](docs/ddd/04-context-map.md) | 限界上下文与上下文映射 |
-| [docs/ddd/05-tactical-design.md](docs/ddd/05-tactical-design.md) | 核心上下文的战术设计 |
-| [docs/ddd/06-scenario-walkthrough.md](docs/ddd/06-scenario-walkthrough.md) | 关键场景走查与发现的问题 |
-| [docs/ddd/07-recipe-assistant.md](docs/ddd/07-recipe-assistant.md) | 方案助手：循环、顾问、工作流、加固阶段 |
-| [docs/ddd/08-platforms-and-training.md](docs/ddd/08-platforms-and-training.md) | 平台划分、模型训练与数据的划分 |
-| [docs/ddd/09-match-template-and-locating.md](docs/ddd/09-match-template-and-locating.md) | 匹配模板与定位 |
-
-### 工程文档
-
-| 文档 | 内容 |
-|---|---|
-| [docs/02-architecture.md](docs/02-architecture.md) | 技术架构（v0.2，按 DDD 重写） |
-| [docs/07-architecture-diagrams.md](docs/07-architecture-diagrams.md) | 架构图：模块关系、消息传递、数据流向 |
-| [docs/03-tech-research.md](docs/03-tech-research.md) | 技术调研 |
-| [docs/01-requirements.md](docs/01-requirements.md) | 需求规格（v0.2，按限界上下文组织） |
-| [docs/04-poc-plan.md](docs/04-poc-plan.md) | POC 计划（v0.2） |
-| [docs/05-roadmap.md](docs/05-roadmap.md) | 里程碑与分工 |
-| [docs/06-open-questions.md](docs/06-open-questions.md) | 待决问题 |
-| [docs/poc/poc-1-report.md](docs/poc/poc-1-report.md) | POC-1 结论报告：核心骨架 |
-| [docs/poc/poc-9-report.md](docs/poc/poc-9-report.md) | POC-9 结论报告：热切换 |
-| [docs/poc/poc-11-report.md](docs/poc/poc-11-report.md) | POC-11 结论报告：方案助手的最小闭环（不用大模型） |
-| [docs/poc/poc-12-report.md](docs/poc/poc-12-report.md) | POC-12 结论报告：大模型顾问（DeepSeek 实测） |
-| [docs/poc/hardening-report.md](docs/poc/hardening-report.md) | 方案助手的加固阶段：解决“达标的参数贴着边界” |
-| [docs/poc/poc-13-report.md](docs/poc/poc-13-report.md) | POC-13 训练闭环（进行中）：第 1 步 样本、数据集版本、规则 N1；第 2 步 训练任务和模型仓库 |
-| [docs/poc/locating-report.md](docs/poc/locating-report.md) | 定位算子实测：模板匹配的精度和耗时、对齐对测量精度的影响 |
-| [docs/dev/build.md](docs/dev/build.md) | 构建与运行 |
-| [docs/dev/operators.md](docs/dev/operators.md) | 算子一览：18 个算子各自解决什么问题、怎么搭配 |
-| [docs/ddd/13-two-programs.md](docs/ddd/13-two-programs.md) | 两个程序：方案构建平台（`vision-cli`、`vision-runtime`）和产线运行平台（`vision-line`）各能做什么；产线上怎么部署和热切换 |
-| [docs/dev/web-demo.md](docs/dev/web-demo.md) | **界面演示**：在浏览器里搭方案、改参数、看每一步的结果 |
-| [web/README.md](web/README.md) | 界面（方案编辑器）：怎么运行、代码怎么读 |
-| [docs/dev/http-api.md](docs/dev/http-api.md) | `vision-runtime` 的 HTTP 接口：怎么启动服务、有哪些接口、一个完整的例子 |
-| [docs/dev/training-demo.md](docs/dev/training-demo.md) | 训练闭环演示：从一批图像到工位上运行的模型，一步一步走一遍 |
-| [docs/dev/how-to-add-operator.md](docs/dev/how-to-add-operator.md) | 如何新增一个算子 |
-| [docs/dev/logging-and-crash-dumps.md](docs/dev/logging-and-crash-dumps.md) | 日志与崩溃转储：文件在哪里、怎么写日志、怎么分析崩溃 |
-| [docs/tutorial/cpp/](docs/tutorial/cpp/README.md) | 现代工程 C++ 教程（从竞赛写法到工程写法） |
-| [docs/tutorial/opencv/](docs/tutorial/opencv/README.md) | OpenCV 与机器视觉基础教程（以“带旋转角度的模板匹配”大作业结束） |
-| [docs/tutorial/inference/](docs/tutorial/inference/README.md) | 推理引擎与大模型推理优化教程（算子、计算图、量化、NPU 后端；KV Cache、Continuous Batching、PagedAttention 等） |
-
-## 目录结构（计划）
+## 目录结构
 
 ```
 vision-platform/
 ├── core/          # kernel（共享内核）、common、contexts/（每个限界上下文一个目录）
 ├── operators/     # 算子实现
-├── adapters/      # 被驱动适配器：持久化、推理、图像、方案包、事件总线……
+├── adapters/      # 被驱动适配器：存储、推理、图像、包文件、事件总线……
+├── apps/          # 三个程序：cli、runtime（HTTP 服务 + 界面）、line（产线运行平台）
+├── web/           # 界面（Vue 3）
 ├── services/      # 独立运行的服务：训练服务（Python）
-├── apps/          # runtime（Linux/Windows）、harmony、cli
-├── web/           # Web 界面
-├── toolchain/     # 模型工具链服务
-├── samples/       # 示例图像、方案、基准图集
+├── tests/         # C++ 测试
+├── samples/       # 示例图像、方案、工作流
 └── docs/
 ```
+
+每个目录管什么、有哪些必须遵守的规则，见 [CLAUDE.md](CLAUDE.md)（写给 AI 助手的，人读也合适）。
